@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#12151a">
+<title>Sổ doanh thu · Admin</title>
+<link rel="manifest" id="mfLink">
+<link rel="icon" id="icLink">
+<link rel="apple-touch-icon" id="icApple">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+:root{
+  --nhua:#12151a; --than:#191d24; --panel:#20252e; --vach:#2c333d;
+  --son:#e9ecf1; --mo:#8b95a5; --mo2:#5d6673;
+  --bien:#f5c518; --canh:#ff4d4f; --chay:#3ddc97; --xanh:#4aa8ff; --tim:#b085f5;
+  --r:10px;
+  --fdisp:'Roboto Condensed','Arial Narrow',ui-sans-serif,system-ui,sans-serif;
+  --fbody:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --fnum:ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{background:var(--nhua);color:var(--son);font-family:var(--fbody);font-size:15px;line-height:1.45;
+  padding-bottom:calc(62px + env(safe-area-inset-bottom))}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--bien);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.plate{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(#ffdc4a,#efbe0b);
+  color:#101010;font-family:var(--fdisp);font-weight:700;font-size:13px;letter-spacing:.6px;padding:2px 8px;
+  border-radius:5px;border:1.5px solid #101010;box-shadow:inset 0 -2px 0 rgba(0,0,0,.18);text-transform:uppercase}
+.ma{display:inline-block;font-family:var(--fdisp);font-size:11px;font-weight:700;letter-spacing:1px;
+  text-transform:uppercase;padding:2px 7px;border-radius:4px;border:1px solid currentColor}
+.ma.sono{color:#f5c518}.ma.sono_pos{color:#ff6b9d}.ma.cafe{color:#b085f5}.ma.tro{color:#3ddc97}.ma.xe{color:#4aa8ff}.ma.hd{color:#ff9f43}
+
+.topbar{position:sticky;top:0;z-index:40;background:rgba(18,21,26,.94);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--vach);padding:calc(8px + env(safe-area-inset-top)) 12px 8px;display:flex;align-items:center;gap:10px}
+.topbar h1{font-family:var(--fdisp);font-size:17px;margin:0;font-weight:700;flex:1}
+.topbar h1 span{display:block;font-family:var(--fbody);font-size:11px;color:var(--mo);font-weight:400}
+.topbar .lam{border:1px solid var(--vach);background:var(--than);color:var(--mo);border-radius:20px;
+  padding:5px 11px;font-size:12px;cursor:pointer}
+
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:50;display:grid;grid-template-columns:repeat(5,1fr);
+  background:rgba(25,29,36,.97);backdrop-filter:blur(10px);border-top:1px solid var(--vach);padding-bottom:env(safe-area-inset-bottom)}
+.nav button{background:none;border:0;padding:9px 2px 10px;color:var(--mo2);font-size:11px;cursor:pointer;position:relative}
+.nav button.on{color:var(--bien)}
+.nav button.on::before{content:"";position:absolute;top:0;left:20%;right:20%;height:2px;background:var(--bien);border-radius:0 0 3px 3px}
+.nav .badge{position:absolute;top:3px;right:calc(50% - 26px);background:var(--canh);color:#fff;font-size:9px;
+  font-weight:700;min-width:15px;height:15px;border-radius:8px;display:grid;place-items:center;padding:0 3px}
+
+.view{display:none;padding:12px 12px 24px}
+.view.on{display:block}
+.card{background:var(--than);border:1px solid var(--vach);border-radius:var(--r);padding:12px;margin-bottom:10px}
+.hd{display:flex;align-items:center;gap:8px;margin:16px 0 8px}
+.hd:first-child{margin-top:2px}
+.hd h2{font-family:var(--fdisp);font-size:13px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mo);margin:0;font-weight:700}
+.hd .line{flex:1;height:1px;background:var(--vach)}
+.hd .act{font-size:12px;color:var(--bien);cursor:pointer}
+.mo{color:var(--mo)}.sm{font-size:12.5px}.xs{font-size:11.5px}
+.num{font-family:var(--fnum);font-variant-numeric:tabular-nums}
+.empty{text-align:center;padding:30px 16px;color:var(--mo2)}
+.empty b{display:block;color:var(--mo);font-size:14px;margin-bottom:4px}
+
+.o4{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}
+.o{background:var(--than);border:1px solid var(--vach);border-radius:var(--r);padding:11px 12px}
+.o .n{font-family:var(--fnum);font-size:21px;font-weight:700;line-height:1.15}
+.o .l{font-size:11px;color:var(--mo);margin-top:2px}
+.o.tot .n{color:var(--chay)}.o.xau .n{color:var(--canh)}.o.canh .n{color:var(--bien)}
+
+.chip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--vach);color:var(--mo);white-space:nowrap}
+.chip.ok{color:var(--chay);border-color:rgba(61,220,151,.4);background:rgba(61,220,151,.09)}
+.chip.warn{color:var(--bien);border-color:rgba(245,197,24,.4);background:rgba(245,197,24,.09)}
+.chip.bad{color:var(--canh);border-color:rgba(255,77,79,.4);background:rgba(255,77,79,.1)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--panel);
+  border:1px solid var(--vach);color:var(--son);border-radius:9px;padding:9px 13px;font-size:14px;cursor:pointer}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.pri{background:var(--bien);border-color:var(--bien);color:#141414;font-weight:700}
+.btn.dan{color:var(--canh);border-color:rgba(255,77,79,.45)}
+.btn.blk{width:100%}
+.btn.sm{padding:5px 10px;font-size:12.5px;border-radius:7px}
+.btns{display:flex;gap:8px}.btns>*{flex:1}
+
+.item{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid var(--vach)}
+.item:last-child{border-bottom:0}
+.item .l{flex:1;min-width:0}
+.item .r{text-align:right;flex-shrink:0}
+.item .t{font-weight:600;font-size:14px;word-break:break-word}
+.item .d{font-size:12px;color:var(--mo);margin-top:2px}
+.money{font-family:var(--fnum);font-weight:700;font-size:14.5px}
+.money.in{color:var(--chay)}.money.out{color:var(--canh)}
+
+.f{margin-bottom:11px}
+.f label{display:block;font-size:11.5px;color:var(--mo);margin-bottom:4px}
+.f input,.f select{width:100%;background:var(--nhua);border:1px solid var(--vach);border-radius:8px;padding:10px 11px;font-size:15px;color:var(--son)}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+
+.cot{display:flex;align-items:flex-end;gap:5px;height:110px;padding:6px 2px 0}
+.cot .c{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;height:100%}
+.cot .b{width:100%;background:linear-gradient(#f5c518,#c99f0a);border-radius:3px 3px 0 0;min-height:2px}
+.cot .x{font-size:9.5px;color:var(--mo2);font-family:var(--fnum)}
+
+.sw{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid var(--vach)}
+.sw:last-child{border-bottom:0}
+.sw .t{font-weight:600;font-size:14px}
+.sw .d{font-size:11.5px;color:var(--mo);margin-top:2px}
+.tg{width:50px;height:28px;border-radius:16px;border:1px solid var(--vach);background:var(--nhua);position:relative;cursor:pointer;flex-shrink:0}
+.tg i{position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:var(--mo2);transition:.16s}
+.tg.on{background:rgba(61,220,151,.18);border-color:var(--chay)}
+.tg.on i{left:24px;background:var(--chay)}
+
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.66);z-index:60;display:none}
+.mask.on{display:block}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:61;background:var(--than);border-radius:16px 16px 0 0;
+  border-top:1px solid var(--vach);max-height:92vh;display:none;flex-direction:column}
+.sheet.on{display:flex}
+.sheet-h{padding:14px 14px 10px;border-bottom:1px solid var(--vach);display:flex;align-items:center;gap:10px}
+.sheet-h h3{margin:0;font-family:var(--fdisp);font-size:17px;flex:1}
+.sheet-h .x{background:none;border:0;color:var(--mo);font-size:26px;line-height:1;cursor:pointer}
+.sheet-b{padding:14px;overflow:auto}
+.sheet-f{padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--vach);display:flex;gap:8px}
+.sheet-f>*{flex:1}
+
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(78px + env(safe-area-inset-bottom));
+  background:var(--panel);border:1px solid var(--vach);padding:10px 16px;border-radius:22px;font-size:13.5px;
+  z-index:90;opacity:0;pointer-events:none;transition:opacity .2s;max-width:88vw;text-align:center}
+#toast.on{opacity:1}
+#toast.bad{border-color:var(--canh);color:#ffd7d7}
+
+#gate{position:fixed;inset:0;background:var(--nhua);z-index:100;overflow:auto}
+#gate.off{display:none}
+.gate-in{max-width:400px;margin:0 auto;padding:52px 22px}
+.gate-in .lg{text-align:center;margin-bottom:26px}
+.gate-in .lg p{color:var(--mo);font-size:12px;margin:12px 0 0;letter-spacing:2.6px;text-transform:uppercase;font-family:var(--fdisp)}
+.alert{display:flex;gap:9px;align-items:flex-start;background:rgba(255,77,79,.09);border:1px solid rgba(255,77,79,.32);
+  border-radius:var(--r);padding:10px 11px;margin-bottom:10px;font-size:13px}
+.alert.warn{background:rgba(245,197,24,.08);border-color:rgba(245,197,24,.32)}
+.alert b{display:block;margin-bottom:2px}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--vach);font-size:13.5px}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--mo)}
+.kv .v{text-align:right;font-weight:600;word-break:break-word}
+</style>
+</head>
+<body>
+
+<div id="gate"><div class="gate-in">
+  <div class="lg"><span class="plate" style="font-size:20px;padding:6px 13px">SỔ DOANH THU</span><p>Khu vực quản trị</p></div>
+  <div id="gateBody"></div>
+</div></div>
+
+<header class="topbar" id="topbar" style="display:none">
+  <h1>Sổ doanh thu<span id="phu">—</span></h1>
+  <button class="lam" id="btnTai">Tải lại</button>
+</header>
+
+<section class="view" id="v-cho">
+  <div id="oTong" class="o4"></div>
+  <div id="baoDong"></div>
+  <div class="hd"><h2>Đơn chờ duyệt</h2><span class="line"></span></div>
+  <div class="card" id="dsCho"></div>
+  <div class="hd"><h2>Sắp hết hạn trong 7 ngày</h2><span class="line"></span></div>
+  <div class="card" id="dsSapHet"></div>
+</section>
+
+<section class="view" id="v-khach">
+  <div class="f"><input id="tim" placeholder="Tìm email hoặc mã tài khoản…"></div>
+  <div class="f2">
+    <div class="f"><select id="locApp"><option value="">Tất cả app</option></select></div>
+    <div class="f"><select id="locTT">
+      <option value="">Mọi trạng thái</option><option value="tra">Đang trả tiền</option>
+      <option value="thu">Đang dùng thử</option><option value="het">Đã hết hạn</option><option value="khoa">Bị khoá</option>
+    </select></div>
+  </div>
+  <div class="card" id="dsKhach"></div>
+</section>
+
+<section class="view" id="v-thu">
+  <div class="hd"><h2>Doanh thu 12 tháng</h2><span class="line"></span></div>
+  <div class="card"><div class="cot" id="bieuDo"></div></div>
+  <div class="hd"><h2>Theo app</h2><span class="line"></span>
+    <input type="month" id="thangThu" style="background:var(--than);border:1px solid var(--vach);border-radius:7px;padding:4px 7px;font-size:12px;color:var(--son)"></div>
+  <div class="card" id="thuTheoApp"></div>
+  <div class="hd"><h2>Từng dòng thu</h2><span class="line"></span><span class="act" id="xuatCSV">Xuất CSV</span></div>
+  <div class="card" id="dsThu"></div>
+</section>
+
+<section class="view" id="v-ruiro">
+  <div class="hd"><h2>Đang dùng chùa</h2><span class="line"></span></div>
+  <p class="xs mo" style="margin:0 0 8px">Tài khoản còn hạn kiểu cũ ở <b>accounts/{uid}.paidUntil</b> và chưa đánh dấu
+    <b>migrated</b>. Mỗi tài khoản ở đây đang mở khoá <b>mọi app</b> mà họ chưa có giấy phép riêng.</p>
+  <div class="card" id="dsChua"></div>
+  <div class="hd"><h2>Đã khoá</h2><span class="line"></span></div>
+  <div class="card" id="dsKhoa"></div>
+</section>
+
+<section class="view" id="v-cong">
+  <div class="hd"><h2>Công tắc thu tiền</h2><span class="line"></span></div>
+  <div class="card" id="congTac"></div>
+  <div class="hd"><h2>Tài khoản nhận tiền &amp; bảng giá</h2><span class="line"></span></div>
+  <div class="card" id="bangGia"></div>
+  <div class="hd"><h2>Phiên làm việc</h2><span class="line"></span></div>
+  <button class="btn blk dan" id="btnThoat">Đăng xuất</button>
+  <p class="xs mo" style="text-align:center;margin-top:14px" id="ver"></p>
+</section>
+
+<nav class="nav" id="nav" style="display:none">
+  <button data-v="cho" class="on">Đơn chờ</button>
+  <button data-v="khach">Khách</button>
+  <button data-v="thu">Doanh thu</button>
+  <button data-v="ruiro">Rủi ro</button>
+  <button data-v="cong">Công tắc</button>
+</nav>
+
+<div class="mask" id="mask"></div>
+<div class="sheet" id="sheet">
+  <div class="sheet-h"><h3 id="shT">—</h3><button class="x" id="shX">×</button></div>
+  <div class="sheet-b" id="shB"></div>
+  <div class="sheet-f" id="shF"></div>
+</div>
+<div id="toast"></div>
+<script type="module">
+/* ==================================================================
+   SỔ DOANH THU — trang quản trị cho toàn bộ hệ app cho thuê
+   Chỉ email trong CFG.admin mới vào được, và rules đã chặn ở tầng dưới:
+   người khác đăng nhập vào đây cũng không đọc được gì.
+   ⚠️ DÁN firebaseConfig VÀO CFG.fb TRƯỚC KHI DÙNG.
+   ================================================================== */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import { getFirestore, collection, collectionGroup, getDocs, doc, getDoc, setDoc, writeBatch }
+  from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+const CFG = {
+  fb: {
+    apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k",
+    authDomain:"so-no-cc57a.firebaseapp.com",
+    projectId:"so-no-cc57a",
+    storageBucket:"so-no-cc57a.firebasestorage.app",
+    messagingSenderId:"571694791559",
+    appId:"1:571694791559:web:8e409728a520e2d370b122"
+  },
+  admin:"cuahangminhtri1@gmail.com",
+  ten:{ sono:"Sổ Nợ", sono_pos:"Bán hàng (POS)", cafe:"Quản Lý Cafe",
+        tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng" },
+  apps:["sono","sono_pos","cafe","tro","xe","hd"],
+  /* Tên ô giá và giá mặc định — chép đúng hàm priceFor() trong các app.
+     Sai tên ô là app đọc ra 0đ, khách quét mã QR ra số tiền 0. */
+  oGia:{ sono:["priceSono","pricePerMonth",10000],
+         sono_pos:["pricePos","posPricePerMonth",0],
+         cafe:["priceCafe","pricePerMonth",10000],
+         tro:["priceTro","price",50000],
+         xe:["priceXe","pricePerMonth",50000],
+         hd:["priceHd","pricePerMonth",50000] },
+  thang:[1,3,12],                              // các mốc gia hạn (tháng)
+  ver:"1.0.0"
+};
+
+const fbApp = initializeApp(CFG.fb);
+const auth  = getAuth(fbApp);
+const fdb   = getFirestore(fbApp);
+
+/* ------------------------------ tiện ích ------------------------------ */
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = v => { const n = Number(String(v??"").replace(/[^\d.-]/g,"")); return isFinite(n)?n:0; };
+const tien = v => num(v).toLocaleString("vi-VN");
+const dToS = d => d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}` : "";
+const hnay = () => dToS(new Date());
+const ngayVN = s => s ? String(s).slice(0,10).split("-").reverse().join("/") : "—";
+/* paidUntil trong hệ đang chạy có cả kiểu Timestamp lẫn mili-giây → quy về Date hết */
+const ngay = v => { if(v==null) return null;
+  if(typeof v?.toDate === "function") return v.toDate();
+  if(typeof v === "number") return new Date(v);
+  const d = new Date(v); return isNaN(d) ? null : d; };
+const soNgay = d => d ? Math.round((d - new Date(hnay()+"T00:00")) / 864e5) : null;
+const themThang = (d,n) => { const x = new Date(d); const ng = x.getDate();
+  x.setMonth(x.getMonth()+n); if(x.getDate() < ng) x.setDate(0); x.setHours(23,59,0,0); return x; };
+let tId; const toast = (m,bad)=>{ const t=$("#toast"); t.textContent=m; t.className="on"+(bad?" bad":"");
+  clearTimeout(tId); tId=setTimeout(()=>t.className="",2600); };
+const tenApp = a => CFG.ten[a] || a;
+const maApp = a => `<span class="ma ${esc(a)}">${esc(a)}</span>`;
+
+/* 4 app cũ ghi payments {at, amount, months} và renewalRequests {requestedAt,
+   amount, months, status:'pending'|'done'}. Đọc chịu cả tên cũ lẫn tên mới. */
+const pNgay  = p => ngay(p.at ?? p.ngayTra);
+const pTien  = p => num(p.amount ?? p.soTien);
+const pThang = p => num(p.months ?? p.soThang);
+const rCho   = r => (r.status ?? "pending") !== "done";
+const rNgay  = r => ngay(r.requestedAt ?? r.tao);
+const rTien  = r => num(r.amount ?? r.soTien);
+const rThang = r => num(r.months) || 1;
+const giaApp = a => { const o = CFG.oGia[a]; if(!o) return num(BILL.pricePerMonth) || 0;
+  return num(BILL[o[0]]) || num(BILL[o[1]]) || o[2]; };
+
+/* ------------------------------ dữ liệu ------------------------------ */
+let LIC=[], ACC={}, REQ=[], PAY=[], CFGDB={}, BILL={};
+
+async function nap(){
+  $("#phu").textContent = "đang tải…";
+  const [gl, ga, gr, gp, cf, gg] = await Promise.all([
+    getDocs(collectionGroup(fdb,"lic")),
+    getDocs(collection(fdb,"accounts")),
+    getDocs(collection(fdb,"renewalRequests")),
+    getDocs(collection(fdb,"payments")),
+    getDoc(doc(fdb,"billing","config")),
+    getDoc(doc(fdb,"billing","info"))
+  ]);
+  LIC = gl.docs.map(d=>({ uid:d.ref.parent.parent?.id || "?", app:d.id, ...d.data() })).filter(l=>l.uid!=="?");
+  ACC = {}; ga.docs.forEach(d=>ACC[d.id]=d.data());
+  REQ = gr.docs.map(d=>({ id:d.id, ...d.data() }));
+  PAY = gp.docs.map(d=>({ id:d.id, ...d.data() }));
+  CFGDB = cf.exists() ? cf.data() : {};
+  BILL  = gg.exists() ? gg.data() : {};
+  $("#phu").textContent = `${LIC.length} giấy phép · ${Object.keys(ACC).length} tài khoản`;
+  veTatCa();
+}
+
+/* trạng thái 1 giấy phép */
+function tt(l){
+  if(l.active === false) return {ma:"khoa", ten:"Bị khoá", lop:"bad"};
+  const h = ngay(l.paidUntil);
+  if(!h) return {ma:"tra", ten:"Vĩnh viễn", lop:"ok"};
+  const c = soNgay(h);
+  if(c < 0)  return {ma:"het", ten:`Hết hạn ${-c} ngày`, lop:"bad", con:c};
+  if(l.trial) return {ma:"thu", ten:`Dùng thử · còn ${c}`, lop:"warn", con:c};
+  return {ma:"tra", ten:`Còn ${c} ngày`, lop:c<=7?"warn":"ok", con:c};
+}
+const emailCua = uid => ACC[uid]?.email || "";
+const thangCua = v => { const d = ngay(v); return d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}` : ""; };
+
+/* ------------------------------ màn hình ------------------------------ */
+function veTong(){
+  const th = hnay().slice(0,7);
+  const thu = PAY.filter(p=>thangCua(pNgay(p))===th).reduce((s,p)=>s+pTien(p),0);
+  const tra = LIC.filter(l=>{ const t=tt(l); return t.ma==="tra"; }).length;
+  const sap = LIC.filter(l=>{ const t=tt(l); return (t.ma==="tra"||t.ma==="thu") && t.con!=null && t.con<=7; }).length;
+  const cho = REQ.filter(rCho).length;
+  $("#oTong").innerHTML = `
+    <div class="o tot"><div class="n">${tien(thu)}</div><div class="l">Thu tháng này (đ)</div></div>
+    <div class="o"><div class="n">${tra}</div><div class="l">Giấy phép đang trả tiền</div></div>
+    <div class="o canh"><div class="n">${sap}</div><div class="l">Sắp hết hạn ≤ 7 ngày</div></div>
+    <div class="o ${cho?"xau":""}"><div class="n">${cho}</div><div class="l">Đơn chờ duyệt</div></div>`;
+  const b = $('.nav button[data-v="cho"]'); b.querySelector(".badge")?.remove();
+  if(cho) b.insertAdjacentHTML("beforeend", `<span class="badge">${cho}</span>`);
+
+  const chua = dsDungChua();
+  $("#baoDong").innerHTML = !chua.length ? "" : `
+    <div class="alert"><span>⛔</span><div><b>${chua.length} tài khoản đang dùng chùa</b>
+    <span class="sm">Còn hạn kiểu cũ nên mở khoá mọi app chưa có giấy phép riêng. Xem tab Rủi ro.</span></div></div>`;
+  if(CFGDB.legacy === true) $("#baoDong").insertAdjacentHTML("beforeend",
+    `<div class="alert warn"><span>⚠️</span><div><b>Công tắc legacy đang BẬT</b><span class="sm">Còn cho phép cấp quyền theo hạn cũ ở doc accounts. Tắt khi đã chuyển hết khách.</span></div></div>`);
+}
+
+function veCho(){
+  const ds = REQ.filter(rCho).sort((a,b)=>(rNgay(b)||0)-(rNgay(a)||0));
+  $("#dsCho").innerHTML = ds.length ? ds.map(r=>{
+    const uid = r.uid || r.id.split("__")[0], app = r.app || r.id.split("__")[1] || "?";
+    return `<div class="item"><div class="l">
+      <div class="t">${esc(r.email || emailCua(uid) || uid)}</div>
+      <div class="d">${maApp(app)} ${esc(tenApp(app))} · ${rThang(r)} tháng · ${ngayVN(dToS(rNgay(r)))}</div>
+      <div class="d">Nội dung CK: ${esc(r.noiDung||"—")}</div>
+    </div><div class="r"><div class="money in">${tien(rTien(r))}</div>
+      <button class="btn pri sm" style="margin-top:6px" data-duyet="${esc(r.id)}">Duyệt</button></div></div>`;
+  }).join("") : `<div class="empty"><b>Không có đơn nào chờ</b>Khách bấm “Tôi đã chuyển khoản” thì đơn hiện ở đây.</div>`;
+  $$("#dsCho [data-duyet]").forEach(b=>b.onclick=()=>moDuyet(REQ.find(r=>r.id===b.dataset.duyet)));
+
+  const sap = LIC.map(l=>({l,t:tt(l)})).filter(x=>x.t.con!=null && x.t.con>=0 && x.t.con<=7)
+                 .sort((a,b)=>a.t.con-b.t.con);
+  $("#dsSapHet").innerHTML = sap.length ? sap.map(({l,t})=>`
+    <div class="item"><div class="l"><div class="t">${esc(emailCua(l.uid)||l.uid)}</div>
+      <div class="d">${maApp(l.app)} ${esc(tenApp(l.app))}</div></div>
+    <div class="r"><span class="chip ${t.lop}">${esc(t.ten)}</span>
+      <button class="btn sm" style="margin-top:6px" data-gh="${esc(l.uid)}|${esc(l.app)}">Gia hạn</button></div></div>`).join("")
+    : `<div class="empty">Không có ai sắp hết hạn.</div>`;
+  $$("#dsSapHet [data-gh]").forEach(b=>b.onclick=()=>{ const [u,a]=b.dataset.gh.split("|"); moDuyet(null,u,a); });
+}
+
+function veKhach(){
+  const q = ($("#tim").value||"").toLowerCase(), fa = $("#locApp").value, ft = $("#locTT").value;
+  const ds = LIC.map(l=>({l,t:tt(l)}))
+    .filter(({l,t})=> (!fa||l.app===fa) && (!ft||t.ma===ft)
+      && (!q || (emailCua(l.uid)+" "+l.uid).toLowerCase().includes(q)))
+    .sort((a,b)=>(a.t.con??9e9)-(b.t.con??9e9));
+  $("#dsKhach").innerHTML = ds.length ? ds.map(({l,t})=>`
+    <div class="item"><div class="l">
+      <div class="t">${esc(emailCua(l.uid)||l.uid)}</div>
+      <div class="d">${maApp(l.app)} ${esc(tenApp(l.app))} · hạn ${ngayVN(dToS(ngay(l.paidUntil)))}</div>
+    </div><div class="r"><span class="chip ${t.lop}">${esc(t.ten)}</span>
+      <button class="btn sm" style="margin-top:6px" data-gh="${esc(l.uid)}|${esc(l.app)}">Sửa</button></div></div>`).join("")
+    : `<div class="empty"><b>Không có kết quả</b>Đổi bộ lọc hoặc từ khoá.</div>`;
+  $$("#dsKhach [data-gh]").forEach(b=>b.onclick=()=>{ const [u,a]=b.dataset.gh.split("|"); moDuyet(null,u,a); });
+}
+
+function veThu(){
+  const mo = [];
+  for(let i=11;i>=0;i--){ const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
+    mo.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); }
+  const so = mo.map(m=>PAY.filter(p=>thangCua(pNgay(p))===m).reduce((s,p)=>s+pTien(p),0));
+  const max = Math.max(...so, 1);
+  $("#bieuDo").innerHTML = mo.map((m,i)=>`<div class="c" title="${m}: ${tien(so[i])}đ">
+    <div class="b" style="height:${Math.round(so[i]/max*88)}%"></div><div class="x">${m.slice(5)}</div></div>`).join("");
+
+  const th = $("#thangThu").value || hnay().slice(0,7);
+  const ds = PAY.filter(p=>thangCua(pNgay(p))===th);
+  const theo = {}; ds.forEach(p=>{ theo[p.app||"?"] = (theo[p.app||"?"]||0) + pTien(p); });
+  const tong = ds.reduce((s,p)=>s+pTien(p),0);
+  $("#thuTheoApp").innerHTML = (Object.keys(theo).length ? Object.entries(theo).sort((a,b)=>b[1]-a[1]).map(([a,v])=>
+    `<div class="kv"><span class="k">${maApp(a)} ${esc(tenApp(a))}</span><span class="v num">${tien(v)} đ</span></div>`).join("")
+    : `<p class="sm mo" style="margin:0">Tháng này chưa có dòng thu nào.</p>`)
+    + `<div class="kv"><span class="k"><b>Tổng</b></span><span class="v num" style="color:var(--bien)">${tien(tong)} đ</span></div>`;
+
+  const all = PAY.slice().sort((a,b)=>(pNgay(b)||0)-(pNgay(a)||0)).slice(0,120);
+  $("#dsThu").innerHTML = all.length ? all.map(p=>`
+    <div class="item"><div class="l"><div class="t">${esc(p.email||emailCua(p.uid)||p.uid||"—")}</div>
+      <div class="d">${maApp(p.app||"?")} ${pThang(p)||""} tháng · ${ngayVN(dToS(pNgay(p)))}${p.hanMoi?` · đến ${ngayVN(dToS(ngay(p.hanMoi)))}`:""}</div></div>
+    <div class="r"><div class="money in">${tien(pTien(p))}</div></div></div>`).join("")
+    : `<div class="empty"><b>Sổ còn trống</b>Mỗi lần duyệt đơn ở tab Đơn chờ sẽ sinh một dòng ở đây.</div>`;
+}
+
+function dsDungChua(){
+  return Object.entries(ACC).filter(([uid,a])=>{
+    if(a.migrated === true || a.active === false) return false;
+    const h = ngay(a.paidUntil), hp = ngay(a.posUntil);
+    const con = (h && soNgay(h) >= -3) || (hp && soNgay(hp) >= -3) || a.posActive === true;
+    return !!con;                                 // rules còn ân hạn 3 ngày
+  }).map(([uid,a])=>({ uid, a, thieu: CFG.apps
+      .filter(app => !LIC.some(l=>l.uid===uid && l.app===app)) }));
+}
+function veRuiRo(){
+  const ds = dsDungChua();
+  $("#dsChua").innerHTML = ds.length ? ds.map(({uid,a,thieu})=>`
+    <div class="item"><div class="l"><div class="t">${esc(a.email||uid)}</div>
+      <div class="d">Hạn cũ đến ${ngayVN(dToS(ngay(a.paidUntil)))}${a.posUntil?` · POS đến ${ngayVN(dToS(ngay(a.posUntil)))}`:""}</div>
+      <div class="d">Đang mở miễn phí: ${thieu.map(maApp).join(" ")||"—"}</div></div>
+    <div class="r"><button class="btn sm dan" data-mg="${esc(uid)}">Cắt</button></div></div>`).join("")
+    : `<div class="empty"><b>Sạch</b>Không còn tài khoản nào ăn theo hạn cũ.</div>`;
+  $$("#dsChua [data-mg]").forEach(b=>b.onclick=()=>catCu(b.dataset.mg));
+
+  const kh = LIC.filter(l=>l.active===false);
+  $("#dsKhoa").innerHTML = kh.length ? kh.map(l=>`
+    <div class="item"><div class="l"><div class="t">${esc(emailCua(l.uid)||l.uid)}</div>
+      <div class="d">${maApp(l.app)} ${esc(tenApp(l.app))}</div></div>
+    <div class="r"><button class="btn sm" data-mo="${esc(l.uid)}|${esc(l.app)}">Mở lại</button></div></div>`).join("")
+    : `<div class="empty">Không có giấy phép nào bị khoá.</div>`;
+  $$("#dsKhoa [data-mo]").forEach(b=>b.onclick=async()=>{
+    const [u,a]=b.dataset.mo.split("|");
+    await setDoc(doc(fdb,`accounts/${u}/lic`,a), {active:true}, {merge:true}); toast("Đã mở lại"); nap(); });
+}
+
+function veCong(){
+  const sw = (k,t,d,on)=>`<div class="sw"><div><div class="t">${t}</div><div class="d">${d}</div></div>
+    <div class="tg ${on?"on":""}" data-sw="${k}"><i></i></div></div>`;
+  $("#congTac").innerHTML =
+    sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false) +
+    sw("legacy","Chấp nhận hạn kiểu cũ","Bật là một lần trả tiền dùng được mọi app chưa có giấy phép riêng.", CFGDB.legacy === true);
+  $$("#congTac [data-sw]").forEach(el=>el.onclick=async()=>{
+    const k = el.dataset.sw, moi = !el.classList.contains("on");
+    if(k==="enforce" && !moi && !confirm("Tắt bắt buộc giấy phép = mọi khách dùng miễn phí. Chắc chưa?")) return;
+    if(k==="legacy" && moi && !confirm("Bật legacy sẽ mở lại lỗ hổng một lần trả tiền dùng mọi app. Chắc chưa?")) return;
+    await setDoc(doc(fdb,"billing","config"), {[k]:moi}, {merge:true});
+    CFGDB[k]=moi; toast("Đã đổi công tắc"); veCong(); veTong();
+  });
+  const apps = CFG.apps;
+  $("#bangGia").innerHTML = `
+    <p class="xs mo" style="margin:0 0 10px">Sửa ở đây là cả 5 app đổi theo — cùng doc <b>billing/info</b> mà các app đang đọc.</p>
+    <div class="f2">
+      <div class="f"><label>Mã ngân hàng (BIN)</label><input id="b_bin" value="${esc(BILL.bin||BILL.bankBin||"")}" placeholder="970416"></div>
+      <div class="f"><label>Tên ngân hàng</label><input id="b_bank" value="${esc(BILL.bankName||"")}"></div>
+    </div>
+    <div class="f"><label>Số tài khoản</label><input id="b_acc" value="${esc(BILL.account||BILL.acc||"")}"></div>
+    <div class="f"><label>Chủ tài khoản (viết không dấu)</label><input id="b_name" value="${esc(BILL.accName||"")}"></div>
+    <div class="f"><label>Giá chung mỗi tháng (đ)</label><input id="b_chung" type="number" inputmode="numeric" value="${num(BILL.pricePerMonth)||""}"></div>
+    ${apps.map(a=>`<div class="f"><label>Giá ${esc(tenApp(a))} mỗi tháng (đ)</label>
+      <input id="b_${a}" type="number" inputmode="numeric" value="${num(BILL[CFG.oGia[a][0]])||""}"
+        placeholder="để trống = ${tien(giaApp(a))}"></div>`).join("")}
+    <button class="btn pri blk" id="luuGia">Lưu</button>`;
+  $("#luuGia").onclick = async ()=>{
+    const m = { bin:$("#b_bin").value.trim(), bankName:$("#b_bank").value.trim(),
+                account:$("#b_acc").value.trim(), accName:$("#b_name").value.trim(),
+                pricePerMonth:num($("#b_chung").value) };
+    apps.forEach(a=>{ const v = num($("#b_"+a).value); if(v) m[CFG.oGia[a][0]] = v; });
+    try{ await setDoc(doc(fdb,"billing","info"), m, {merge:true}); BILL={...BILL,...m}; toast("Đã lưu"); }
+    catch(e){ toast("Lỗi: "+(e.code||e.message),1); }
+  };
+}
+
+function veTatCa(){ veTong(); veCho(); veKhach(); veThu(); veRuiRo(); veCong();
+  const apps=[...new Set([...CFG.apps, ...LIC.map(l=>l.app)])];
+  $("#locApp").innerHTML = `<option value="">Tất cả app</option>` + apps.map(a=>`<option value="${esc(a)}">${esc(tenApp(a))}</option>`).join("");
+}
+
+/* ------------------------------ duyệt & ghi sổ ------------------------------ */
+function moSheet(t,b,f){ $("#shT").textContent=t; $("#shB").innerHTML=b; $("#shF").innerHTML=f||"";
+  $("#mask").classList.add("on"); $("#sheet").classList.add("on"); }
+function dongSheet(){ $("#mask").classList.remove("on"); $("#sheet").classList.remove("on"); }
+$("#mask").onclick = dongSheet; $("#shX").onclick = dongSheet;
+
+function moDuyet(r, uidIn, appIn){
+  const uid = r ? (r.uid || r.id.split("__")[0]) : uidIn;
+  const app = r ? (r.app || r.id.split("__")[1]) : appIn;
+  const l   = LIC.find(x=>x.uid===uid && x.app===app) || {};
+  const hanCu = ngay(l.paidUntil);
+  const thang0 = r ? (num(r.months)||1) : 1;
+  moSheet("Gia hạn & ghi sổ", `
+    <div class="card">
+      <div class="kv"><span class="k">Khách</span><span class="v">${esc(r?.email || emailCua(uid) || uid)}</span></div>
+      <div class="kv"><span class="k">App</span><span class="v">${maApp(app)} ${esc(tenApp(app))}</span></div>
+      <div class="kv"><span class="k">Hạn hiện tại</span><span class="v">${hanCu?ngayVN(dToS(hanCu)):"chưa có"}</span></div>
+      ${r?`<div class="kv"><span class="k">Nội dung CK</span><span class="v">${esc(r.noiDung||"—")}</span></div>`:""}
+    </div>
+    <div class="f2">
+      <div class="f"><label>Số tháng</label><select id="dGoi">${CFG.thang.map(m=>
+        `<option value="${m}"${m===thang0?" selected":""}>${m} tháng</option>`).join("")}</select></div>
+      <div class="f"><label>Số tiền thực nhận (đ)</label><input id="dTien" type="number" inputmode="numeric" value="${r?rTien(r):giaApp(app)}"></div>
+    </div>
+    <div class="f"><label>Hạn mới</label><input id="dHan" type="date"></div>
+    <div class="f"><label>Ghi chú vào sổ</label><input id="dGc" placeholder="chuyển khoản ACB 14:20…"></div>
+    <p class="xs mo">Duyệt sẽ làm 3 việc một lượt: đặt hạn mới, mở khoá nếu đang khoá, và ghi một dòng vào sổ doanh thu.</p>
+  `, `<button class="btn ${l.active===false?"":"dan"}" id="dKhoa">${l.active===false?"Mở khoá":"Khoá app này"}</button>
+     <button class="btn pri" id="dOk">Duyệt & ghi sổ</button>`);
+
+  const tinh = ()=>{ const m = num($("#dGoi").value);
+    const goc = hanCu && hanCu > new Date() ? hanCu : new Date();
+    $("#dHan").value = dToS(themThang(goc, m));
+    $("#dTien").value = giaApp(app) * m; };
+  tinh(); $("#dGoi").onchange = tinh;
+
+  $("#dKhoa").onclick = async ()=>{
+    const mo = l.active === false;                       // đang khoá thì nút này là mở lại
+    if(!mo && !confirm("Khoá app này của khách? Họ sẽ không đọc ghi được nữa.")) return;
+    await setDoc(doc(fdb,`accounts/${uid}/lic`,app), {active:mo}, {merge:true});
+    dongSheet(); toast(mo?"Đã mở khoá":"Đã khoá"); nap();
+  };
+  $("#dOk").onclick = async ()=>{
+    const han = $("#dHan").value; if(!han) return toast("Chưa có hạn mới",1);
+    const hanMoi = new Date(han+"T23:59:00");
+    const b = writeBatch(fdb);
+    const m = num($("#dGoi").value);
+    b.set(doc(fdb,`accounts/${uid}/lic`,app),
+      { app, paidUntil:hanMoi, active:true, trial:false, capNhat:new Date() }, {merge:true});
+    // giữ đúng tên trường {at, amount, months, app, uid} để phần doanh thu
+    // trong 4 app cũ vẫn cộng được các dòng này
+    b.set(doc(collection(fdb,"payments")), {
+      uid, app, months:m, amount:num($("#dTien").value), at:new Date(), src:r?"duyet":"tay",
+      email: r?.email || emailCua(uid) || "", hanCu: hanCu||null, hanMoi,
+      ghiChu: $("#dGc").value||"", nguoiDuyet: auth.currentUser?.email||"" });
+    if(r) b.set(doc(fdb,"renewalRequests",r.id), { status:"done", handledAt:new Date() }, {merge:true});
+    try{ await b.commit(); dongSheet(); toast("Đã gia hạn và ghi sổ"); nap(); }
+    catch(e){ console.error(e); toast("Lỗi: "+(e.code||e.message),1); }
+  };
+}
+
+async function catCu(uid){
+  if(!confirm("Đánh dấu tài khoản này đã chuyển đổi? Họ sẽ chỉ còn dùng được app đã có giấy phép riêng.")) return;
+  try{ await setDoc(doc(fdb,"accounts",uid), {migrated:true}, {merge:true}); toast("Đã cắt quyền cũ"); nap(); }
+  catch(e){ toast("Lỗi: "+(e.code||e.message),1); }
+}
+
+/* ------------------------------ CSV ------------------------------ */
+$("#xuatCSV").onclick = ()=>{
+  const h = ["ngay_tra","email","uid","app","so_thang","so_tien","han_cu","han_moi","ghi_chu","nguoi_duyet"];
+  const d = PAY.slice().sort((a,b)=>(pNgay(a)||0)-(pNgay(b)||0)).map(p=>[
+    dToS(pNgay(p)), p.email||emailCua(p.uid), p.uid, p.app, pThang(p), pTien(p),
+    dToS(ngay(p.hanCu)), dToS(ngay(p.hanMoi)), p.ghiChu||"", p.nguoiDuyet||""
+  ].map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(","));
+  const bl = new Blob(["\uFEFF"+[h.join(","),...d].join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a"); a.href=URL.createObjectURL(bl);
+  a.download = `so-doanh-thu-${hnay()}.csv`; a.click(); URL.revokeObjectURL(a.href);
+};
+
+/* ------------------------------ cổng vào ------------------------------ */
+function congDangNhap(che){
+  $("#gate").classList.remove("off");
+  $("#gateBody").innerHTML = `
+    <div class="f"><label>Email quản trị</label><input id="e" type="email" autocomplete="username"></div>
+    <div class="f"><label>Mật khẩu</label><input id="p" type="password" autocomplete="current-password"></div>
+    <button class="btn pri blk" id="go">Vào</button>
+    ${che?`<div class="alert" style="margin-top:16px"><span>!</span><div>${esc(che)}</div></div>`:""}`;
+  $("#go").onclick = async ()=>{
+    try{ await signInWithEmailAndPassword(auth, $("#e").value.trim(), $("#p").value); }
+    catch(e){ toast("Sai email hoặc mật khẩu",1); }
+  };
+}
+onAuthStateChanged(auth, async u=>{
+  if(!u) return congDangNhap();
+  if(u.email !== CFG.admin){ await signOut(auth); return congDangNhap("Tài khoản này không có quyền quản trị."); }
+  $("#gate").classList.add("off"); $("#topbar").style.display="flex"; $("#nav").style.display="grid";
+  $("#thangThu").value = hnay().slice(0,7);
+  $("#ver").textContent = `Sổ doanh thu ${CFG.ver} · ${u.email}`;
+  try{ await nap(); }catch(e){ console.error(e); toast("Không tải được: "+(e.code||e.message),1); }
+});
+
+/* ------------------------------ điều phối ------------------------------ */
+$("#nav").onclick = e=>{ const b=e.target.closest("button[data-v]"); if(!b) return;
+  $$(".view").forEach(s=>s.classList.toggle("on", s.id==="v-"+b.dataset.v));
+  $$(".nav button").forEach(x=>x.classList.toggle("on", x===b)); window.scrollTo(0,0); };
+$("#btnTai").onclick = ()=>nap();
+$("#tim").oninput = veKhach;
+$("#locApp").onchange = veKhach;
+$("#locTT").onchange = veKhach;
+$("#thangThu").onchange = veThu;
+$("#btnThoat").onclick = ()=>signOut(auth);
+$("#v-cho").classList.add("on");
+
+/* ---- Cài được vào màn hình chính: icon vẽ tại chỗ, manifest dạng blob ----
+   start_url kèm cả tên file, nếu không mở từ màn hình chính sẽ ra 404. */
+function veIcon(sz, maskable){
+  const c = document.createElement("canvas"); c.width = c.height = sz;
+  const g = c.getContext("2d");
+  const bo = (x,y,w,h,r)=>{ if(g.roundRect){ g.beginPath(); g.roundRect(x,y,w,h,r); } else {
+      g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+      g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); } };
+  g.fillStyle = "#f5c518";                                  // nền vàng: phân biệt với app
+  if(maskable) g.fillRect(0,0,sz,sz); else { bo(0,0,sz,sz,sz*0.22); g.fill(); }
+  const tl = maskable ? 0.62 : 0.76;
+  const pw = sz*tl, ph = pw*0.42, x = (sz-pw)/2, y = (sz-ph)/2;
+  bo(x, y, pw, ph, ph*0.16); g.fillStyle = "#12151a"; g.fill();
+  g.fillStyle = "#f5c518"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.font = `700 ${Math.round(ph*0.42)}px "Roboto Condensed","Arial Narrow",system-ui,sans-serif`;
+  g.fillText("ADMIN", sz/2, y + ph*0.53);
+  return c.toDataURL("image/png");
+}
+try{
+  const i192 = veIcon(192), i512 = veIcon(512), iMask = veIcon(512, true);
+  const dc  = new URL(location.href);
+  const goc = dc.origin + dc.pathname;
+  const pvi = goc.replace(/[^/]*$/, "");
+  const mf = {
+    name:"Sổ doanh thu · Admin", short_name:"Sổ doanh thu",
+    description:"Duyệt gia hạn, theo dõi doanh thu và giấy phép của toàn bộ app cho thuê.",
+    start_url:goc, scope:pvi, id:goc, display:"standalone", orientation:"portrait",
+    background_color:"#12151a", theme_color:"#12151a", lang:"vi",
+    icons:[ {src:i192, sizes:"192x192", type:"image/png", purpose:"any"},
+            {src:i512, sizes:"512x512", type:"image/png", purpose:"any"},
+            {src:iMask, sizes:"512x512", type:"image/png", purpose:"maskable"} ]
+  };
+  $("#mfLink").href = URL.createObjectURL(new Blob([JSON.stringify(mf)], {type:"application/manifest+json"}));
+  $("#icLink").href = i192; $("#icApple").href = i192;
+}catch(e){ console.warn("Không dựng được manifest:", e); }
+
+if("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(()=>{});
+</script>
+</body>
+</html>
