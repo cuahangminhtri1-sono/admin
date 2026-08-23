@@ -425,12 +425,13 @@ const CFG = {
   },
   admin:"cuahangminhtri1@gmail.com",
   ten:{ sono:"Sổ Nợ", sono_pos:"Bán hàng (POS)", cafe:"Quản Lý Cafe",
-        tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng" },
-  apps:["sono","sono_pos","cafe","tro","xe","hd"],
+        tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng", sono_cn:"Chi nhánh (thêm)" },
+  apps:["sono","sono_pos","sono_cn","cafe","tro","xe","hd"],
   /* Tên ô giá và giá mặc định — chép đúng hàm priceFor() trong các app.
      Sai tên ô là app đọc ra 0đ, khách quét mã QR ra số tiền 0. */
   oGia:{ sono:["priceSono","pricePerMonth",10000],
          sono_pos:["pricePos","posPricePerMonth",0],
+         sono_cn:["priceCn","priceCnPerMonth",10000],
          cafe:["priceCafe","pricePerMonth",10000],
          tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000],
@@ -892,7 +893,7 @@ function ruiRo(){
   const la = LIC.filter(l=>!CFG.apps.includes(l.app))
     .map(l=>({uid:l.uid, t:emailCua(l.uid)||l.uid, d:`Mã app lạ: ${l.app}`}));
   r.push({muc:"nang", ten:"Giấy phép mã app lạ", items:la,
-    mota:"Không thuộc 6 sản phẩm đang bán. Có thể do khách tự tạo."});
+    mota:"Không thuộc các sản phẩm đang bán. Có thể do khách tự tạo."});
 
   const khongSo = LIC.filter(l=>!l.trial && tt(l).ma==="tra" && !PAY.some(p=>p.uid===l.uid && p.app===l.app))
     .map(l=>({uid:l.uid, t:emailCua(l.uid)||l.uid, d:`${tenApp(l.app)} · hạn ${ngayVN(dToS(ngay(l.paidUntil)))}`}));
@@ -1085,7 +1086,7 @@ function veCaiDat(){
 
   const apps = CFG.apps;
   $("#bangGia").innerHTML = `
-    <p class="xs mo" style="margin:0 0 10px">Sửa ở đây là cả 6 sản phẩm đổi theo — cùng doc <b>billing/info</b> mà các app đang đọc.</p>
+    <p class="xs mo" style="margin:0 0 10px">Sửa ở đây là các sản phẩm đổi theo — cùng doc <b>billing/info</b> mà các app đang đọc.</p>
     <div class="f2">
       <div class="f"><label>Mã ngân hàng (BIN)</label><input id="b_bin" value="${esc(BILL.bin||BILL.bankBin||"")}" placeholder="970415"></div>
       <div class="f"><label>Tên ngân hàng</label><input id="b_bank" value="${esc(BILL.bankName||"")}"></div>
@@ -1126,6 +1127,8 @@ function moDuyet(r, uidIn, appIn){
   const hanText = laVV ? "Vĩnh viễn — không hết hạn"
                 : (hanCu ? ngayVN(dToS(hanCu)) : "chưa đặt");
   const t0 = r ? (num(r.months)||1) : 1;
+  const laCN = app==='sono_cn';                          // gói chi nhánh thêm: cần thêm ô Số chi nhánh
+  const cnQty0 = laCN ? Math.max(1, num(l.qty)||1) : 1;
   moSheet("Đặt hạn & ghi sổ", `
     <div class="card">
       <div class="kv"><span class="k">Khách</span><span class="v">${esc(r?.email || emailCua(uid) || uid)}</span></div>
@@ -1141,6 +1144,7 @@ function moDuyet(r, uidIn, appIn){
         `<option value="${m}"${m===t0?" selected":""}>${m} tháng</option>`).join("")}</select></div>
       <div class="f"><label>Số tiền thực nhận (đ)</label><input id="dTien" type="number" inputmode="numeric" value="${r?rTien(r):giaApp(app)}"></div>
     </div>
+    ${laCN?`<div class="f"><label>Số chi nhánh thêm (mỗi chi nhánh 1 suất — thu tiền cho TỪNG chi nhánh)</label><input id="dQty" type="number" inputmode="numeric" min="1" value="${cnQty0}"></div>`:""}
     <div id="dCanh"></div>
     <div class="f"><label>Ngày hết hạn mới</label><input id="dHan" type="date"></div>
     <div class="f"><label>Ghi chú vào sổ</label><input id="dGc" placeholder="đã nhận CK lúc 14:20…"></div>
@@ -1149,16 +1153,19 @@ function moDuyet(r, uidIn, appIn){
      <button class="btn ${l.active===false?"":"dan"}" id="dKhoa">${l.active===false?"Mở khoá":"Khoá"}</button>
      <button class="btn pri" id="dOk">Đặt hạn &amp; ghi sổ</button>`);
 
+  const dcnQty = ()=> laCN ? Math.max(1, num($("#dQty") ? $("#dQty").value : 0)||1) : 1;
   const tinh = ()=>{ const m = num($("#dGoi").value);
     const goc = hanCu && hanCu > new Date() ? hanCu : new Date();
     $("#dHan").value = dToS(themThang(goc, m));
-    const dung = giaGiaHan(giaApp(app),m), thuc = num($("#dTien").value);
-    $("#dCanh").innerHTML = (thangTang(m)>0
+    const dung = giaGiaHan(giaApp(app),m)*dcnQty(), thuc = num($("#dTien").value);
+    $("#dCanh").innerHTML = (laCN?`<div style="background:#eef5ff;border:1px solid #bcd6f5;border-radius:8px;padding:7px 10px;color:#1c4e80;font-size:.9em;margin-bottom:6px">🏪 ${dcnQty()} chi nhánh thêm × ${tien(giaGiaHan(giaApp(app),m))}đ = <b>${tien(dung)}đ</b> · khách dùng được ${1+dcnQty()} chi nhánh (1 chính + ${dcnQty()} thêm).</div>`:"")
+      + (thangTang(m)>0
       ? `<div style="background:#eaf7ee;border:1px solid #b6e3c4;border-radius:8px;padding:7px 10px;color:#1b6b3a;font-size:.9em;margin-bottom:6px">🎁 Gói năm: cấp ${m} tháng, chỉ thu tiền ${thangTinhTien(m)} tháng (tặng ${thangTang(m)}).</div>` : "")
       + ((thuc !== dung)
       ? `<div class="warnbox">Bảng giá là <b>${tien(dung)}đ</b> cho ${m} tháng, đang ghi <b>${tien(thuc)}đ</b>. Kiểm tra lại sao kê trước khi duyệt.</div>` : "");
   };
-  $("#dGoi").onchange = ()=>{ $("#dTien").value = giaGiaHan(giaApp(app),num($("#dGoi").value)); tinh(); };
+  $("#dGoi").onchange = ()=>{ $("#dTien").value = giaGiaHan(giaApp(app),num($("#dGoi").value))*dcnQty(); tinh(); };
+  { const _q=$("#dQty"); if(_q) _q.oninput = ()=>{ $("#dTien").value = giaGiaHan(giaApp(app),num($("#dGoi").value))*dcnQty(); tinh(); }; }
   $("#dTien").oninput = tinh;
   tinh();
 
@@ -1176,6 +1183,7 @@ function moDuyet(r, uidIn, appIn){
     try{
       await setDoc(doc(fdb,`accounts/${uid}/lic`,app),
         { app, vinhVien:true, active:true, trial:false, paidUntil:null, capNhat:new Date(),
+          ...(laCN?{qty:dcnQty()}:{}),
           lichSu: arrayUnion(buoc("dat_vinh_vien")) }, {merge:true});
       dongSheet(); toast("Đã đặt vĩnh viễn"); nap();
     }catch(e){ toast("Lỗi: "+(e.code||e.message),1); }
@@ -1192,6 +1200,7 @@ function moDuyet(r, uidIn, appIn){
       // quyết định tất cả; nếu không, cờ vĩnh viễn cũ sẽ đè và ngày thành vô nghĩa.
       b.set(doc(fdb,`accounts/${uid}/lic`,app),
         { app, paidUntil:hanMoi, vinhVien:false, active:true, trial:false, capNhat:new Date(),
+          ...(laCN?{qty:dcnQty()}:{}),
           lichSu: arrayUnion(buoc("gia_han", { tien:soTien, thang:m,
             hanCu:hanCu||null, hanMoi, ghi:$("#dGc").value||"" })) }, {merge:true});
       // Chỉ ghi dòng doanh thu khi thực nhận > 0 (đặt hạn miễn phí thì khỏi ghi 0đ).
@@ -1199,6 +1208,7 @@ function moDuyet(r, uidIn, appIn){
       if(soTien !== 0){
         b.set(doc(collection(fdb,"payments")), {
           uid, app, months:m, amount:soTien, at:new Date(), src:r?"duyet":"tay",
+          ...(laCN?{qty:dcnQty()}:{}),
           email: r?.email || emailCua(uid) || "", hanCu: hanCu||null, hanMoi,
           ghiChu: $("#dGc").value||"", nguoiDuyet: auth.currentUser?.email||"" });
       }
