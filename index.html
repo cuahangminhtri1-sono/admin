@@ -360,6 +360,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 <section class="view" id="v-caidat">
   <div class="hd"><h2>Công tắc thu tiền</h2><span class="line"></span></div>
   <div class="card" id="congTac"></div>
+  <div class="card" id="chuyenDL"></div>
   <div class="hd"><h2>Tài khoản nhận tiền &amp; bảng giá</h2><span class="line"></span></div>
   <div class="card" id="bangGia"></div>
   <div class="hd"><h2>Sửa giấy phép vĩnh viễn</h2><span class="line"></span></div>
@@ -1068,6 +1069,84 @@ function moLoi(g){
 
 /* ------------------------------ 6. CÀI ĐẶT ------------------------------ */
 function veCaiDat(){
+  /* ── CHUYỂN DỮ LIỆU SANG TÀI KHOẢN MỚI ────────────────────────────────────
+     Dùng khi khách mất quyền vào email cũ, hoặc lúc đăng ký gõ nhầm email.
+     KHÔNG dùng cho việc đổi máy — đổi máy chỉ cần đăng nhập đúng email cũ,
+     dữ liệu nằm trên Firestore theo uid nên tự đồng bộ về.
+
+     Nút này làm 3 việc trong một lần bấm:
+       1. Ghi /chuyen_dl/{uidMoi} = { tuUid } -> app cho phép phục hồi file của uid cũ
+       2. Chuyển toàn bộ giấy phép còn hạn từ tài khoản cũ sang tài khoản mới
+       3. TẮT giấy phép tài khoản cũ (active:false)
+
+     Bước 3 là bắt buộc. Thiếu nó thì khách trả tiền một lần rồi cứ "chuyển"
+     liên tục, mỗi lần thêm một shop chạy song song trên cùng một giấy phép. */
+  (function(){
+    const box=$("#chuyenDL"); if(!box) return;
+    box.innerHTML=`
+      <h3 style="margin:0 0 6px">🔄 Chuyển dữ liệu sang tài khoản mới</h3>
+      <p class="xs mo" style="margin:0 0 10px">
+        Chỉ dùng khi khách <b>đổi email</b> (mất Gmail cũ, gõ nhầm lúc đăng ký).<br>
+        <b>Đổi máy thì KHÔNG cần</b> — đăng nhập đúng email cũ là dữ liệu tự về.
+      </p>
+      <div class="f2">
+        <div class="f"><label>Email CŨ (nguồn)</label><input id="cdl_cu" placeholder="cu@gmail.com" autocomplete="off"></div>
+        <div class="f"><label>Email MỚI (đích)</label><input id="cdl_moi" placeholder="moi@gmail.com" autocomplete="off"></div>
+      </div>
+      <div id="cdl_xem" class="xs" style="margin:8px 0;min-height:20px"></div>
+      <button class="btn" id="cdl_ok">Kiểm tra &amp; chuyển</button>`;
+
+    const timUid=(mail)=>{
+      const m=String(mail||"").trim().toLowerCase(); if(!m) return null;
+      for(const uid in ACC){ if(String((ACC[uid]||{}).email||"").toLowerCase()===m) return uid; }
+      return null;
+    };
+
+    $("#cdl_ok").onclick=async()=>{
+      const xem=$("#cdl_xem");
+      const mCu=$("#cdl_cu").value.trim(), mMoi=$("#cdl_moi").value.trim();
+      const uCu=timUid(mCu), uMoi=timUid(mMoi);
+      if(!uCu){ xem.innerHTML='<b style="color:#c0392b">Không tìm thấy tài khoản CŨ: '+esc(mCu)+'</b>'; return; }
+      if(!uMoi){ xem.innerHTML='<b style="color:#c0392b">Không tìm thấy tài khoản MỚI: '+esc(mMoi)+'</b><br>Khách phải đăng ký tài khoản mới trước đã.'; return; }
+      if(uCu===uMoi){ xem.innerHTML='<b style="color:#c0392b">Hai email trùng nhau.</b>'; return; }
+
+      const licCu=LIC.filter(l=>l.uid===uCu);
+      if(!licCu.length){ xem.innerHTML='<b style="color:#c0392b">Tài khoản cũ chưa có giấy phép nào.</b><br>Chỉ dùng thử thì KHÔNG chuyển — đây thường là dấu hiệu lách dùng thử.'; return; }
+      const daTra=licCu.filter(l=>l.trial!==true||l.vinhVien===true);
+      const moTa=licCu.map(l=>`&nbsp;&nbsp;• <b>${esc(l.app)}</b> — hạn ${l.vinhVien?"VĨNH VIỄN":ngayVN(dToS(ngay(l.paidUntil)))}${l.trial===true&&l.vinhVien!==true?' <span style="color:#c0392b">(chỉ dùng thử)</span>':""}`).join("<br>");
+      xem.innerHTML=`Sẽ chuyển <b>${licCu.length}</b> giấy phép:<br>${moTa}<br>
+        <span style="color:#a3620a">Giấy phép tài khoản CŨ sẽ bị TẮT sau khi chuyển.</span>`;
+
+      if(!daTra.length && !confirm("Tài khoản cũ CHỈ CÓ bản dùng thử.\n\nChuyển bản dùng thử thường là dấu hiệu lách — khách xoay vòng email để dùng free.\n\nVẫn chuyển?")) return;
+      if(!confirm(`CHUYỂN DỮ LIỆU\n\nTừ:  ${mCu}\nSang: ${mMoi}\n\n• Cho phép tài khoản mới phục hồi file sao lưu của tài khoản cũ\n• Chuyển ${licCu.length} giấy phép sang tài khoản mới\n• TẮT giấy phép tài khoản cũ\n\nXác nhận?`)) return;
+
+      const btn=$("#cdl_ok"); btn.disabled=true; btn.textContent="Đang chuyển…";
+      try{
+        await setDoc(doc(fdb,"chuyen_dl",uMoi),{
+          tuUid:uCu, tuEmail:mCu, capBoi:(auth.currentUser?.email||""),
+          capLuc:new Date(), capLucMs:Date.now()
+        });
+        for(const l of licCu){
+          const d={}; 
+          if(l.paidUntil!=null)d.paidUntil=ngay(l.paidUntil)||l.paidUntil;
+          if(l.vinhVien!=null)d.vinhVien=l.vinhVien;
+          d.active=true; d.trial=(l.trial===true); if(l.trialUsed!=null)d.trialUsed=l.trialUsed;
+          await setDoc(doc(fdb,`accounts/${uMoi}/lic`,l.app), d, {merge:true});
+          await setDoc(doc(fdb,`accounts/${uCu}/lic`,l.app), {active:false}, {merge:true});
+          await ghiLic(uMoi,l.app,"nhan_chuyen",{tu:mCu});
+          await ghiLic(uCu,l.app,"da_chuyen_di",{sang:mMoi});
+        }
+        await ghiTK(uMoi,"nhan_chuyen_du_lieu",{tu:mCu});
+        await ghiTK(uCu,"da_chuyen_du_lieu",{sang:mMoi});
+        await ghiChung("chuyen_du_lieu",{ghi:`${mCu} → ${mMoi} · ${licCu.length} giấy phép`});
+        xem.innerHTML='<b style="color:#0a5f4a">✅ Xong. Bảo khách phục hồi file sao lưu trên tài khoản mới.</b>';
+        toast("Đã chuyển dữ liệu"); nap();
+      }catch(e){
+        xem.innerHTML='<b style="color:#c0392b">Lỗi: '+esc(e.code||e.message||String(e))+'</b>';
+      }finally{ btn.disabled=false; btn.textContent="Kiểm tra & chuyển"; }
+    };
+  })();
+
   const sw = (k,t,d,on)=>`<div class="sw"><div><div class="t">${t}</div><div class="d">${d}</div></div>
     <div class="tg ${on?"on":""}" data-sw="${k}"><i></i></div></div>`;
   $("#congTac").innerHTML =
