@@ -731,17 +731,27 @@ function hoSo(uid){
       ${a.paidUntil?`Hạn cũ đến ${ngayVN(dToS(ngay(a.paidUntil)))}. `:""}${a.posUntil?`POS đến ${ngayVN(dToS(ngay(a.posUntil)))}.`:""}</div>`:""}
     <div class="hd"><h2>Giấy phép từng sản phẩm</h2><span class="line"></span></div>
     <div class="card">${dong}</div>
+    <div class="hd"><h2>Kho dữ liệu khách</h2><span class="line"></span></div>
+    <div class="card">
+      <p class="xs mo" style="margin:0 0 9px">Tải nguyên kho của khách về máy, hoặc nạp một file sao lưu ngược vào tài khoản này.
+        Chỉ chở dữ liệu — <b>không đụng tới giấy phép</b>.</p>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="hsTaiDL" style="flex:1">📥 Tải về máy</button>
+        <button class="btn" id="hsNapDL" style="flex:1">📤 Nạp file vào</button>
+      </div>
+    </div>
     <div class="hd"><h2>Lịch sử</h2><span class="line"></span></div>
     <div class="card"><div class="lich">${su.length ? su.map(x=>
       `<div class="e ${x.lop}"><div>${esc(x.t)}</div><div class="t">${gioVN(x.d)}</div></div>`).join("")
       : `<p class="sm mo" style="margin:0">Chưa có gì.</p>`}</div></div>
-  `, `<button class="btn pri" id="hsResetMK">🔑 Đặt lại mật khẩu khách</button><button class="btn" id="hsTaiDL">📥 Tải dữ liệu khách</button>` + (legacy
+  `, `<button class="btn pri" id="hsResetMK">🔑 Đặt lại mật khẩu khách</button>` + (legacy
         ? `<button class="btn dan" id="hsCat">Cắt quyền cũ</button><button class="btn" id="hsDong">Đóng</button>`
         : `<button class="btn blk" id="hsDong">Đóng</button>`));
   ganHangLic();
   $("#hsDong").onclick = dongSheet;
   $("#hsResetMK").onclick = ()=> moDatLaiMK(uid, k.email||"");
   $("#hsTaiDL").onclick   = ()=> taiDuLieuKhach(uid, k.email||"");
+  $("#hsNapDL").onclick   = ()=> napDuLieuKhach(uid, k.email||"");
   if(legacy) $("#hsCat").onclick = ()=>catCu(uid);
 }
 
@@ -1183,7 +1193,7 @@ function cdlRaJson(uid, email, kho){
     const x = cdlSach(c.d)||{};
     const txs = c.tx.slice().sort((p,q)=>ms((p.d||{}).date)-ms((q.d||{}).date)).map(t=>{
       const y = cdlSach(t.d)||{};
-      const o = { type:y.type, amount:Number(y.amount)||0, note:y.note||'', memo:y.memo||'',
+      const o = { id:t.id, type:y.type, amount:Number(y.amount)||0, note:y.note||'', memo:y.memo||'',
                   date: cdlTs(y.date) || new Date().toISOString() };
       if(y.att && (y.att.u || y.att.d)) o.att = y.att;
       return o;
@@ -1202,10 +1212,9 @@ function cdlRaJson(uid, email, kho){
   out.pos.staff = kho.staff.map(s=>{ const x=cdlSach(s.d)||{};
     return {id:s.id,name:x.name||'',pin:String(x.pin||''),role:x.role||'cashier',createdAt:cdlTs(x.createdAt)}; });
 
-  const c5 = ['products','orders','stock_moves','purchases','returns'];
   for(const b of brs){
     const src = kho.pos[b.id]||{}, bd={};
-    for(const n of c5) bd[n] = (src[n]||[]).map(r=>Object.assign({id:r.id}, cdlSach(r.d)||{}));
+    for(const n of cdlCols) bd[n] = (src[n]||[]).map(r=>Object.assign({id:r.id}, cdlSach(r.d)||{}));
     out.pos.byBranch[b.id] = bd;
   }
   return out;
@@ -1318,6 +1327,157 @@ async function taiDuLieuKhach(uid, email){
     log(`\n❌ Lỗi: ${(e && (e.code||e.message)) || e}`);
     toast("Không tải được dữ liệu",1);
   }
+}
+
+/* ── NẠP FILE .json NGƯỢC VÀO TÀI KHOẢN KHÁCH ─────────────────────────────
+   Đóng nốt vòng cứu hộ: tải về ⇄ nạp vào. Dùng khi khách lỡ xoá sạch, hoặc
+   khách không rành thao tác nên nhờ mình nạp giùm, hoặc khách mất Gmail mà
+   mình đã có file trong tay.
+   CỐ Ý KHÔNG đụng tới giấy phép — cửa này chỉ chở DỮ LIỆU, không chở NGÀY.
+   Chở ngày là thành lỗ để khách nhảy email ăn thêm hạn. Muốn đổi hạn thì
+   dùng "Chuyển dữ liệu" hoặc "Đặt hạn & ghi sổ", nơi có đủ chốt chặn. */
+const CDL_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+function cdlNgayF(v){ if(v==null||v==="") return null; const d=new Date(v); return isNaN(d)?null:d; }
+function cdlHoiSinh(v){        /* chuỗi ISO chuẩn → Date, trả mốc thời gian về đúng kiểu */
+  if(v===null||v===undefined) return v;
+  if(typeof v==="string") return CDL_ISO.test(v) ? new Date(v) : v;
+  if(typeof v!=="object") return v;
+  if(Array.isArray(v)) return v.map(cdlHoiSinh);
+  const o={}; for(const k in v) o[k]=cdlHoiSinh(v[k]); return o;
+}
+/* khớp đúng normType() của app khách: chỉ có 'tra' và 'mua' */
+const cdlLoai = v => String(v||"").toLowerCase().includes("tra") ? "tra" : "mua";
+
+async function cdlNapKho(uid, obj, log){
+  const noi=m=>{try{log&&log(m);}catch(e){}};
+  let bt=writeBatch(fdb), soLenh=0, dem=0;
+  const day=async()=>{ if(soLenh){ await bt.commit(); bt=writeBatch(fdb); soLenh=0; } };
+  const ghi=async(ref,data)=>{ bt.set(ref,data,{merge:true}); soLenh++; dem++; if(soLenh>=CDL_LO) await day(); };
+  const bo =r=>{ const o=cdlHoiSinh(Object.assign({},r)); delete o.id; return o; };
+  const P  = obj.pos||{};
+  const brs= (P.branches&&P.branches.length) ? P.branches : [{id:"main",name:"Chi nhánh chính"}];
+
+  if(obj.settings){ noi("• Nạp cài đặt cửa hàng…");
+    await ghi(doc(fdb,"users",uid,"meta","shopSettings"), cdlHoiSinh(obj.settings)); }
+
+  noi("• Nạp chi nhánh, nhà cung cấp, nhân viên…");
+  for(const b of brs) if(b && b.id) await ghi(doc(fdb,"users",uid,"branches",b.id), bo(b));
+  for(const s of (P.suppliers||[]))        if(s&&s.id) await ghi(doc(fdb,"users",uid,"suppliers",s.id), bo(s));
+  for(const s of (P.supplierPayments||[])) if(s&&s.id) await ghi(doc(fdb,"users",uid,"supplier_payments",s.id), bo(s));
+  for(const s of (P.staff||[]))            if(s&&s.id) await ghi(doc(fdb,"users",uid,"staff",s.id), bo(s));
+
+  noi("• Nạp khách & giao dịch…");
+  let nC=0, nT=0;
+  for(const c of (obj.customers||[])){
+    if(!c || !String(c.name||"").trim()) continue;
+    const cid = c.id || doc(collection(fdb,"users",uid,"customers")).id;
+    const cd  = { name:String(c.name).trim(), phone:String(c.phone||"").trim(),
+                  address:String(c.address||"").trim(), debt:Number(c.debt)||0 };
+    if(c.shareToken) cd.shareToken = c.shareToken;
+    await ghi(doc(fdb,"users",uid,"customers",cid), cd); nC++;
+    for(const t of (c.transactions||[])){
+      if(!t) continue;
+      const td = { type:cdlLoai(t.type), amount:Number(t.amount)||0,
+                   note:String(t.note||"").trim(), memo:String(t.memo||"").trim(),
+                   date: cdlNgayF(t.date) || new Date() };
+      if(t.att && (t.att.u || t.att.d)) td.att = t.att;
+      const tid = t.id || doc(collection(fdb,"users",uid,"customers",cid,"transactions")).id;
+      await ghi(doc(fdb,"users",uid,"customers",cid,"transactions",tid), td); nT++;
+    }
+  }
+  noi(`  ✓ ${nC} khách · ${nT} giao dịch`);
+
+  noi("• Nạp dữ liệu Bán hàng…");
+  for(const b of brs){
+    const bd=(P.byBranch||{})[b.id]||{};
+    for(const n of cdlCols) for(const r of (bd[n]||[])){
+      if(!r || !r.id) continue;
+      await ghi(b.id==="main" ? doc(fdb,"users",uid,n,r.id)
+                              : doc(fdb,"users",uid,"branches",b.id,n,r.id), bo(r));
+    }
+    noi(`  ✓ Xong chi nhánh ${b.id}`);
+  }
+  await day();
+  return dem;
+}
+
+async function napDuLieuKhach(uid, email){
+  if(!navigator.onLine) return toast("Không có mạng",1);
+  const inp=document.createElement("input");
+  inp.type="file"; inp.accept=".json,application/json"; inp.style.display="none";
+  inp.onchange=async()=>{
+    const f=(inp.files&&inp.files[0]); try{ inp.remove(); }catch(e){}
+    if(!f) return;
+    let obj=null;
+    try{
+      const txt=await new Promise((ok,ng)=>{ const r=new FileReader();
+        r.onload=()=>ok(String(r.result||"")); r.onerror=()=>ng(new Error("đọc lỗi")); r.readAsText(f); });
+      obj=JSON.parse(txt);
+    }catch(e){ return toast("File hỏng hoặc không phải .json",1); }
+    if(!obj || obj.app!=="sono-full")
+      return toast('Không phải file "Sao lưu toàn bộ" (sono-full)',1);
+
+    const cs=obj.customers||[], P=obj.pos||{};
+    const brs=(P.branches&&P.branches.length)?P.branches:[{id:"main"}];
+    const nT=cs.reduce((s,c)=>s+(((c&&c.transactions)||[]).length),0);
+    let nP=0,nO=0,nX=0;
+    brs.forEach(b=>{ const bd=(P.byBranch||{})[b.id]||{};
+      nP+=(bd.products||[]).length; nO+=(bd.orders||[]).length;
+      ["stock_moves","purchases","returns","shifts","cashlog","pos_audit"].forEach(n=>nX+=(bd[n]||[]).length); });
+    const coIdGD  = cs.some(c=>((c&&c.transactions)||[]).some(t=>t&&t.id));
+    const chuFile = String(obj.ownerUid||"");
+    const khacChu = !!chuFile && chuFile!==String(uid);
+
+    /* File của tài khoản khác thì phải có phép ở /chuyen_dl — đúng cái cổng
+       mà app khách vẫn dùng. Không có phép vẫn nạp được (mình là admin),
+       nhưng phải nhìn thấy cảnh báo và bấm thêm một lần. */
+    let cp=null; try{ const s=await getDoc(doc(fdb,"chuyen_dl",uid)); if(s.exists()) cp=s.data(); }catch(e){}
+    const hopLe = !!cp && String(cp.tuUid||"")===chuFile;
+
+    const log = cdlMoLog("📤 Nạp file dữ liệu",
+      `Nạp vào tài khoản <b>${esc(email||uid)}</b>. Kiểm tra kỹ rồi mới bấm.`,
+      `<button class="btn dan" id="cdlNapOk">Nạp vào</button><button class="btn blk" id="cdlDong">Huỷ</button>`);
+    const el=$("#cdlLog");
+    if(el) el.textContent =
+        `File    : ${f.name}\n`
+      + `Của     : ${obj.ownerEmail||chuFile||"?"}\n`
+      + `Xuất lúc: ${obj.exportedAt ? gioVN(new Date(obj.exportedAt)) : "?"}\n`
+      + `Nội dung: ${cs.length} khách · ${nT} giao dịch · ${nP} sản phẩm · ${nO} đơn · ${brs.length} chi nhánh · ${nX} bản ghi kho/ca\n\n`
+      + (khacChu
+          ? (hopLe ? "⚠️ File của TÀI KHOẢN KHÁC — đã có phép chuyển ở /chuyen_dl nên hợp lệ.\n"
+                   : "⛔ File của TÀI KHOẢN KHÁC và CHƯA có phép chuyển.\n   Nạp kiểu này là bê dữ liệu người này sang người kia.\n")
+          : "✔ Đúng file của chính tài khoản này.\n")
+      + (coIdGD ? "✔ File có mã giao dịch — nạp lại nhiều lần KHÔNG sinh trùng.\n"
+                : "⚠️ File KHÔNG có mã giao dịch (khách tự xuất từ app) — nạp 2 lần sẽ SINH TRÙNG giao dịch.\n")
+      + "\nTrùng mã thì ghi đè, khác mã thì cộng thêm. KHÔNG xoá gì sẵn có.\n"
+      + "KHÔNG đụng tới giấy phép — hạn của khách giữ nguyên.\n";
+
+    $("#cdlNapOk").onclick = async ()=>{
+      if(khacChu && !hopLe && !confirm(
+        `File này của tài khoản KHÁC (${obj.ownerEmail||chuFile}) và chưa có phép chuyển.\n\n`
+        +`Nạp vào ${email||uid} là bê dữ liệu người này sang người kia.\n\nVẫn nạp?`)) return;
+      if(!confirm(`NẠP DỮ LIỆU\n\nVào : ${email||uid}\nFile: ${f.name}\n\n`
+        +`${cs.length} khách · ${nT} giao dịch · ${nP} sản phẩm · ${nO} đơn\n\n`
+        +`Trùng mã thì ghi đè, khác mã thì cộng thêm. Không xoá gì sẵn có.\n`
+        +`Giấy phép KHÔNG bị đụng tới.\n\nXác nhận?`)) return;
+      const b=$("#cdlNapOk"); b.disabled=true; b.textContent="Đang nạp…";
+      try{
+        log("\n▶ Bắt đầu nạp…");
+        const n = await cdlNapKho(uid, obj, log);
+        log(`\n✅ XONG — đã ghi ${n} bản ghi vào ${email||uid}.`);
+        log("Giấy phép không bị đụng tới. Bảo khách mở app, kéo xuống làm mới là thấy.");
+        try{ await ghiTK(uid,"nap_du_lieu",{ghi:`${f.name} · ${n} bản ghi`}); }catch(e){}
+        try{ await ghiChung("nap_du_lieu",{ghi:`${email||uid} ← ${f.name} · ${n} bản ghi`
+          + (khacChu?` · file của ${obj.ownerEmail||chuFile}${hopLe?" (có phép)":" (KHÔNG phép)"}`:"")}); }catch(e){}
+        toast("Đã nạp dữ liệu");
+      }catch(e){
+        log(`\n❌ Lỗi: ${(e && (e.code||e.message)) || e}`);
+        log("Ghi được tới đâu giữ tới đó. File có mã giao dịch thì bấm Nạp lại an toàn, không sinh trùng.");
+        toast("Nạp chưa xong — xem nhật ký",1);
+      }finally{ const b2=$("#cdlNapOk"); if(b2){ b2.disabled=false; b2.textContent="Nạp lại"; } }
+    };
+  };
+  document.body.appendChild(inp); inp.click();
 }
 
 /* ------------------------------ 6. CÀI ĐẶT ------------------------------ */
