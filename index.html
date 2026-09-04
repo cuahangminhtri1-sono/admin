@@ -735,12 +735,13 @@ function hoSo(uid){
     <div class="card"><div class="lich">${su.length ? su.map(x=>
       `<div class="e ${x.lop}"><div>${esc(x.t)}</div><div class="t">${gioVN(x.d)}</div></div>`).join("")
       : `<p class="sm mo" style="margin:0">Chưa có gì.</p>`}</div></div>
-  `, `<button class="btn pri" id="hsResetMK">🔑 Đặt lại mật khẩu khách</button>` + (legacy
+  `, `<button class="btn pri" id="hsResetMK">🔑 Đặt lại mật khẩu khách</button><button class="btn" id="hsTaiDL">📥 Tải dữ liệu khách</button>` + (legacy
         ? `<button class="btn dan" id="hsCat">Cắt quyền cũ</button><button class="btn" id="hsDong">Đóng</button>`
         : `<button class="btn blk" id="hsDong">Đóng</button>`));
   ganHangLic();
   $("#hsDong").onclick = dongSheet;
   $("#hsResetMK").onclick = ()=> moDatLaiMK(uid, k.email||"");
+  $("#hsTaiDL").onclick   = ()=> taiDuLieuKhach(uid, k.email||"");
   if(legacy) $("#hsCat").onclick = ()=>catCu(uid);
 }
 
@@ -762,6 +763,7 @@ function moDatLaiMK(uid, email){
       <input id="rmkPass" type="text" autocomplete="off" spellcheck="false" value="${mkNgauNhien()}"></div>
     <div style="margin-top:-4px"><button class="btn sm" id="rmkGen" type="button">🎲 Tạo mật khẩu khác</button></div>
     <p class="xs mo" style="margin:12px 0 0">Không ai đọc được mật khẩu cũ (đã mã hoá). Thao tác này đặt <b>mật khẩu mới</b> đè lên và được ghi vào Nhật ký.</p>
+    <div id="rmkErr"></div>
   `, `<button class="btn pri" id="rmkOk">Đặt lại mật khẩu</button><button class="btn" id="rmkHuy">Huỷ</button>`);
 
   $("#rmkGen").onclick = ()=>{ $("#rmkPass").value = mkNgauNhien(); };
@@ -789,7 +791,22 @@ function moDatLaiMK(uid, email){
       };
     }catch(e){
       b.disabled = false; b.textContent = cu;
-      toast((e && e.message) ? e.message : "Không đặt lại được, thử lại.", 1);
+      /* Toast tắt sau 2,8 giây và chữ lại cụt — lỗi ở đây phần lớn là do CHƯA
+         deploy Cloud Function, nói không rõ thì ngồi mò cả buổi. In hẳn ra bảng. */
+      const ma = String((e && (e.code || e.message)) || "");
+      let ly;
+      if(/not-?found|unimplemented/i.test(ma))
+        ly = 'Máy chủ <b>chưa có hàm datLaiMKKhach</b>.<br>Nút này cần một Cloud Function tên đúng <b>datLaiMKKhach</b>, deploy ở vùng <b>us-central1</b> (đúng vùng khai ở đầu file). Chưa deploy thì chỉ riêng nút này không dùng được, mọi thứ khác vẫn chạy bình thường.';
+      else if(/unauthenticated/i.test(ma))
+        ly = 'Phiên đăng nhập đã hết hạn. Hãy đăng xuất rồi vào lại.';
+      else if(/permission-denied/i.test(ma))
+        ly = 'Cloud Function từ chối: nó không công nhận tài khoản đang đăng nhập là admin.';
+      else if(/deadline|unavailable|network|internal/i.test(ma))
+        ly = 'Không gọi được máy chủ (mạng chập chờn, hoặc hàm đang khởi động lạnh). Thử lại sau vài giây.';
+      else ly = esc((e && e.message) || 'Không rõ nguyên nhân.');
+      const el = $("#rmkErr");
+      if(el) el.innerHTML = `<div class="warnbox bad" style="margin-top:10px"><b>Chưa đặt lại được mật khẩu</b><br>${ly}<br><span class="xs mo">Mã lỗi: ${esc(ma||"—")}</span></div>`;
+      toast("Chưa đặt lại được mật khẩu",1);
     }
   };
 }
@@ -1067,6 +1084,242 @@ function moLoi(g){
   else       $("#lMo").onclick   = ()=>doiTT(false);
 }
 
+/* ══════════ BỘ CHUYỂN DỮ LIỆU KHÁCH (đặt NGOÀI veCaiDat để hồ sơ khách gọi được)
+   Vì sao phải viết lại: bản cũ chỉ ghi một cái CỜ /chuyen_dl rồi bắt khách tự
+   đăng nhập tài khoản CŨ để xuất file — mà đúng lúc cần dùng thì khách đã MẤT
+   email cũ, không đăng nhập nổi ⇒ bế tắc, bấm xong không có gì xảy ra.
+   Bản này admin tự tay chép dữ liệu (rules đã cho isAdmin() read+write trên
+   users/{uid}/**), GIỮ NGUYÊN mã document nên mọi liên kết chéo
+   (đơn ↔ khách ↔ link hoá đơn ↔ chữ ký) không bao giờ đứt. ══════════ */
+
+/* Danh sách kho theo TỪNG CHI NHÁNH — chép đúng brCol() của app Sổ Nợ/Bán hàng.
+   Thiếu một tên ở đây là mất trắng kho đó, nên không được rút gọn. */
+const cdlCols = ['products','orders','stock_moves','purchases','returns','shifts','cashlog','pos_audit'];
+const cdlGoc  = ['suppliers','supplier_payments','staff'];
+const CDL_LO  = 150;   /* số lệnh mỗi lô ghi — dưới trần 500 lệnh & 10MB của Firestore */
+
+/* Đổi mọi mốc thời gian (Timestamp/Date) thành chuỗi ISO — CHỈ dùng cho file .json.
+   Không đụng tới dữ liệu gốc dùng để chép thẳng (chép thẳng giữ nguyên kiểu). */
+function cdlTs(v){
+  try{
+    if(v==null) return null;
+    if(typeof v.toDate === 'function'){ const d=v.toDate(); return isNaN(d)?null:d.toISOString(); }
+    if(v instanceof Date) return isNaN(v)?null:v.toISOString();
+    const d = new Date(v); return isNaN(d)?null:d.toISOString();
+  }catch(e){ return null; }
+}
+function cdlSach(v){
+  if(v===null || v===undefined) return v;
+  if(typeof v!=='object') return v;
+  if(typeof v.toDate === 'function') return cdlTs(v);
+  if(v instanceof Date) return cdlTs(v);
+  if(Array.isArray(v)) return v.map(cdlSach);
+  if(typeof v.seconds==='number' && typeof v.nanoseconds==='number' && Object.keys(v).length<=2)
+    return new Date(v.seconds*1000 + Math.floor(v.nanoseconds/1e6)).toISOString();
+  const o={}; for(const k in v) o[k]=cdlSach(v[k]); return o;
+}
+
+/* ĐỌC TOÀN BỘ kho của một tài khoản. Trả về dữ liệu THÔ (giữ nguyên Timestamp). */
+async function cdlLayKho(uid, log){
+  const noi = m => { try{ log && log(m); }catch(e){} };
+  const lay = async (...p)=>{ const s=await getDocs(collection(fdb,...p)); return s.docs.map(d=>({id:d.id, d:d.data()})); };
+  const kho = { uid, meta:[], customers:[], branches:[], suppliers:[], supplier_payments:[], staff:[], pos:{} };
+
+  noi('• Đọc cài đặt cửa hàng…');
+  kho.meta = await lay('users',uid,'meta');
+
+  noi('• Đọc khách & giao dịch…');
+  const cs = await lay('users',uid,'customers');
+  let sotx = 0;
+  for(const c of cs){
+    let tx=[];
+    try{ tx = await lay('users',uid,'customers',c.id,'transactions'); }catch(e){ tx=[]; }
+    sotx += tx.length;
+    kho.customers.push({ id:c.id, d:c.d, tx });
+  }
+  noi(`  ✓ ${cs.length} khách · ${sotx} giao dịch`);
+
+  for(const n of cdlGoc){ try{ kho[n] = await lay('users',uid,n); }catch(e){ kho[n]=[]; } }
+  try{ kho.branches = await lay('users',uid,'branches'); }catch(e){ kho.branches=[]; }
+
+  /* 'main' là chi nhánh ẢO: kho của nó nằm thẳng dưới users/{uid}/… nên luôn phải quét. */
+  const ids = ['main'].concat(kho.branches.map(b=>b.id).filter(x=>x!=='main'));
+  for(const b of ids){
+    const bd={};
+    for(const n of cdlCols){
+      try{ bd[n] = (b==='main') ? await lay('users',uid,n) : await lay('users',uid,'branches',b,n); }
+      catch(e){ bd[n]=[]; }
+    }
+    kho.pos[b]=bd;
+    noi(`  ✓ Chi nhánh ${b}: ${bd.products.length} sản phẩm · ${bd.orders.length} đơn`);
+  }
+  return kho;
+}
+
+function cdlDem(kho){
+  let nP=0,nO=0,nX=0;
+  Object.keys(kho.pos).forEach(b=>{ const x=kho.pos[b]||{};
+    nP+=(x.products||[]).length; nO+=(x.orders||[]).length;
+    ['stock_moves','purchases','returns','shifts','cashlog','pos_audit'].forEach(n=>nX+=(x[n]||[]).length); });
+  const nT = kho.customers.reduce((s,c)=>s+c.tx.length,0);
+  return { nC:kho.customers.length, nT, nP, nO, nX, nB:Object.keys(kho.pos).length,
+           nS:kho.suppliers.length, nSt:kho.staff.length, nM:kho.meta.length,
+           tong: kho.meta.length + kho.branches.length + kho.suppliers.length
+                 + kho.supplier_payments.length + kho.staff.length
+                 + kho.customers.length + nT + nP + nO + nX };
+}
+
+/* Dựng đúng định dạng file 'sono-full' v2 mà app khách hiểu (Phục hồi toàn bộ). */
+function cdlRaJson(uid, email, kho){
+  const ss = cdlSach((kho.meta.find(m=>m.id==='shopSettings')||{}).d) || null;
+  const out = { app:'sono-full', version:2, exportedAt:new Date().toISOString(),
+    ownerUid:uid, ownerEmail:email||'', settings:ss,
+    customers:[], pos:{branches:[],suppliers:[],supplierPayments:[],staff:[],byBranch:{}} };
+  const ms = v => { const t = Date.parse(cdlTs(v)||''); return isNaN(t)?0:t; };
+
+  const cs = kho.customers.slice().sort((a,b)=>
+    String((a.d||{}).name||'').localeCompare(String((b.d||{}).name||''),'vi'));
+  for(const c of cs){
+    const x = cdlSach(c.d)||{};
+    const txs = c.tx.slice().sort((p,q)=>ms((p.d||{}).date)-ms((q.d||{}).date)).map(t=>{
+      const y = cdlSach(t.d)||{};
+      const o = { type:y.type, amount:Number(y.amount)||0, note:y.note||'', memo:y.memo||'',
+                  date: cdlTs(y.date) || new Date().toISOString() };
+      if(y.att && (y.att.u || y.att.d)) o.att = y.att;
+      return o;
+    });
+    out.customers.push({ id:c.id, name:x.name||'', phone:x.phone||'', address:x.address||'',
+      debt:Number(x.debt)||0, shareToken:x.shareToken||null, transactions:txs });
+  }
+
+  let brs = kho.branches.map(b=>({ id:b.id, name:((b.d||{}).name)||'', createdAt:cdlTs((b.d||{}).createdAt) }));
+  if(!brs.find(b=>b.id==='main')) brs.unshift({id:'main', name:'Chi nhánh chính', createdAt:null});
+  out.pos.branches = brs;
+  out.pos.suppliers = kho.suppliers.map(s=>{ const x=cdlSach(s.d)||{};
+    return {id:s.id,name:x.name||'',phone:x.phone||'',address:x.address||'',debt:Number(x.debt)||0,createdAt:cdlTs(x.createdAt)}; });
+  out.pos.supplierPayments = kho.supplier_payments.map(s=>{ const x=cdlSach(s.d)||{};
+    return {id:s.id,supplierId:x.supplierId||'',amount:Number(x.amount)||0,at:cdlTs(x.at)}; });
+  out.pos.staff = kho.staff.map(s=>{ const x=cdlSach(s.d)||{};
+    return {id:s.id,name:x.name||'',pin:String(x.pin||''),role:x.role||'cashier',createdAt:cdlTs(x.createdAt)}; });
+
+  const c5 = ['products','orders','stock_moves','purchases','returns'];
+  for(const b of brs){
+    const src = kho.pos[b.id]||{}, bd={};
+    for(const n of c5) bd[n] = (src[n]||[]).map(r=>Object.assign({id:r.id}, cdlSach(r.d)||{}));
+    out.pos.byBranch[b.id] = bd;
+  }
+  return out;
+}
+
+function cdlTaiFile(obj, ten){
+  const bl = new Blob([JSON.stringify(obj)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(bl); a.download = ten;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 6000);
+}
+const cdlTenFile = (email, uid) =>
+  `SoNo-BanHang-ToanBo-${String(email||uid).replace(/[^a-zA-Z0-9._-]/g,'_')}-${hnay()}.json`;
+
+/* CHÉP kho sang tài khoản khác, GIỮ NGUYÊN mã document. merge:true nên chạy lại vô hại. */
+async function cdlGhiKho(uidM, kho, log){
+  const noi = m => { try{ log && log(m); }catch(e){} };
+  let bt = writeBatch(fdb), soLenh = 0, dem = 0;
+  const day = async ()=>{ if(soLenh){ await bt.commit(); bt = writeBatch(fdb); soLenh = 0; } };
+  const ghi = async (ref, data)=>{ bt.set(ref, data, {merge:true}); soLenh++; dem++; if(soLenh>=CDL_LO) await day(); };
+
+  noi('• Ghi cài đặt cửa hàng…');
+  for(const m of kho.meta) await ghi(doc(fdb,'users',uidM,'meta',m.id), m.d);
+
+  noi('• Ghi chi nhánh, nhà cung cấp, nhân viên…');
+  for(const b of kho.branches) await ghi(doc(fdb,'users',uidM,'branches',b.id), b.d);
+  for(const n of cdlGoc) for(const r of (kho[n]||[])) await ghi(doc(fdb,'users',uidM,n,r.id), r.d);
+
+  noi('• Ghi khách & giao dịch…');
+  for(const c of kho.customers){
+    await ghi(doc(fdb,'users',uidM,'customers',c.id), c.d);
+    for(const t of c.tx) await ghi(doc(fdb,'users',uidM,'customers',c.id,'transactions',t.id), t.d);
+  }
+
+  noi('• Ghi dữ liệu Bán hàng…');
+  for(const b of Object.keys(kho.pos)){
+    const bd = kho.pos[b]||{};
+    for(const n of cdlCols) for(const r of (bd[n]||[]))
+      await ghi(b==='main' ? doc(fdb,'users',uidM,n,r.id)
+                           : doc(fdb,'users',uidM,'branches',b,n,r.id), r.d);
+    noi(`  ✓ Xong chi nhánh ${b}`);
+  }
+  await day();
+  return dem;
+}
+
+/* Đổi chủ link chia sẻ nợ + link hoá đơn. Không đổi thì chủ mới không xem/xoá
+   được link cũ, và chữ ký khách đã ký sẽ thành mồ côi vĩnh viễn. */
+async function cdlShares(uidM, kho, log){
+  const toks = new Set();
+  kho.customers.forEach(c=>{ const t=(c.d||{}).shareToken; if(t) toks.add(String(t)); });
+  Object.keys(kho.pos).forEach(b=>((kho.pos[b]||{}).orders||[]).forEach(o=>{
+    const t=(o.d||{}).hdToken; if(t) toks.add(String(t)); }));
+  let ok=0, bo=0;
+  for(const t of toks){
+    try{
+      const s = await getDoc(doc(fdb,'shares',t));
+      if(!s.exists()){ bo++; continue; }              /* link đã bị xoá — KHÔNG tạo lại doc rác */
+      await setDoc(doc(fdb,'shares',t), {ownerUid:uidM}, {merge:true});
+      ok++;
+    }catch(e){ bo++; }
+  }
+  try{ log && log(`  ✓ Đổi chủ ${ok}/${toks.size} link chia sẻ${bo?` (${bo} link không còn tồn tại)`:''}`); }catch(e){}
+  return ok;
+}
+
+/* Bảng tra email → uid, có ĐỦ 4 nguồn dự phòng như emailCua().
+   Bản cũ chỉ dò trong kho accounts nên tài khoản thiếu trường email là báo
+   "Không tìm thấy" dù thật sự có. */
+function cdlBanDoEmail(){
+  const m = {};
+  const nap1 = (uid, mail)=>{ const e=String(mail||'').trim().toLowerCase(); if(e && uid && !m[e]) m[e]=uid; };
+  Object.keys(ACC).forEach(uid=>nap1(uid,(ACC[uid]||{}).email));
+  LIC.forEach(l=>nap1(l.uid,l.email));
+  PAY.forEach(p=>nap1(p.uid,p.email));
+  REQ.forEach(r=>nap1(rUid(r),r.email));
+  return m;
+}
+
+/* Khung nhật ký chạy — đặt trong sheet nên nap()/veCaiDat() KHÔNG vẽ đè lên được. */
+function cdlMoLog(tieuDe, dan, nutCuoi){
+  moSheet(tieuDe,
+    `<p class="sm mo" style="margin:0 0 10px">${dan}</p>
+     <div class="trace" id="cdlLog" style="max-height:300px"></div>`,
+    nutCuoi || `<button class="btn blk" id="cdlDong">Đóng</button>`);
+  const d = $("#cdlDong"); if(d) d.onclick = dongSheet;
+  return m => { const el=$("#cdlLog"); if(!el) return;
+    el.textContent += m + "\n"; el.scrollTop = el.scrollHeight; };
+}
+
+/* NÚT TRONG HỒ SƠ KHÁCH: tải nguyên kho của khách về máy dưới dạng file
+   'sono-full' — cứu được cả khi khách đã mất hẳn email cũ. */
+async function taiDuLieuKhach(uid, email){
+  if(!navigator.onLine) return toast("Không có mạng",1);
+  const log = cdlMoLog("📥 Tải dữ liệu khách",
+    `Đang đọc toàn bộ kho của <b>${esc(email||uid)}</b> từ máy chủ. Shop nhiều đơn có thể mất vài phút — đừng đóng trang.`,
+    `<button class="btn blk" id="cdlDong">Đóng</button>`);
+  try{
+    const kho = await cdlLayKho(uid, log);
+    const d = cdlDem(kho);
+    const ten = cdlTenFile(email, uid);
+    cdlTaiFile(cdlRaJson(uid, email, kho), ten);
+    log(`\n✅ Đã tải về: ${ten}`);
+    log(`Khách ${d.nC} · Giao dịch ${d.nT} · Sản phẩm ${d.nP} · Đơn ${d.nO} · Chi nhánh ${d.nB} · NCC ${d.nS}`);
+    log(`\nGửi file này cho khách. Khách vào tài khoản MỚI bấm "Phục hồi toàn bộ" là xong`);
+    log(`(nhớ bấm "Kiểm tra & chuyển" ở tab Cài đặt trước, để mở khoá cho tài khoản mới nhận file của tài khoản cũ).`);
+    toast("Đã tải dữ liệu khách");
+  }catch(e){
+    log(`\n❌ Lỗi: ${(e && (e.code||e.message)) || e}`);
+    toast("Không tải được dữ liệu",1);
+  }
+}
+
 /* ------------------------------ 6. CÀI ĐẶT ------------------------------ */
 function veCaiDat(){
   /* ── CHUYỂN DỮ LIỆU SANG TÀI KHOẢN MỚI ────────────────────────────────────
@@ -1074,76 +1327,323 @@ function veCaiDat(){
      KHÔNG dùng cho việc đổi máy — đổi máy chỉ cần đăng nhập đúng email cũ,
      dữ liệu nằm trên Firestore theo uid nên tự đồng bộ về.
 
-     Nút này làm 3 việc trong một lần bấm:
-       1. Ghi /chuyen_dl/{uidMoi} = { tuUid } -> app cho phép phục hồi file của uid cũ
-       2. Chuyển toàn bộ giấy phép còn hạn từ tài khoản cũ sang tài khoản mới
-       3. TẮT giấy phép tài khoản cũ (active:false)
+     Một lần bấm làm 7 việc:
+       1. Đọc toàn bộ kho của tài khoản CŨ
+       2. Tải một file sao lưu .json về máy (lưới an toàn — có thể tắt)
+       3. CHÉP THẬT toàn bộ sang tài khoản MỚI, giữ nguyên mã document
+       4. Đổi chủ link chia sẻ nợ / link hoá đơn sang uid mới
+       5. Ghi /chuyen_dl/{uidMoi} = { tuUid } để khách tự phục hồi file cũng được
+       6. Chuyển giấy phép sang tài khoản mới — lấy hạn DÀI HƠN, không đè hạn tốt
+       7. TẮT giấy phép tài khoản cũ
 
-     Bước 3 là bắt buộc. Thiếu nó thì khách trả tiền một lần rồi cứ "chuyển"
-     liên tục, mỗi lần thêm một shop chạy song song trên cùng một giấy phép. */
+     Bước 7 là bắt buộc. Thiếu nó thì khách trả tiền một lần rồi cứ "chuyển"
+     liên tục, mỗi lần thêm một shop chạy song song trên cùng một giấy phép.
+     Dữ liệu ở tài khoản CŨ KHÔNG bị xoá — giữ nguyên làm bản dự phòng. */
   (function(){
     const box=$("#chuyenDL"); if(!box) return;
     box.innerHTML=`
       <h3 style="margin:0 0 6px">🔄 Chuyển dữ liệu sang tài khoản mới</h3>
       <p class="xs mo" style="margin:0 0 10px">
-        Chỉ dùng khi khách <b>đổi email</b> (mất Gmail cũ, gõ nhầm lúc đăng ký).<br>
-        <b>Đổi máy thì KHÔNG cần</b> — đăng nhập đúng email cũ là dữ liệu tự về.
+        Dùng khi khách <b>mất Gmail cũ</b> hoặc <b>gõ nhầm email lúc đăng ký</b>.<br>
+        <b>Đổi máy thì KHÔNG cần</b> — đăng nhập đúng email cũ là dữ liệu tự về.<br>
+        Chép thật khách, giao dịch, sản phẩm, đơn hàng, chi nhánh sang tài khoản mới.
+        <b>Hạn giữ nguyên</b> — không cộng thêm một ngày nào.
       </p>
       <div class="f2">
         <div class="f"><label>Email CŨ (nguồn)</label><input id="cdl_cu" placeholder="cu@gmail.com" autocomplete="off"></div>
         <div class="f"><label>Email MỚI (đích)</label><input id="cdl_moi" placeholder="moi@gmail.com" autocomplete="off"></div>
       </div>
+      <div class="f"><label>Lý do chuyển (ghi vào nhật ký)</label>
+        <select id="cdl_ly">
+          <option value="mat_gmail">Khách mất Gmail cũ</option>
+          <option value="go_nham">Gõ nhầm email lúc đăng ký</option>
+          <option value="doi_chu">Sang nhượng / đổi chủ shop</option>
+          <option value="khac">Lý do khác</option>
+        </select></div>
+      <label class="xs" style="display:flex;align-items:center;gap:8px;margin:2px 0 4px;cursor:pointer">
+        <input type="checkbox" id="cdl_saoluu" checked style="width:16px;height:16px">
+        Tải file sao lưu .json về máy trước khi chuyển (nên bật)
+      </label>
       <div id="cdl_xem" class="xs" style="margin:8px 0;min-height:20px"></div>
-      <button class="btn" id="cdl_ok">Kiểm tra &amp; chuyển</button>`;
+      <button class="btn" id="cdl_ok">① Kiểm tra</button>`;
 
+    const LY_TEN = { mat_gmail:"Khách mất Gmail cũ", go_nham:"Gõ nhầm email lúc đăng ký",
+                     doi_chu:"Sang nhượng / đổi chủ shop", khac:"Lý do khác" };
+
+    /* Email → uid, đủ 4 nguồn dự phòng (accounts · lic · payments · renewalRequests) */
     const timUid=(mail)=>{
       const m=String(mail||"").trim().toLowerCase(); if(!m) return null;
-      for(const uid in ACC){ if(String((ACC[uid]||{}).email||"").toLowerCase()===m) return uid; }
-      return null;
+      return cdlBanDoEmail()[m] || null;
     };
+
+    /* ── KHÁCH ĐỜI CŨ: hạn nằm ở accounts.paidUntil / posUntil, KHÔNG có lic riêng.
+       Không dựng lại thành giấy phép thì hai chuyện xấu xảy ra cùng lúc:
+       ① khách cũ đã trả tiền bị kẹt, không chuyển nổi (oan);
+       ② tài khoản mới giữ nguyên 15 ngày dùng thử của nó (lọt). */
+    const licLegacy = (u)=>{
+      const a = ACC[u]||{}; if(a.migrated===true) return [];
+      const out=[], p=ngay(a.paidUntil), q=ngay(a.posUntil);
+      if(p) out.push({ uid:u, app:"sono", paidUntil:p, trial:a.trial===true, _cu:true });
+      if(q) out.push({ uid:u, app:"sono_pos", paidUntil:q, trial:a.posTrial===true, _cu:true });
+      else if(a.posActive===true) out.push({ uid:u, app:"sono_pos", vinhVien:true, paidUntil:null, _cu:true });
+      return out.filter(x=>!LIC.some(l=>l.uid===u && l.app===x.app));
+    };
+
+    /* ── HỒ SƠ NGHI VẤN — mọi con số phải nhìn TRƯỚC khi bấm chuyển ────────
+       Không dùng để CẤM, mà để admin biết mình đang làm gì. Chuyển vẫn luôn
+       làm được (khách mất Gmail là chuyện có thật), nhưng ca nghi vấn thì
+       phải gõ chìa khoá, không bấm nhầm được. */
+    const cdlHoSo = (u)=>{
+      const p = PAY.filter(x=>x.uid===u), lic = LIC.filter(x=>x.uid===u), NK = nhatKy();
+      const a = ACC[u]||{};
+      return {
+        tien:  p.reduce((s,x)=>s+pTien(x),0),
+        soLan: p.filter(x=>pTien(x)>0).length,
+        lic, cu: licLegacy(u),
+        daTra: lic.filter(x=>x.trial!==true || x.vinhVien===true).length,
+        thu:   lic.filter(x=>tt(x).ma==="thu").length,
+        tao:   ngay(a.createdAt),
+        nhan:  NK.filter(x=>x.uid===u && x.viec==="nhan_chuyen_du_lieu").length,
+        diDi:  NK.filter(x=>x.uid===u && x.viec==="da_chuyen_du_lieu").length
+      };
+    };
+    const dongHS = (ten,h)=>{
+      const tuoi = h.tao ? (-soNgay(h.tao)) : null;
+      return `<b>${esc(ten)}</b> — đã trả <b>${tien(h.tien)}đ</b> (${h.soLan} lần)`
+        + ` · ${h.lic.length} giấy phép (${h.daTra} đã trả tiền${h.thu?`, ${h.thu} dùng thử`:""})`
+        + (h.cu.length?` · <span style="color:#a3620a">${h.cu.length} quyền đời cũ</span>`:"")
+        + (tuoi!=null?` · tạo ${tuoi} ngày trước`:"")
+        + (h.nhan?` · <span style="color:#c0392b">đã NHẬN chuyển ${h.nhan} lần</span>`:"")
+        + (h.diDi?` · <span style="color:#c0392b">đã CHUYỂN ĐI ${h.diDi} lần</span>`:"");
+    };
+
+    let sanSang = null;                 /* chỉ khác null sau khi đã bấm Kiểm tra */
+    const datLai = ()=>{ sanSang=null;
+      const b=$("#cdl_ok"); if(b){ b.className="btn"; b.textContent="① Kiểm tra"; } };
+    $("#cdl_cu").oninput  = datLai;
+    $("#cdl_moi").oninput = datLai;
 
     $("#cdl_ok").onclick=async()=>{
       const xem=$("#cdl_xem");
       const mCu=$("#cdl_cu").value.trim(), mMoi=$("#cdl_moi").value.trim();
       const uCu=timUid(mCu), uMoi=timUid(mMoi);
-      if(!uCu){ xem.innerHTML='<b style="color:#c0392b">Không tìm thấy tài khoản CŨ: '+esc(mCu)+'</b>'; return; }
-      if(!uMoi){ xem.innerHTML='<b style="color:#c0392b">Không tìm thấy tài khoản MỚI: '+esc(mMoi)+'</b><br>Khách phải đăng ký tài khoản mới trước đã.'; return; }
-      if(uCu===uMoi){ xem.innerHTML='<b style="color:#c0392b">Hai email trùng nhau.</b>'; return; }
+      const do_=t=>{ xem.innerHTML='<b style="color:#c0392b">'+t+'</b>'; datLai(); };
 
-      const licCu=LIC.filter(l=>l.uid===uCu);
-      if(!licCu.length){ xem.innerHTML='<b style="color:#c0392b">Tài khoản cũ chưa có giấy phép nào.</b><br>Chỉ dùng thử thì KHÔNG chuyển — đây thường là dấu hiệu lách dùng thử.'; return; }
-      const daTra=licCu.filter(l=>l.trial!==true||l.vinhVien===true);
-      const moTa=licCu.map(l=>`&nbsp;&nbsp;• <b>${esc(l.app)}</b> — hạn ${l.vinhVien?"VĨNH VIỄN":ngayVN(dToS(ngay(l.paidUntil)))}${l.trial===true&&l.vinhVien!==true?' <span style="color:#c0392b">(chỉ dùng thử)</span>':""}`).join("<br>");
-      xem.innerHTML=`Sẽ chuyển <b>${licCu.length}</b> giấy phép:<br>${moTa}<br>
-        <span style="color:#a3620a">Giấy phép tài khoản CŨ sẽ bị TẮT sau khi chuyển.</span>`;
+      /* ══════════ GIAI ĐOẠN 1 — KIỂM TRA (không ghi gì cả) ══════════ */
+      if(!sanSang || sanSang.uCu!==uCu || sanSang.uMoi!==uMoi){
+        if(!navigator.onLine) return do_("Không có mạng.");
+        if(!uCu)  return do_("Không tìm thấy tài khoản CŨ: "+esc(mCu));
+        if(!uMoi) return do_("Không tìm thấy tài khoản MỚI: "+esc(mMoi)+"<br>Khách phải đăng ký tài khoản mới trước đã.");
+        if(uCu===uMoi) return do_("Hai email trùng nhau.");
 
-      if(!daTra.length && !confirm("Tài khoản cũ CHỈ CÓ bản dùng thử.\n\nChuyển bản dùng thử thường là dấu hiệu lách — khách xoay vòng email để dùng free.\n\nVẫn chuyển?")) return;
-      if(!confirm(`CHUYỂN DỮ LIỆU\n\nTừ:  ${mCu}\nSang: ${mMoi}\n\n• Cho phép tài khoản mới phục hồi file sao lưu của tài khoản cũ\n• Chuyển ${licCu.length} giấy phép sang tài khoản mới\n• TẮT giấy phép tài khoản cũ\n\nXác nhận?`)) return;
+        const hCu = cdlHoSo(uCu), hMoi = cdlHoSo(uMoi);
+        const licCu = hCu.lic.concat(hCu.cu);          /* giấy phép mới + quyền đời cũ */
+        const licTrong = licCu.filter(l=>tt(l).ma==="trong");
+        let cpCu=null, cpMoi=null;
+        try{ const s=await getDoc(doc(fdb,"chuyen_dl",uCu));  if(s.exists()) cpCu=s.data(); }catch(e){}
+        try{ const s=await getDoc(doc(fdb,"chuyen_dl",uMoi)); if(s.exists()) cpMoi=s.data(); }catch(e){}
+
+        /* Dấu hiệu nghi vấn — CẢNH BÁO, không phải lệnh cấm */
+        const co=[], khoa=[];
+        if(!licCu.length){
+          co.push("Tài khoản CŨ <b>không có giấy phép nào</b> — tài khoản mới sẽ giữ nguyên dùng thử của nó");
+          khoa.push(1);
+        }
+        if(hCu.tien<=0 && !hCu.daTra && licCu.length){
+          co.push("Tài khoản CŨ <b>chưa trả đồng nào</b>, chỉ có bản dùng thử");
+          khoa.push(1);
+        }
+        if(cpCu){  co.push("Tài khoản CŨ <b>chính nó cũng là đích của một lần chuyển trước</b> — đang xoay vòng email"); khoa.push(1); }
+        if(cpMoi){ co.push("Tài khoản MỚI <b>đã từng nhận chuyển</b> từ tài khoản khác"); khoa.push(1); }
+        if(hMoi.thu && !hMoi.daTra) co.push("Tài khoản MỚI đang <b>dùng thử</b> (hạn dùng thử sẽ bị thay bằng hạn của tài khoản cũ)");
+        if(hMoi.tao && -soNgay(hMoi.tao) <= 3) co.push("Tài khoản MỚI vừa tạo <b>"+(-soNgay(hMoi.tao))+" ngày trước</b>");
+        if(licTrong.length) co.push(`<b>${licTrong.length} giấy phép chưa đặt hạn</b> (${esc(licTrong.map(l=>l.app).join(", "))}) — sẽ hỏi lại trước khi chuyển`);
+
+        const moTa = licCu.length ? licCu.map(l=>{ const t=tt(l);
+          return `&nbsp;&nbsp;• <b>${esc(l.app)}</b>${l._cu?' <span style="color:#a3620a">(đời cũ)</span>':""} — ${esc(t.ten)} · hạn ${t.ma==="vv"?"VĨNH VIỄN":ngayVN(dToS(ngay(l.paidUntil)))}`
+               + (l.trial===true&&l.vinhVien!==true?' <span style="color:#c0392b">(dùng thử)</span>':"")
+               + (l.active===false?' <span style="color:#c0392b">(đang khoá)</span>':"");
+        }).join("<br>") : '&nbsp;&nbsp;• <i>không có giấy phép nào để chuyển</i>';
+
+        xem.innerHTML =
+          `<div style="margin-bottom:6px">${dongHS("CŨ  "+mCu, hCu)}</div>`
+        + `<div style="margin-bottom:8px">${dongHS("MỚI "+mMoi, hMoi)}</div>`
+        + `Sẽ chuyển <b>${licCu.length}</b> giấy phép:<br>${moTa}<br>`
+        + (co.length
+            ? `<div class="warnbox${khoa.length?" bad":""}" style="margin-top:8px"><b>${khoa.length?"⚠️ CẦN GÕ CHÌA KHOÁ — ":"ℹ️ "}${co.length} điểm cần biết</b><br>• ${co.join("<br>• ")}</div>`
+            : `<div style="margin-top:8px;color:#0a5f4a"><b>✔ Không thấy dấu hiệu gian lận.</b></div>`)
+        + `<div style="margin-top:8px;color:#a3620a">Hạn tài khoản mới = <b>đúng hạn tài khoản cũ</b>, không cộng thêm ngày nào.
+            Giấy phép và quyền đời cũ của tài khoản CŨ sẽ bị TẮT.</div>`;
+
+        sanSang = { uCu, uMoi, mCu, mMoi, licCu, licTrong, hCu, hMoi, cpCu, cpMoi, co, canChia:!!khoa.length };
+        const b=$("#cdl_ok"); b.className="btn dan"; b.textContent="② Xác nhận CHUYỂN";
+        return;
+      }
+
+      /* ══════════ GIAI ĐOẠN 2 — CHUYỂN THẬT ══════════ */
+      const S = sanSang; sanSang = null;
+      const licCu = S.licCu;
+      const lyMa  = ($("#cdl_ly")&&$("#cdl_ly").value) || "khac";
+      const lyTen = LY_TEN[lyMa] || lyMa;
+      if(!navigator.onLine){ return do_("Không có mạng."); }
+
+      /* CHÌA KHOÁ — ca nghi vấn phải GÕ, không bấm nhầm được.
+         Đây là chốt chặn, KHÔNG phải lệnh cấm: khách mất Gmail thật thì vẫn
+         luôn chuyển được, chỉ mất 3 giây gõ một chữ. */
+      if(S.canChia){
+        const g = prompt(
+          "CA NGHI VẤN — cần xác nhận có chủ ý\n\n• "
+          + S.co.join("\n• ").replace(/<[^>]*>/g,"")
+          + `\n\nLý do bạn chọn: ${lyTen}`
+          + "\n\nHạn sẽ GIỮ NGUYÊN (khách không được thêm ngày nào).\n"
+          + "Gõ đúng chữ  CHUYEN  rồi bấm OK để tiếp tục:");
+        if(String(g||"").trim().toUpperCase()!=="CHUYEN"){
+          xem.innerHTML='<b style="color:#a3620a">Đã dừng — chưa gõ đúng chìa khoá.</b>'; datLai(); return;
+        }
+      }
+
+      /* Giấy phép chưa đặt hạn: ở tài khoản cũ nó vốn đã là "dùng vô thời hạn",
+         nên chuyển y nguyên là ĐÚNG, không phải biếu thêm. Vẫn hỏi để admin
+         biết mà dọn cho sạch sổ. */
+      let vvTrong=false;
+      if(S.licTrong.length){
+        vvTrong = confirm(`${S.licTrong.length} giấy phép CHƯA ĐẶT HẠN: ${S.licTrong.map(l=>l.app).join(", ")}\n\n`
+          +`Ở tài khoản cũ chúng đang là "dùng vô thời hạn".\n\n`
+          +`OK = chuyển y nguyên và ghi rõ là VĨNH VIỄN\n`
+          +`Huỷ = dừng lại để bạn vào hồ sơ khách ĐẶT HẠN trước`);
+        if(!vvTrong){ xem.innerHTML='<b style="color:#a3620a">Đã dừng — hãy đặt hạn cho các giấy phép đó trước.</b>'; datLai(); return; }
+      }
+
+      if(!confirm(`CHUYỂN DỮ LIỆU\n\nTừ:  ${S.mCu}\nSang: ${S.mMoi}\nLý do: ${lyTen}\n\n`
+        +`• Chép toàn bộ khách, giao dịch, sản phẩm, đơn hàng, chi nhánh\n`
+        +`• Đổi chủ các link chia sẻ / link hoá đơn\n`
+        +`• Chuyển ${licCu.length} giấy phép — GIỮ NGUYÊN HẠN, không cộng thêm ngày\n`
+        +`• TẮT giấy phép + cắt quyền đời cũ của tài khoản nguồn\n`
+        +`• KHÔNG xoá dữ liệu tài khoản cũ\n\nXác nhận?`)){ datLai(); return; }
 
       const btn=$("#cdl_ok"); btn.disabled=true; btn.textContent="Đang chuyển…";
+      const canSaoLuu = !!($("#cdl_saoluu") && $("#cdl_saoluu").checked);
+      const log = cdlMoLog("🔄 Đang chuyển dữ liệu",
+        `Từ <b>${esc(S.mCu)}</b> sang <b>${esc(S.mMoi)}</b> · ${esc(lyTen)}. Shop nhiều đơn có thể mất vài phút — đừng đóng trang.`);
+      let xong=false;
       try{
-        await setDoc(doc(fdb,"chuyen_dl",uMoi),{
-          tuUid:uCu, tuEmail:mCu, capBoi:(auth.currentUser?.email||""),
-          capLuc:new Date(), capLucMs:Date.now()
-        });
-        for(const l of licCu){
-          const d={}; 
-          if(l.paidUntil!=null)d.paidUntil=ngay(l.paidUntil)||l.paidUntil;
-          if(l.vinhVien!=null)d.vinhVien=l.vinhVien;
-          d.active=true; d.trial=(l.trial===true); if(l.trialUsed!=null)d.trialUsed=l.trialUsed;
-          await setDoc(doc(fdb,`accounts/${uMoi}/lic`,l.app), d, {merge:true});
-          await setDoc(doc(fdb,`accounts/${uCu}/lic`,l.app), {active:false}, {merge:true});
-          await ghiLic(uMoi,l.app,"nhan_chuyen",{tu:mCu});
-          await ghiLic(uCu,l.app,"da_chuyen_di",{sang:mMoi});
+        /* ① ĐỌC kho tài khoản cũ */
+        log("▶ BƯỚC 1 — Đọc dữ liệu tài khoản CŨ");
+        const kho = await cdlLayKho(S.uCu, log);
+        const d = cdlDem(kho);
+        log(`  ✓ Tổng cộng ${d.tong} bản ghi`);
+
+        /* ② SAO LƯU về máy — lưới an toàn trước khi ghi bất cứ thứ gì */
+        if(canSaoLuu){
+          log("▶ BƯỚC 2 — Tải file sao lưu về máy");
+          const ten = cdlTenFile(S.mCu, S.uCu);
+          cdlTaiFile(cdlRaJson(S.uCu, S.mCu, kho), ten);
+          log(`  ✓ ${ten}`);
+        } else log("▶ BƯỚC 2 — Bỏ qua sao lưu (bạn đã tắt)");
+
+        /* ③ Cảnh báo nếu tài khoản mới ĐÃ có dữ liệu — chép vào sẽ trộn lẫn */
+        let coSan=0;
+        try{ coSan = (await getDocs(collection(fdb,'users',S.uMoi,'customers'))).size; }catch(e){}
+        if(coSan>0 && !confirm(`Tài khoản MỚI đã có sẵn ${coSan} khách.\n\nChép vào sẽ TRỘN LẪN hai bộ dữ liệu (trùng mã thì ghi đè, khác mã thì cộng thêm).\n\nVẫn chép?`)){
+          log("\n⛔ Đã huỷ — tài khoản mới đang có dữ liệu."); return;
         }
-        await ghiTK(uMoi,"nhan_chuyen_du_lieu",{tu:mCu});
-        await ghiTK(uCu,"da_chuyen_du_lieu",{sang:mMoi});
-        await ghiChung("chuyen_du_lieu",{ghi:`${mCu} → ${mMoi} · ${licCu.length} giấy phép`});
-        xem.innerHTML='<b style="color:#0a5f4a">✅ Xong. Bảo khách phục hồi file sao lưu trên tài khoản mới.</b>';
-        toast("Đã chuyển dữ liệu"); nap();
+
+        /* ④ CHÉP */
+        log("▶ BƯỚC 3 — Chép sang tài khoản MỚI");
+        const soGhi = await cdlGhiKho(S.uMoi, kho, log);
+        log(`  ✓ Đã ghi ${soGhi} bản ghi`);
+
+        /* ⑤ Đổi chủ link chia sẻ */
+        log("▶ BƯỚC 4 — Đổi chủ link chia sẻ / hoá đơn");
+        await cdlShares(S.uMoi, kho, log);
+
+        /* ⑥ Cờ cho phép khách tự phục hồi file của uid cũ + ghi lại CHUỖI chuyển */
+        log("▶ BƯỚC 5 — Cấp phép phục hồi file");
+        await setDoc(doc(fdb,"chuyen_dl",S.uMoi),{
+          tuUid:S.uCu, tuEmail:S.mCu, capBoi:(auth.currentUser?.email||""),
+          capLuc:new Date(), capLucMs:Date.now(), lyDo:lyMa,
+          chuoiTruoc:(S.cpCu && S.cpCu.tuUid) || "",          /* dấu vết xoay vòng */
+          nghiVan:(S.co||[]).length, canChia:!!S.canChia
+        });
+        log("  ✓ Xong");
+
+        /* ⑦ GIẤY PHÉP — TUYỆT ĐỐI KHÔNG CỘNG THÊM NGÀY.
+           Hạn tài khoản mới = ĐÚNG hạn tài khoản cũ. Chỉ khi tài khoản mới
+           ĐÃ TỰ TRẢ TIỀN thì mới lấy hạn dài hơn, để không đốt mất tiền khách
+           đã đóng. Hạn dùng thử của tài khoản mới KHÔNG bao giờ được cộng vào —
+           đó chính là lỗ hổng để khách nhảy email ăn thêm 15 ngày mỗi lần. */
+        log("▶ BƯỚC 6 — Chuyển giấy phép (giữ nguyên hạn)");
+        for(const l of licCu){
+          const app = l.app;
+          const co  = LIC.find(x=>x.uid===S.uMoi && x.app===app) || null;
+          const dichDaTra = !!co && (co.vinhVien===true || co.trial!==true);
+          const hCu = ngay(l.paidUntil), hCo = co ? ngay(co.paidUntil) : null;
+          const nd  = { app };
+          if(l.vinhVien===true && !hCu){ nd.vinhVien=true; nd.paidUntil=null; }
+          else if(!hCu && vvTrong){ nd.vinhVien=true; nd.paidUntil=null; }   /* "chưa đặt hạn" → ghi rõ vĩnh viễn */
+          else if(dichDaTra && co.vinhVien===true && !hCo){ nd.vinhVien=true; nd.paidUntil=null; }
+          else if(dichDaTra){
+            const h = (hCu && hCo) ? (hCu>hCo?hCu:hCo) : (hCu||hCo||null);
+            nd.paidUntil = h; nd.vinhVien = false;
+          }
+          else { nd.paidUntil = hCu; nd.vinhVien = false; }   /* đích chưa trả tiền ⇒ y hệt nguồn */
+          nd.trial  = (l.trial===true) && !dichDaTra;
+          nd.active = dichDaTra ? true : (l.active!==false);  /* nguồn đang khoá thì đích cũng khoá */
+          if(l.trialUsed===true || (co&&co.trialUsed===true)) nd.trialUsed = true;
+          const q = Math.max(num(l.qty), num(co&&co.qty));
+          if(q>0) nd.qty = q;                                 /* gói chi nhánh sono_cn */
+          await setDoc(doc(fdb,`accounts/${S.uMoi}/lic`,app), nd, {merge:true});
+          if(!l._cu) await setDoc(doc(fdb,`accounts/${S.uCu}/lic`,app), {active:false}, {merge:true});
+          await ghiLic(S.uMoi,app,"nhan_chuyen",{tu:S.mCu, ghi:lyTen});
+          if(!l._cu) await ghiLic(S.uCu,app,"da_chuyen_di",{sang:S.mMoi, ghi:lyTen});
+          log(`  ✓ ${tenApp(app)}${l._cu?" (đời cũ)":""} — hạn ${nd.vinhVien?"VĨNH VIỄN":ngayVN(dToS(ngay(nd.paidUntil)))}`
+              + (nd.trial?" (vẫn là dùng thử)":"") + (nd.active===false?" (đang khoá)":""));
+        }
+
+        /* ⑧ KHOÁ CỔNG VÀO của tài khoản nguồn.
+           App Sổ Nợ mở cửa dựa vào lic/sono. Nếu doc đó KHÔNG tồn tại (khách
+           đời cũ, hoặc nguồn chỉ có sono_pos) thì app coi là khách mới và TỰ MỞ
+           15 ngày dùng thử ⇒ tài khoản vừa bị rút ruột lại sống dậy miễn phí,
+           chạy song song với tài khoản mới. Tạo sẵn doc khoá để chặn hẳn. */
+        log("▶ BƯỚC 7 — Khoá cổng vào tài khoản nguồn");
+        for(const app of ["sono","sono_pos"]){
+          if(LIC.some(x=>x.uid===S.uCu && x.app===app)) continue;   /* đã khoá ở vòng trên */
+          try{
+            await setDoc(doc(fdb,`accounts/${S.uCu}/lic`,app),
+              { app, active:false, trial:false, trialUsed:true, paidUntil:null, vinhVien:false,
+                lichSu: arrayUnion(buoc("khoa_sau_chuyen",{sang:S.mMoi})) }, {merge:true});
+            log(`  ✓ Khoá ${tenApp(app)} — không tự mở lại dùng thử được nữa`);
+          }catch(e){ log(`  ⚠️ Chưa khoá được ${app}: ${(e&&(e.code||e.message))||e}`); }
+        }
+
+        /* ⑨ CẮT QUYỀN ĐỜI CŨ của tài khoản nguồn — chặn nốt đường accounts.paidUntil
+           mở khoá những app chưa có giấy phép riêng. */
+        log("▶ BƯỚC 8 — Cắt quyền đời cũ của tài khoản nguồn");
+        try{
+          await setDoc(doc(fdb,"accounts",S.uCu),
+            {migrated:true, lichSu:arrayUnion(buoc("cat_legacy",{ly:"chuyen sang "+S.mMoi}))}, {merge:true});
+          log("  ✓ Xong — tài khoản cũ không còn dùng được nữa");
+        }catch(e){ log("  ⚠️ Chưa cắt được quyền cũ: "+((e&&(e.code||e.message))||e)); }
+
+        await ghiTK(S.uMoi,"nhan_chuyen_du_lieu",{tu:S.mCu, ghi:lyTen});
+        await ghiTK(S.uCu,"da_chuyen_du_lieu",{sang:S.mMoi, ghi:lyTen});
+        await ghiChung("chuyen_du_lieu",{ghi:`${S.mCu} → ${S.mMoi} · ${lyTen} · ${licCu.length} giấy phép · ${soGhi} bản ghi`
+          + ((S.co||[]).length?` · ⚠️ ${S.co.length} điểm nghi vấn`:"") + (S.canChia?" · đã gõ chìa khoá":"")});
+
+        xong=true;
+        log(`\n✅ XONG. Đã chuyển ${soGhi} bản ghi và ${licCu.length} giấy phép.`);
+        log(`Hạn giữ nguyên — khách KHÔNG được thêm ngày nào.`);
+        log(`Tài khoản cũ đã bị khoá và cắt quyền đời cũ; dữ liệu vẫn còn nguyên làm dự phòng.`);
+        log(`Bảo khách đăng nhập bằng ${S.mMoi} là thấy đủ dữ liệu ngay.`);
+        toast("Đã chuyển dữ liệu");
       }catch(e){
-        xem.innerHTML='<b style="color:#c0392b">Lỗi: '+esc(e.code||e.message||String(e))+'</b>';
-      }finally{ btn.disabled=false; btn.textContent="Kiểm tra & chuyển"; }
+        log(`\n❌ Lỗi: ${(e && (e.code||e.message)) || e}`);
+        log(`Đã ghi được tới đâu thì giữ tới đó. Bấm Kiểm tra rồi Xác nhận lại để chạy tiếp — ghi đè cùng mã nên chạy lại KHÔNG sinh dữ liệu trùng.`);
+        toast("Chuyển chưa xong — xem nhật ký",1);
+      }finally{
+        const b2=$("#cdl_ok"); if(b2){ b2.disabled=false; b2.className="btn"; b2.textContent="① Kiểm tra"; }
+        if(xong) nap().catch(()=>{});   /* nạp lại số liệu; nhật ký trong sheet KHÔNG bị vẽ đè */
+      }
     };
   })();
 
@@ -1370,17 +1870,29 @@ $("#xoaLoi").onclick = async ()=>{
 $("#thangThu").onchange = veTien;
 $("#btnThoat").onclick = ()=>signOut(auth);
 $("#btnFixVV").onclick = async ()=>{
-  const canFix = LIC.filter(l => l.vinhVien !== true && !ngay(l.paidUntil));
+  /* active===false = giấy phép ĐANG BỊ KHOÁ (khách nợ tiền, hoặc tài khoản đã
+     chuyển đi). Gắn "vĩnh viễn" cho chúng là gài mìn: hôm nào mở khoá lại là
+     khách dùng miễn phí trọn đời. Bỏ qua hẳn. */
+  const canFix = LIC.filter(l => l.vinhVien !== true && !ngay(l.paidUntil) && l.active !== false);
   if(!canFix.length) return toast("Không có giấy phép nào cần sửa");
-  if(!confirm(`Sẽ gắn “vĩnh viễn” cho ${canFix.length} giấy phép (chưa có ngày hết hạn).\n\nTiếp tục?`)) return;
-  $("#btnFixVV").disabled = true;
+  if(!confirm(`Sẽ gắn “vĩnh viễn” cho ${canFix.length} giấy phép (chưa có ngày hết hạn).\n\nGiấy phép đang bị KHOÁ được bỏ qua.\n\nTiếp tục?`)) return;
+  const nut = $("#btnFixVV"), nhan = nut.textContent;
+  nut.disabled = true; nut.textContent = "Đang sửa…";
+  let xong = 0;
   try{
-    const b = writeBatch(fdb);
-    canFix.forEach(l => b.set(doc(fdb,`accounts/${l.uid}/lic`,l.app),
-      { vinhVien:true, capNhat:new Date(), lichSu: arrayUnion(buoc("dat_vinh_vien_loat")) }, {merge:true}));
-    await b.commit();
-    toast(`Đã sửa ${canFix.length} giấy phép vĩnh viễn`); nap();
-  }catch(e){ toast("Lỗi: "+(e.code||e.message),1); $("#btnFixVV").disabled=false; }
+    /* Chia lô 200: một lô writeBatch trần 500 lệnh & 10MB — hơn 500 giấy phép
+       là commit hỏng nguyên mẻ, sửa được 0 cái mà tưởng xong. */
+    for(let i=0; i<canFix.length; i+=200){
+      const b = writeBatch(fdb);
+      canFix.slice(i,i+200).forEach(l => b.set(doc(fdb,`accounts/${l.uid}/lic`,l.app),
+        { vinhVien:true, capNhat:new Date(), lichSu: arrayUnion(buoc("dat_vinh_vien_loat")) }, {merge:true}));
+      await b.commit();
+      xong = Math.min(i+200, canFix.length);
+      nut.textContent = `Đang sửa… ${xong}/${canFix.length}`;
+    }
+    toast(`Đã sửa ${xong} giấy phép vĩnh viễn`); nap().catch(()=>{});
+  }catch(e){ toast(`Lỗi sau ${xong}/${canFix.length}: `+(e.code||e.message),1); }
+  finally{ nut.disabled = false; nut.textContent = nhan; }
 };
 $("#v-don").classList.add("on");
 
