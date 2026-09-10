@@ -410,7 +410,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getAuth, initializeAuth, indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence, onAuthStateChanged, signInWithEmailAndPassword, signOut }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
-import { getFirestore, collection, collectionGroup, getDocs, doc, getDoc, setDoc, addDoc, writeBatch, arrayUnion, query, orderBy, limit }
+import { getFirestore, collection, collectionGroup, getDocs, doc, getDoc, setDoc, addDoc, writeBatch, arrayUnion, deleteField, query, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-functions.js";
@@ -493,7 +493,7 @@ function kmSaveHtml(unit, m){ var b=thangTang(m); if(b<=0) return ''; var full=(
 
 
 /* ------------------------------ dữ liệu ------------------------------ */
-let LIC=[], ACC={}, REQ=[], PAY=[], AUD=[], CFGDB={}, BILL={}, ERR=[];
+let LIC=[], ACC={}, REQ=[], PAY=[], AUD=[], CFGDB={}, BILL={}, ERR=[], SGN={};
 
 async function nap(){
   /* App quản trị CỐ Ý không bật bộ đệm ngoại tuyến: duyệt tiền và gia hạn phải
@@ -501,7 +501,7 @@ async function nap(){
      rỗng — nhìn thấy 0 khách 0 đơn rồi tưởng mất dữ liệu là hỏng việc. */
   if(!navigator.onLine) throw new Error("Không có mạng — bảng quản trị cần số liệu thật từ máy chủ.");
   $("#phu").textContent = "đang tải…";
-  const [gl, ga, gr, gp, cf, gg, gd, ge] = await Promise.all([
+  const [gl, ga, gr, gp, cf, gg, gd, ge, gs] = await Promise.all([
     getDocs(collectionGroup(fdb,"lic")),
     getDocs(collection(fdb,"accounts")),
     getDocs(collection(fdb,"renewalRequests")),
@@ -509,7 +509,8 @@ async function nap(){
     getDoc(doc(fdb,"billing","config")),
     getDoc(doc(fdb,"billing","info")),
     getDocs(collection(fdb,"audit")).catch(()=>({docs:[]})),
-    getDocs(query(collection(fdb,"error_logs"), orderBy("tsClient","desc"), limit(1500))).catch(()=>({docs:[]}))
+    getDocs(query(collection(fdb,"error_logs"), orderBy("tsClient","desc"), limit(1500))).catch(()=>({docs:[]})),
+    getDocs(collection(fdb,"signups")).catch(()=>({docs:[]}))
   ]);
   // Mạng chập chờn: Firestore trả dữ liệu từ bộ nhớ tạm (thường là RỖNG) mà không báo lỗi.
   if([gl, ga, gr, gp].some(x => x.metadata && x.metadata.fromCache))
@@ -522,8 +523,29 @@ async function nap(){
   ERR = (ge.docs||[]).map(d=>({ id:d.id, ...d.data() }));
   CFGDB = cf.exists() ? cf.data() : {};
   BILL  = gg.exists() ? gg.data() : {};
+  SGN = {}; (gs.docs||[]).forEach(d=>SGN[d.id]=d.data());
+  donCu();                       /* dựng lại đơn POS kiểu cũ trước khi vẽ bảng */
   $("#phu").textContent = `${khach().length} khách · ${LIC.length} giấy phép · ${PAY.length} dòng thu`;
   veTatCa();
+}
+
+/* ĐƠN GÓI BÁN HÀNG (POS) KIỂU CŨ.
+   App Sổ Nợ đời trước xin gói POS bằng cách bật cờ accounts/{uid}.posRequested.
+   Bảng quản trị không hề đọc cờ đó ⇒ đơn biến mất, khách chuyển tiền mà mình
+   không thấy. Dựng lại thành đơn chờ bình thường; duyệt xong thì tắt cờ.
+   (Bản app mới đã ghi thẳng vào renewalRequests/{uid}__sono_pos.) */
+function donCu(){
+  Object.keys(ACC).forEach(u=>{
+    const a = ACC[u] || {};
+    if(a.posRequested !== true) return;
+    if(REQ.some(r => rUid(r)===u && rApp(r)==="sono_pos" && rCho(r))) return;
+    REQ.push({ id:`${u}__sono_pos`, _cu:true, uid:u, app:"sono_pos",
+      email:  a.posReqEmail || a.email || "",
+      months: num(a.posReqMonths) || 1,
+      amount: num(a.posReqAmount) || giaApp("sono_pos"),
+      requestedAt: a.posRequestedAt || null, status:"pending",
+      noiDung: (a.posReqEmail || a.email || "") + " POS" });
+  });
 }
 
 /* Nhật ký ghi thẳng vào mảng lichSu của chính doc giấy phép (hoặc doc tài khoản).
@@ -563,7 +585,7 @@ function tt(l){
   if(l.vinhVien === true) return {ma:"vv", ten:"Vĩnh viễn", lop:"ok"};
   return {ma:"trong", ten:"Chưa đặt hạn", lop:"warn"};
 }
-const emailCua = uid => ACC[uid]?.email || LIC.find(l=>l.uid===uid)?.email
+const emailCua = uid => ACC[uid]?.email || SGN[uid]?.email || LIC.find(l=>l.uid===uid)?.email
   || PAY.find(p=>p.uid===uid)?.email || REQ.find(r=>rUid(r)===uid)?.email || "";
 
 /* gom mọi thứ theo từng khách */
@@ -571,6 +593,7 @@ function khach(){
   const m = {};
   const lay = uid => (m[uid] = m[uid] || { uid, a:ACC[uid]||{}, lic:[], pay:[], req:[] });
   Object.keys(ACC).forEach(lay);
+  Object.keys(SGN).forEach(lay);          /* khách đã đăng ký nhưng chưa kịp tạo hồ sơ */
   LIC.forEach(l=>lay(l.uid).lic.push(l));
   PAY.forEach(p=>{ if(p.uid) lay(p.uid).pay.push(p); });
   REQ.forEach(r=>lay(rUid(r)).req.push(r));
@@ -604,7 +627,10 @@ function chiSo(){
   const thuTruoc  = PAY.filter(p=>thangCua(pNgay(p))===truoc).reduce((s,p)=>s+pTien(p),0);
   const tongThu   = PAY.reduce((s,p)=>s+pTien(p),0);
   const licTra    = LIC.filter(l=>tt(l).ma==="tra" && !l.trial);
-  const mrr       = licTra.reduce((s,l)=>s+giaApp(l.app),0);
+  /* Gói Chi nhánh bán theo SUẤT: 3 suất × 10.000 là 30.000/tháng, không phải 10.000.
+     Không nhân số suất là bảng doanh thu đều hằng tháng báo thiếu tiền thật. */
+  const suatCua   = l => l.app==="sono_cn" ? Math.max(1, num(l.qty)||1) : 1;
+  const mrr       = licTra.reduce((s,l)=>s+giaApp(l.app)*suatCua(l),0);
   const uidTra    = new Set(licTra.map(l=>l.uid));
   const uidTungTra= new Set(PAY.map(p=>p.uid).filter(Boolean));
   const uidCoLic  = new Set(LIC.map(l=>l.uid));
@@ -646,18 +672,24 @@ function veTong(){
 function veDon(){
   const ds = REQ.filter(rCho).sort((a,b)=>(rNgay(b)||0)-(rNgay(a)||0));
   $("#dsCho").innerHTML = ds.length ? ds.map(r=>{
-    const uid = rUid(r), app = rApp(r), dung = giaGiaHan(giaApp(app),rThang(r)), lech = rTien(r) !== dung;
+    /* Gói Chi nhánh thêm bán theo SUẤT: giá đúng = đơn giá × số tháng × số suất.
+       Không nhân qty thì đơn nào cũng bị gắn cờ "lệch giá" oan và dễ bỏ sót đơn thật. */
+    const uid = rUid(r), app = rApp(r);
+    const sl = app === "sono_cn" ? Math.max(1, num(r.qty)||1) : 1;
+    const dung = giaGiaHan(giaApp(app),rThang(r)) * sl, lech = rTien(r) !== dung;
     const cho = rNgay(r) ? soNgay(rNgay(r)) : null;
     return `<div class="item"><div class="l">
       <div class="t">${esc(r.email || emailCua(uid) || uid)}</div>
-      <div class="d">${maApp(app)} ${esc(tenApp(app))} · ${rThang(r)} tháng · gửi ${ngayVN(dToS(rNgay(r)))}
+      <div class="d">${maApp(app)} ${esc(tenApp(app))} · ${rThang(r)} tháng${app==="sono_cn"?` · ${sl} suất`:""} · gửi ${ngayVN(dToS(rNgay(r)))}
         ${cho!=null && cho<=-2?` <span class="chip bad">chờ ${-cho} ngày</span>`:""}</div>
       <div class="d">Nội dung CK: ${esc(r.noiDung||"—")}</div>
       ${lech?`<div class="d" style="color:var(--bien)">Khách khai ${tien(rTien(r))}đ, bảng giá ${tien(dung)}đ</div>`:""}
     </div><div class="r"><div class="money in">${tien(rTien(r))}</div>
-      <button class="btn pri sm" style="margin-top:6px" data-duyet="${esc(r.id)}">Duyệt</button></div></div>`;
-  }).join("") : `<div class="empty"><b>Không có đơn nào chờ</b>Khách bấm “Tôi đã chuyển khoản” thì đơn hiện ở đây.</div>`;
+      <button class="btn pri sm" style="margin-top:6px" data-duyet="${esc(r.id)}">Duyệt</button>
+      <button class="btn sm" style="margin-top:6px" data-an="${esc(r.id)}">Ẩn</button></div></div>`;
+  }).join("") : `<div class="empty"><b>Không có đơn nào chờ</b>Khách mở màn hình gia hạn / nâng cấp thì đơn hiện ở đây.</div>`;
   $$("#dsCho [data-duyet]").forEach(b=>b.onclick=()=>moDuyet(REQ.find(r=>r.id===b.dataset.duyet)));
+  $$("#dsCho [data-an]").forEach(b=>b.onclick=()=>anDon(REQ.find(r=>r.id===b.dataset.an)));
 
   const sap = LIC.map(l=>({l,t:tt(l)})).filter(x=>x.t.con!=null && x.t.con>=0 && x.t.con<=7)
                  .sort((a,b)=>a.t.con-b.t.con);
@@ -668,6 +700,17 @@ function veDon(){
   $("#dsVuaHet").innerHTML = vua.length ? vua.map(({l,t})=>hangLic(l,t)).join("")
     : `<div class="empty">Không có khách trả tiền nào vừa rớt hạn.</div>`;
   ganHangLic();
+}
+/* Ẩn một đơn mà KHÔNG cấp phép, KHÔNG ghi doanh thu — dùng cho đơn khách mở
+   màn hình xem giá rồi bỏ. Đơn kiểu cũ thì tắt cờ ở doc tài khoản. */
+async function anDon(r){
+  if(!r) return;
+  if(!confirm(`Ẩn đơn của ${emailCua(rUid(r))||rUid(r)}?\n\nKhông cấp phép, không ghi tiền.`)) return;
+  try{
+    if(r._cu) await setDoc(doc(fdb,"accounts",rUid(r)), { posRequested:false }, {merge:true});
+    else      await setDoc(doc(fdb,"renewalRequests",r.id), { status:"done", handledAt:new Date() }, {merge:true});
+    toast("Đã ẩn đơn"); nap();
+  }catch(e){ toast("Lỗi: "+(e.code||e.message),1); }
 }
 const hangLic = (l,t) => `<div class="item"><div class="l">
     <div class="t">${esc(emailCua(l.uid)||l.uid)}</div>
@@ -707,7 +750,7 @@ function hoSo(uid){
     const t = l ? tt(l) : null;
     return `<div class="item"><div class="l">
         <div class="t">${maApp(app)} ${esc(tenApp(app))}</div>
-        <div class="d">${l ? (l.vinhVien===true && !ngay(l.paidUntil) ? `vĩnh viễn` : `hạn ${ngayVN(dToS(ngay(l.paidUntil)))}`) + ` · ${tien(giaApp(app))}đ/tháng` : `chưa có giấy phép · ${tien(giaApp(app))}đ/tháng`}</div>
+        <div class="d">${l ? (l.vinhVien===true && !ngay(l.paidUntil) ? `vĩnh viễn` : `hạn ${ngayVN(dToS(ngay(l.paidUntil)))}`) + ` · ${tien(giaApp(app))}đ/tháng` : `chưa có giấy phép · ${tien(giaApp(app))}đ/tháng`}${app==="sono_cn" && l ? ` · ${num(l.qty)||0} suất` : ""}</div>
       </div><div class="r">${t?`<span class="chip ${t.lop}">${esc(t.ten)}</span>`:`<span class="chip">chưa cấp</span>`}
         <button class="btn sm" style="margin-top:6px" data-gh="${esc(uid)}|${esc(app)}">${l?"Sửa":"Cấp"}</button></div></div>`;
   }).join("");
@@ -727,10 +770,12 @@ function hoSo(uid){
       <div class="o"><div class="n" style="font-size:17px">${k.pay.length}</div><div class="l">Số lần trả</div></div>
       <div class="o"><div class="n" style="font-size:17px">${k.dangTra + (k.vinhVien||0)}</div><div class="l">App còn hạn</div></div>
     </div>
-    ${legacy?`<div class="warnbox bad"><b>Đang dùng quyền cũ</b><br>Tài khoản còn hạn kiểu cũ nên mở khoá mọi app chưa có giấy phép riêng.
+    ${legacy?`<div class="warnbox"><b>Còn sót hạn kiểu cũ</b><br>Doc tài khoản còn trường hạn đời cũ. Bộ Rules đang chạy KHÔNG dùng nó để mở khoá app, và cả hai bảng duyệt cũng không cộng dồn từ nó nữa — chỉ nằm đó cho rối sổ. Bấm “Cắt quyền cũ” để đánh dấu đã dọn.
       ${a.paidUntil?`Hạn cũ đến ${ngayVN(dToS(ngay(a.paidUntil)))}. `:""}${a.posUntil?`POS đến ${ngayVN(dToS(ngay(a.posUntil)))}.`:""}</div>`:""}
     <div class="hd"><h2>Giấy phép từng sản phẩm</h2><span class="line"></span></div>
     <div class="card">${dong}</div>
+    <div class="hd"><h2>Suất chi nhánh</h2><span class="line"></span></div>
+    <div class="card" id="hsCn" data-uid="${esc(uid)}"><p class="xs mo" style="margin:0">đang đọc số chi nhánh…</p></div>
     <div class="hd"><h2>Kho dữ liệu khách</h2><span class="line"></span></div>
     <div class="card">
       <p class="xs mo" style="margin:0 0 9px">Tải nguyên kho của khách về máy, hoặc nạp một file sao lưu ngược vào tài khoản này.
@@ -748,11 +793,80 @@ function hoSo(uid){
         ? `<button class="btn dan" id="hsCat">Cắt quyền cũ</button><button class="btn" id="hsDong">Đóng</button>`
         : `<button class="btn blk" id="hsDong">Đóng</button>`));
   ganHangLic();
+  napCn(uid);                     /* đọc thêm: số chi nhánh thật + suất được biếu */
   $("#hsDong").onclick = dongSheet;
   $("#hsResetMK").onclick = ()=> moDatLaiMK(uid, k.email||"");
   $("#hsTaiDL").onclick   = ()=> taiDuLieuKhach(uid, k.email||"");
   $("#hsNapDL").onclick   = ()=> napDuLieuKhach(uid, k.email||"");
   if(legacy) $("#hsCat").onclick = ()=>catCu(uid);
+}
+
+/* ── SUẤT CHI NHÁNH CỦA MỘT KHÁCH ──────────────────────────────────────────
+   App Sổ Nợ cho dùng   1 + max(base, qty)   chi nhánh, trong đó:
+     • base = users/{uid}/meta/cn.base — số chi nhánh THÊM được BIẾU vĩnh viễn.
+       Doc này do CHÍNH MÁY KHÁCH tự ghi lúc bật thu phí (để shop cũ không bị
+       khoá oan). Chưa nhìn được từ đây thì một shop 5 chi nhánh xài free mãi mãi
+       mà mình không hay biết — nên phải xem và sửa được ngay tại hồ sơ khách.
+     • qty  = accounts/{uid}/lic/sono_cn.qty — số suất khách ĐANG TRẢ TIỀN.
+   Đặt base = 0 là bắt đầu thu tiền đủ mọi chi nhánh thêm của khách đó. */
+async function napCn(uid){
+  const box0 = $("#hsCn");
+  if(!box0 || box0.dataset.uid !== uid) return;
+  let bs, mc;
+  try{
+    [bs, mc] = await Promise.all([
+      getDocs(collection(fdb,"users",uid,"branches")),
+      getDoc(doc(fdb,"users",uid,"meta","cn"))
+    ]);
+  }catch(e){
+    const b1 = $("#hsCn");
+    if(b1 && b1.dataset.uid === uid)
+      b1.innerHTML = `<p class="xs mo" style="margin:0">Chưa đọc được số chi nhánh: ${esc((e&&(e.code||e.message))||"lỗi")}</p>`;
+    return;
+  }
+  const el = $("#hsCn");
+  if(!el || el.dataset.uid !== uid) return;      /* hồ sơ đã đóng hoặc đã mở khách khác */
+
+  const soDoc  = bs.size || 0;
+  const dangCo = Math.max(0, soDoc - 1);                       /* 'main' không tính tiền */
+  const base   = mc.exists() && mc.data().base != null ? Math.max(0, Math.floor(num(mc.data().base))) : null;
+  const lic    = LIC.find(x=>x.uid===uid && x.app==="sono_cn") || null;
+  const qty    = lic ? Math.max(0, num(lic.qty)) : 0;
+  /* Chép đúng hàm _cnLic() của app khách: hết hạn hoặc bị khoá là suất mua KHÔNG tính. */
+  const hanCn  = lic ? ngay(lic.paidUntil) : null;
+  const licOk  = !!lic && lic.active !== false && (!hanCn || hanCn.getTime() >= Date.now());
+  const baseHL = base === null ? dangCo : base;                /* chưa chốt thì app sẽ tự chốt = đang có */
+  const chuan  = 1 + Math.max(baseHL, licOk ? qty : 0);
+  const donGia = giaApp("sono_cn");
+
+  el.innerHTML = `
+    <div class="kv"><span class="k">Đang có</span><span class="v">${soDoc} chi nhánh${soDoc?` (1 chính + ${dangCo} thêm)`:""}</span></div>
+    <div class="kv"><span class="k">Được biếu</span><span class="v">${base===null?`<span class="chip warn">chưa chốt</span>`:`${base} suất`}</span></div>
+    <div class="kv"><span class="k">Đã mua</span><span class="v">${lic?`${qty} suất · ${esc(tt(lic).ten)}`:"chưa mua"}</span></div>
+    <div class="kv"><span class="k">App cho phép</span><span class="v"><b>${chuan}</b> chi nhánh</span></div>
+    ${dangCo>chuan-1?`<div class="warnbox bad">Khách đang có ${dangCo} chi nhánh thêm nhưng chỉ được phép ${chuan-1}. App khoá bớt chi nhánh mở sau — dữ liệu vẫn còn nguyên, cấp thêm suất là hiện lại.</div>`:""}
+    ${base===null?`<div class="warnbox">Khách chưa từng mở phần chi nhánh kể từ khi bật thu phí. Lần tới họ mở app, máy sẽ <b>TỰ chốt biếu ${dangCo} suất</b>. Muốn thu tiền thì đặt số bên dưới ngay bây giờ.</div>`:""}
+    ${base>0?`<div class="warnbox">Đang biếu <b>${base}</b> suất ≈ <b>${tien(base*donGia)}đ/tháng</b>. Đặt về 0 để thu tiền đủ.</div>`:""}
+    <div class="f2">
+      <div class="f"><label>Số suất được biếu (0 = thu tiền hết)</label>
+        <input id="cnBase" type="number" inputmode="numeric" min="0" value="${baseHL}"></div>
+      <div class="f" style="display:flex;align-items:flex-end">
+        <button class="btn" id="cnLuu" style="width:100%">Lưu số suất biếu</button></div>
+    </div>
+    <p class="xs mo" style="margin:0">Chỉ đổi số suất ĐƯỢC BIẾU — không đụng dữ liệu, không xoá chi nhánh nào.
+      Muốn cấp suất TRẢ TIỀN thì bấm Cấp/Sửa ở dòng <b>sono_cn</b> phía trên.</p>`;
+
+  $("#cnLuu").onclick = async ()=>{
+    const n = Math.max(0, Math.floor(num($("#cnBase").value)));
+    if(!confirm(`Đặt số suất chi nhánh ĐƯỢC BIẾU của khách này = ${n}?\n\n`
+      + `Khách sẽ dùng được ${1+Math.max(n, licOk?qty:0)} chi nhánh (đang có ${soDoc}).`)) return;
+    try{
+      await setDoc(doc(fdb,"users",uid,"meta","cn"),
+        { base:n, setAt:new Date(), datBoi:auth.currentUser?.email||"" }, {merge:true});
+      await ghiTK(uid,"dat_suat_bieu",{ghi:`${base===null?"chưa chốt":base+" suất"} → ${n} suất`});
+      toast("Đã đặt số suất biếu"); napCn(uid); nap();
+    }catch(e){ toast("Lỗi: "+(e.code||e.message),1); }
+  };
 }
 
 /* --------------- Đặt lại mật khẩu khách — gọi Cloud Function "datLaiMKKhach" --------------- */
@@ -866,6 +980,7 @@ function xemThu(p){
       <div class="kv"><span class="k">Sản phẩm</span><span class="v">${maApp(p.app||"?")} ${esc(tenApp(p.app||"?"))}</span></div>
       <div class="kv"><span class="k">Số tiền</span><span class="v num">${tien(pTien(p))} đ</span></div>
       <div class="kv"><span class="k">Số tháng</span><span class="v">${pThang(p)||"—"}</span></div>
+      ${num(p.qty)?`<div class="kv"><span class="k">Số suất</span><span class="v">${num(p.qty)} chi nhánh</span></div>`:""}
       <div class="kv"><span class="k">Lúc</span><span class="v">${gioVN(pNgay(p))}</span></div>
       ${p.hanCu?`<div class="kv"><span class="k">Hạn cũ</span><span class="v">${ngayVN(dToS(ngay(p.hanCu)))}</span></div>`:""}
       ${p.hanMoi?`<div class="kv"><span class="k">Hạn mới</span><span class="v">${ngayVN(dToS(ngay(p.hanMoi)))}</span></div>`:""}
@@ -1105,7 +1220,7 @@ function moLoi(g){
 /* Danh sách kho theo TỪNG CHI NHÁNH — chép đúng brCol() của app Sổ Nợ/Bán hàng.
    Thiếu một tên ở đây là mất trắng kho đó, nên không được rút gọn. */
 const cdlCols = ['products','orders','stock_moves','purchases','returns','shifts','cashlog','pos_audit'];
-const cdlGoc  = ['suppliers','supplier_payments','staff'];
+const cdlGoc  = ['suppliers','supplier_payments','staff','pos_nv'];   /* pos_nv = tài khoản đăng nhập của máy nhân viên */
 const CDL_LO  = 150;   /* số lệnh mỗi lô ghi — dưới trần 500 lệnh & 10MB của Firestore */
 
 /* Đổi mọi mốc thời gian (Timestamp/Date) thành chuỗi ISO — CHỈ dùng cho file .json.
@@ -1289,6 +1404,7 @@ function cdlBanDoEmail(){
   const m = {};
   const nap1 = (uid, mail)=>{ const e=String(mail||'').trim().toLowerCase(); if(e && uid && !m[e]) m[e]=uid; };
   Object.keys(ACC).forEach(uid=>nap1(uid,(ACC[uid]||{}).email));
+  Object.keys(SGN).forEach(uid=>nap1(uid,(SGN[uid]||{}).email));
   LIC.forEach(l=>nap1(l.uid,l.email));
   PAY.forEach(p=>nap1(p.uid,p.email));
   REQ.forEach(r=>nap1(rUid(r),r.email));
@@ -1760,6 +1876,22 @@ function veCaiDat(){
               + (nd.trial?" (vẫn là dùng thử)":"") + (nd.active===false?" (đang khoá)":""));
         }
 
+        /* ⑦b MÁY NHÂN VIÊN — trỏ nv_map sang uid MỚI.
+           Kho pos_nv đã được chép ở bước 3, nhưng máy nhân viên tra shop của mình
+           qua /nv_map/{uidNV}.shopUid. Không trỏ lại thì mọi máy nhân viên vẫn
+           chỉ về tài khoản cũ (vừa bị khoá ở bước dưới) ⇒ mất quyền sạch. */
+        log("▶ BƯỚC 6b — Chuyển tài khoản máy nhân viên");
+        {
+          const dsNV = kho.pos_nv || [];
+          let nvOk = 0;
+          for(const r of dsNV){
+            try{ await setDoc(doc(fdb,"nv_map",r.id), {shopUid:S.uMoi}, {merge:true}); nvOk++; }
+            catch(e){ log(`  ⚠️ ${r.id}: ${(e&&(e.code||e.message))||e}`); }
+          }
+          log(dsNV.length ? `  ✓ ${nvOk}/${dsNV.length} tài khoản nhân viên đã trỏ sang tài khoản mới`
+                          : "  (shop này không có tài khoản máy nhân viên)");
+        }
+
         /* ⑧ KHOÁ CỔNG VÀO của tài khoản nguồn.
            App Sổ Nợ mở cửa dựa vào lic/sono. Nếu doc đó KHÔNG tồn tại (khách
            đời cũ, hoặc nguồn chỉ có sono_pos) thì app coi là khách mới và TỰ MỞ
@@ -1809,13 +1941,14 @@ function veCaiDat(){
 
   const sw = (k,t,d,on)=>`<div class="sw"><div><div class="t">${t}</div><div class="d">${d}</div></div>
     <div class="tg ${on?"on":""}" data-sw="${k}"><i></i></div></div>`;
+  /* CHỈ CÒN CÔNG TẮC THẬT. Công tắc "Chấp nhận hạn kiểu cũ" đã gỡ: bộ Firestore
+     Rules đang chạy KHÔNG đọc trường billing/config.legacy nữa, bật hay tắt đều
+     không đổi gì — để lại chỉ khiến mình tưởng đã bịt lỗ mà thật ra chưa bịt. */
   $("#congTac").innerHTML =
-    sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false) +
-    sw("legacy","Chấp nhận hạn kiểu cũ","Bật là một lần trả tiền dùng được mọi app chưa có giấy phép riêng.", CFGDB.legacy === true);
+    sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false);
   $$("#congTac [data-sw]").forEach(el=>el.onclick=async()=>{
     const k = el.dataset.sw, moi = !el.classList.contains("on");
     if(k==="enforce" && !moi && !confirm("Tắt bắt buộc giấy phép = mọi khách dùng miễn phí. Chắc chưa?")) return;
-    if(k==="legacy" && moi && !confirm("Bật legacy sẽ mở lại lỗ hổng một lần trả tiền dùng mọi app. Chắc chưa?")) return;
     try{
       await setDoc(doc(fdb,"billing","config"), {[k]:moi}, {merge:true});
       await ghiChung("cong_tac",{ghi:`${k}: ${!moi} → ${moi}`});
@@ -1841,10 +1974,15 @@ function veCaiDat(){
     const m = { bin:$("#b_bin").value.trim(), bankName:$("#b_bank").value.trim(),
                 account:$("#b_acc").value.trim(), accName:$("#b_name").value.trim(),
                 pricePerMonth:num($("#b_chung").value) };
-    apps.forEach(a=>{ const v = num($("#b_"+a).value); if(v) m[CFG.oGia[a][0]] = v; });
+    /* Ô TRỐNG = xoá giá riêng (quay về giá chung / giá mặc định).
+       Gõ số 0 = miễn phí thật. Bản cũ dùng if(v) nên không đặt được 0 và
+       không xoá được giá đã lỡ gõ sai. */
+    const xoa = [];
+    apps.forEach(a=>{ const k = CFG.oGia[a][0], t = String($("#b_"+a).value).trim();
+      if(t === "") { m[k] = deleteField(); xoa.push(k); } else m[k] = num(t); });
     try{ await setDoc(doc(fdb,"billing","info"), m, {merge:true});
-      await ghiChung("doi_gia",{ghi:apps.map(a=>`${a}:${m[CFG.oGia[a][0]]||"—"}`).join(" ")});
-      BILL={...BILL,...m}; toast("Đã lưu"); nap();
+      await ghiChung("doi_gia",{ghi:apps.map(a=>`${a}:${String($("#b_"+a).value).trim()||"—"}`).join(" ")});
+      BILL={...BILL,...m}; xoa.forEach(k=>{ delete BILL[k]; }); toast("Đã lưu"); nap();
     }catch(e){ toast("Lỗi: "+(e.code||e.message),1); }
   };
 }
@@ -1859,6 +1997,10 @@ function moDuyet(r, uidIn, appIn){
   const uid = r ? rUid(r) : uidIn;
   const app = r ? rApp(r) : appIn;
   if(r && !rCho(r)) return toast("Đơn này đã duyệt rồi",1);
+  /* Đơn thiếu trường app (đời cũ) sẽ ra mã "?" — duyệt bừa sẽ tạo giấy phép rác
+     accounts/{uid}/lic/? mà app khách không bao giờ đọc tới. Chặn ngay. */
+  if(!CFG.apps.includes(app))
+    return toast(`Đơn không rõ sản phẩm (${app}) — mở hồ sơ khách rồi bấm Cấp đúng gói.`,1);
   const l = LIC.find(x=>x.uid===uid && x.app===app) || {};
   const hanCu = ngay(l.paidUntil);
   const laVV  = l.vinhVien === true && !hanCu;          // đang vĩnh viễn thật (không có ngày)
@@ -1867,7 +2009,7 @@ function moDuyet(r, uidIn, appIn){
                 : (hanCu ? ngayVN(dToS(hanCu)) : "chưa đặt");
   const t0 = r ? (num(r.months)||1) : 1;
   const laCN = app==='sono_cn';                          // gói chi nhánh thêm: cần thêm ô Số chi nhánh
-  const cnQty0 = laCN ? Math.max(1, num(l.qty)||1) : 1;
+  const cnQty0 = laCN ? Math.max(1, num(r&&r.qty) || num(l.qty) || 1) : 1;   /* ưu tiên số suất khách xin */
   moSheet("Đặt hạn & ghi sổ", `
     <div class="card">
       <div class="kv"><span class="k">Khách</span><span class="v">${esc(r?.email || emailCua(uid) || uid)}</span></div>
@@ -1951,7 +2093,8 @@ function moDuyet(r, uidIn, appIn){
           email: r?.email || emailCua(uid) || "", hanCu: hanCu||null, hanMoi,
           ghiChu: $("#dGc").value||"", nguoiDuyet: auth.currentUser?.email||"" });
       }
-      if(r) b.set(doc(fdb,"renewalRequests",r.id), { status:"done", handledAt:new Date() }, {merge:true});
+      if(r && r._cu)  b.set(doc(fdb,"accounts",uid), { posRequested:false }, {merge:true});
+      else if(r)      b.set(doc(fdb,"renewalRequests",r.id), { status:"done", handledAt:new Date() }, {merge:true});
       await b.commit();
       dongSheet(); toast(soTien!==0?"Đã đặt hạn và ghi sổ":"Đã đặt hạn cho khách"); nap();
     }catch(e){ console.error(e); toast("Lỗi: "+(e.code||e.message),1); $("#dOk").disabled=false; }
