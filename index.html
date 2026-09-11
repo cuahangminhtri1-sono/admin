@@ -426,13 +426,19 @@ const CFG = {
   },
   admin:"cuahangminhtri1@gmail.com",
   ten:{ sono:"Sổ Nợ", sono_pos:"Bán hàng (POS)", cafe:"Quản Lý Cafe",
-        tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng", sono_cn:"Chi nhánh (thêm)" },
-  apps:["sono","sono_pos","sono_cn","cafe","tro","xe","hd"],
+        tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng", sono_cn:"Chi nhánh (thêm)",
+        sono_cn_fnb:"Chi nhánh · F&B", sono_cn_fs:"Chi nhánh · Thời trang",
+        sono_cn_rm:"Chi nhánh · Karaoke/Spa", sono_cn_kg:"Chi nhánh · Cân ký" },
+  apps:["sono","sono_pos","sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg","cafe","tro","xe","hd"],
   /* Tên ô giá và giá mặc định — chép đúng hàm priceFor() trong các app.
      Sai tên ô là app đọc ra 0đ, khách quét mã QR ra số tiền 0. */
   oGia:{ sono:["priceSono","pricePerMonth",10000],
          sono_pos:["pricePos","posPricePerMonth",0],
          sono_cn:["priceCn","priceCnPerMonth",10000],
+         sono_cn_fnb:["priceCnFnb","priceCn",10000],
+         sono_cn_fs:["priceCnFs","priceCn",10000],
+         sono_cn_rm:["priceCnRm","priceCn",10000],
+         sono_cn_kg:["priceCnKg","priceCn",10000],
          cafe:["priceCafe","pricePerMonth",10000],
          tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000],
@@ -629,7 +635,7 @@ function chiSo(){
   const licTra    = LIC.filter(l=>tt(l).ma==="tra" && !l.trial);
   /* Gói Chi nhánh bán theo SUẤT: 3 suất × 10.000 là 30.000/tháng, không phải 10.000.
      Không nhân số suất là bảng doanh thu đều hằng tháng báo thiếu tiền thật. */
-  const suatCua   = l => l.app==="sono_cn" ? Math.max(1, num(l.qty)||1) : 1;
+  const suatCua   = l => String(l.app||"").indexOf("sono_cn")===0 ? Math.max(1, num(l.qty)||1) : 1;
   const mrr       = licTra.reduce((s,l)=>s+giaApp(l.app)*suatCua(l),0);
   const uidTra    = new Set(licTra.map(l=>l.uid));
   const uidTungTra= new Set(PAY.map(p=>p.uid).filter(Boolean));
@@ -675,7 +681,7 @@ function veDon(){
     /* Gói Chi nhánh thêm bán theo SUẤT: giá đúng = đơn giá × số tháng × số suất.
        Không nhân qty thì đơn nào cũng bị gắn cờ "lệch giá" oan và dễ bỏ sót đơn thật. */
     const uid = rUid(r), app = rApp(r);
-    const sl = app === "sono_cn" ? Math.max(1, num(r.qty)||1) : 1;
+    const sl = String(app||"").indexOf("sono_cn")===0 ? Math.max(1, num(r.qty)||1) : 1;
     const dung = giaGiaHan(giaApp(app),rThang(r)) * sl, lech = rTien(r) !== dung;
     const cho = rNgay(r) ? soNgay(rNgay(r)) : null;
     return `<div class="item"><div class="l">
@@ -750,7 +756,7 @@ function hoSo(uid){
     const t = l ? tt(l) : null;
     return `<div class="item"><div class="l">
         <div class="t">${maApp(app)} ${esc(tenApp(app))}</div>
-        <div class="d">${l ? (l.vinhVien===true && !ngay(l.paidUntil) ? `vĩnh viễn` : `hạn ${ngayVN(dToS(ngay(l.paidUntil)))}`) + ` · ${tien(giaApp(app))}đ/tháng` : `chưa có giấy phép · ${tien(giaApp(app))}đ/tháng`}${app==="sono_cn" && l ? ` · ${num(l.qty)||0} suất` : ""}</div>
+        <div class="d">${l ? (l.vinhVien===true && !ngay(l.paidUntil) ? `vĩnh viễn` : `hạn ${ngayVN(dToS(ngay(l.paidUntil)))}`) + ` · ${tien(giaApp(app))}đ/tháng` : `chưa có giấy phép · ${tien(giaApp(app))}đ/tháng`}${String(app||"").indexOf("sono_cn")===0 && l ? ` · ${num(l.qty)||0} suất` : ""}</div>
       </div><div class="r">${t?`<span class="chip ${t.lop}">${esc(t.ten)}</span>`:`<span class="chip">chưa cấp</span>`}
         <button class="btn sm" style="margin-top:6px" data-gh="${esc(uid)}|${esc(app)}">${l?"Sửa":"Cấp"}</button></div></div>`;
   }).join("");
@@ -1945,10 +1951,12 @@ function veCaiDat(){
      Rules đang chạy KHÔNG đọc trường billing/config.legacy nữa, bật hay tắt đều
      không đổi gì — để lại chỉ khiến mình tưởng đã bịt lỗ mà thật ra chưa bịt. */
   $("#congTac").innerHTML =
-    sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false);
+    sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false)
+  + sw("enforceCn","Thu phí CHI NHÁNH","Bật = chi nhánh THÊM phải có giấy phép còn hạn mới đọc/ghi được (chi nhánh chính luôn miễn phí). PHẢI quét miễn trừ khách cũ ở 🏪 Chi nhánh trước khi bật.", CFGDB.enforceCn === true);
   $$("#congTac [data-sw]").forEach(el=>el.onclick=async()=>{
     const k = el.dataset.sw, moi = !el.classList.contains("on");
     if(k==="enforce" && !moi && !confirm("Tắt bắt buộc giấy phép = mọi khách dùng miễn phí. Chắc chưa?")) return;
+    if(k==="enforceCn" && moi && !confirm("BẬT thu phí CHI NHÁNH.\n\nKhách đang có chi nhánh thêm mà CHƯA mua gói sẽ mất quyền đọc/ghi dữ liệu trong chi nhánh đó NGAY LẬP TỨC (chi nhánh chính không ảnh hưởng).\n\nĐã bấm 🏪 Chi nhánh → Quét lại → Miễn trừ khách cũ chưa?")) return;
     try{
       await setDoc(doc(fdb,"billing","config"), {[k]:moi}, {merge:true});
       await ghiChung("cong_tac",{ghi:`${k}: ${!moi} → ${moi}`});
@@ -2008,7 +2016,7 @@ function moDuyet(r, uidIn, appIn){
   const hanText = laVV ? "Vĩnh viễn — không hết hạn"
                 : (hanCu ? ngayVN(dToS(hanCu)) : "chưa đặt");
   const t0 = r ? (num(r.months)||1) : 1;
-  const laCN = app==='sono_cn';                          // gói chi nhánh thêm: cần thêm ô Số chi nhánh
+  const laCN = String(app||'').indexOf('sono_cn')===0;                          // gói chi nhánh thêm: cần thêm ô Số chi nhánh
   const cnQty0 = laCN ? Math.max(1, num(r&&r.qty) || num(l.qty) || 1) : 1;   /* ưu tiên số suất khách xin */
   moSheet("Đặt hạn & ghi sổ", `
     <div class="card">
@@ -3599,6 +3607,8 @@ if (window.__DKX_READY__) return; window.__DKX_READY__ = true;
 
 /* Mọi app khách có thể có giấy phép — dùng khi khoá/mở TOÀN BỘ một tài khoản */
 var APPS = [ ['sono','Sổ Nợ'], ['sono_pos','Bán hàng (POS)'], ['sono_cn','Chi nhánh thêm'],
+             ['sono_cn_fnb','CN · F&B'], ['sono_cn_fs','CN · Thời trang'],
+             ['sono_cn_rm','CN · Karaoke/Spa'], ['sono_cn_kg','CN · Cân ký'],
              ['sono_fnb','Gói F&B'], ['sono_fs','Gói Thời trang'], ['sono_rm','Gói Karaoke/Spa'],
              ['sono_kg','Gói Cân ký'], ['sono_qr','Gói Đơn QR'],
              ['cafe','Quản Lý Cafe'], ['tro','TrọSafe'],
@@ -3928,5 +3938,391 @@ window.moDieuKhien = mo;
 })();
 </script>
 <!-- ═══════════ HẾT G3+G4 ═══════════ -->
+<!-- ═══════════════ G5 · THU PHÍ CHI NHÁNH THEO NGÀNH (drop-in · namespace cnq-) ═══════════════
+     Đi kèm bộ Firestore Rules mới có công tắc billing/config.enforceCn.
+       • Xem ai đang dùng chi nhánh THÊM · ngành gì · đã trả tiền gói nào · còn mấy ngày.
+       • MIỄN TRỪ khách cũ (accounts/{uid}.cnMienTru) — PHẢI chạy TRƯỚC khi bật công tắc,
+         nếu không khách cũ mất quyền đọc/ghi dữ liệu chi nhánh ngay lập tức.
+       • Đặt giá riêng 5 gói chi nhánh ngay tại đây (ghi vào billing/info).
+     • Dùng lại đúng app Firebase + phiên đăng nhập đang chạy. KHÔNG đụng code cũ.
+     • Dán NGAY TRƯỚC </body> của indexadmin.html.
+     ══════════════════════════════════════════════════════════════════════════════════ -->
+<script type="module">
+import { getApps } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+import { getAuth } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+import { getFirestore, collection, collectionGroup, doc, getDoc, getDocs, setDoc, addDoc, arrayUnion }
+  from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+(function(){
+if (window.__CNQ_READY__) return; window.__CNQ_READY__ = true;
+
+/* ═════════ CẤU HÌNH — chép ĐÚNG từ indexSNBH.html ═════════ */
+var NGANH = [
+  {k:'fnb', lic:'sono_cn_fnb', pf:'priceCnFnb', ic:'🍽️', n:'F&B · Quán ăn / Cafe'},
+  {k:'fs',  lic:'sono_cn_fs',  pf:'priceCnFs',  ic:'👕', n:'Thời trang · Mỹ phẩm'},
+  {k:'rm',  lic:'sono_cn_rm',  pf:'priceCnRm',  ic:'🛏️', n:'Karaoke · Spa · Nhà nghỉ'},
+  {k:'kg',  lic:'sono_cn_kg',  pf:'priceCnKg',  ic:'⚖️', n:'Vật liệu XD · Nông sản · Bán sỉ'}
+];
+var CHUNG = {k:'', lic:'sono_cn', pf:'priceCn', ic:'🛒', n:'Bán hàng thường'};
+var SONG  = 6;                 /* số tài khoản quét song song — đừng để cao quá kẻo nghẽn */
+/* ═════════════════════════════════════════════════════════ */
+
+var D = { rows:[], lic:{}, acc:{}, price:{}, cfg:{}, loaded:false, dang:false, tienDo:'' };
+
+function el(id){ return document.getElementById(id); }
+function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':String(s)); return d.innerHTML; }
+function num(v){ var n=Number(String(v==null?'':v).replace(/[^\d.-]/g,'')); return isFinite(n)?n:0; }
+function vnd(v){ return num(v).toLocaleString('vi-VN')+'đ'; }
+function ngay(v){ if(v==null) return null;
+  if (typeof v.toDate==='function'){ var a=v.toDate(); return isNaN(a)?null:a; }
+  if (typeof v==='number'){ var b=new Date(v); return isNaN(b)?null:b; }
+  if (v && typeof v.seconds==='number') return new Date(v.seconds*1000);
+  var c=new Date(v); return isNaN(c)?null:c; }
+function dstr(d){ try{ return d.getDate()+'/'+(d.getMonth()+1)+'/'+d.getFullYear(); }catch(e){ return '—'; } }
+function conNgay(d){ var t=new Date(); t.setHours(0,0,0,0); return Math.floor((d.getTime()-t.getTime())/86400000); }
+function noi(m,bad){
+  try{ if (typeof window.toast==='function'){ window.toast(m,bad?1:0); return; } }catch(e){}
+  try{
+    var t=el('cnq-toast');
+    if(!t){ t=document.createElement('div'); t.id='cnq-toast';
+      t.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:28px;z-index:2147483240;'
+        +'max-width:88%;padding:11px 16px;border-radius:11px;font:700 13.5px system-ui,-apple-system,Roboto,Arial,sans-serif;'
+        +'color:#fff;box-shadow:0 8px 26px rgba(0,0,0,.35);opacity:0;transition:opacity .18s;pointer-events:none;text-align:center';
+      document.body.appendChild(t); }
+    t.style.background=bad?'#c0392b':'#0a7d55';
+    t.textContent=String(m);
+    t.style.opacity='1';
+    clearTimeout(t.__h); t.__h=setTimeout(function(){ t.style.opacity='0'; },2800);
+  }catch(e){ try{ alert(m); }catch(_){} }
+}
+
+function ctx(){
+  var apps=[]; try{ apps=getApps()||[]; }catch(e){ apps=[]; }
+  var app=null, i;
+  for (i=0;i<apps.length;i++){ var a=apps[i]; if (a && a.name!=='errlog' && a.name!=='pub'){ app=a; break; } }
+  if (!app && apps.length) app=apps[0];
+  var au=null, db=null, u=null;
+  if (app){ try{ au=getAuth(app); }catch(e){} }
+  u = au && au.currentUser;
+  if (!u || u.isAnonymous || !u.email){
+    for (i=0;i<apps.length;i++){ var b=apps[i]; if (!b||b.name==='errlog') continue;
+      try{ var x=getAuth(b); if (x.currentUser && !x.currentUser.isAnonymous && x.currentUser.email){ app=b; au=x; u=x.currentUser; break; } }catch(e){} } }
+  if (app){ try{ db=getFirestore(app); }catch(e){} }
+  return { db:db, user:u };
+}
+
+/* ---------- giấy phép ---------- */
+function conHan(d){
+  if (!d) return false;
+  if (d.active===false) return false;
+  if (d.vinhVien===true && !ngay(d.paidUntil)) return true;
+  var u=ngay(d.paidUntil);
+  return !!(u && u.getTime()>=Date.now());
+}
+function nganhCua(mods){
+  mods = mods||{};
+  for (var i=0;i<NGANH.length;i++) if (mods[NGANH[i].k]===true) return NGANH[i];
+  return CHUNG;
+}
+function giaCua(pf){ var v=num(D.price[pf]); if (v>0) return v; var c=num(D.price.priceCn); return c>0?c:10000; }
+
+/* ---------- NẠP DỮ LIỆU ---------- */
+async function nap(ve){
+  var c=ctx(); if (!c.db || !c.user){ return 'Chưa đăng nhập quản trị'; }
+  D.dang=true; D.tienDo='Đang đọc danh sách tài khoản…'; if(ve) ve();
+  try{
+    var r = await Promise.all([
+      getDocs(collection(c.db,'accounts')),
+      getDocs(collectionGroup(c.db,'lic')),
+      getDoc(doc(c.db,'billing','info')),
+      getDoc(doc(c.db,'billing','config'))
+    ]);
+  }catch(e){ D.dang=false; return 'Lỗi đọc: '+((e&&(e.code||e.message))||e); }
+
+  D.acc={}; var uids=[];
+  r[0].forEach(function(d){ var x=d.data()||{}; D.acc[d.id]={email:x.email||'', cnMienTru:(x.cnMienTru===true)}; uids.push(d.id); });
+
+  D.lic={};
+  r[1].forEach(function(d){
+    var p=d.ref.parent && d.ref.parent.parent; if (!p) return;
+    D.lic[p.id+'|'+d.id]=d.data()||{};
+  });
+
+  D.price = (r[2].exists() && r[2].data()) || {};
+  D.cfg   = (r[3].exists() && r[3].data()) || {};
+
+  /* Quét từng shop: số chi nhánh + ngành đang bật. Chạy theo lô để đỡ nghẽn. */
+  var rows=[], xong=0;
+  async function motCai(uid){
+    var soCn=0, mods={};
+    try{ var b=await getDocs(collection(c.db,'users',uid,'branches')); soCn=b.size||0; }catch(e){ soCn=-1; }
+    try{ var m=await getDoc(doc(c.db,'users',uid,'meta','shopSettings')); if (m.exists()) mods=(m.data()||{}).mods||{}; }catch(e){}
+    var ng=nganhCua(mods);
+    var lNg=D.lic[uid+'|'+ng.lic]||null, lCh=D.lic[uid+'|sono_cn']||null;
+    var qNg=conHan(lNg)?Math.max(0,Math.floor(num(lNg.qty))):0;
+    var qCh=conHan(lCh)?Math.max(0,Math.floor(num(lCh.qty))):0;
+    var them=Math.max(0,(soCn>0?soCn:1)-1);
+    var dung=(qNg>=qCh)?lNg:lCh, maDung=(qNg>=qCh)?ng.lic:'sono_cn';
+    rows.push({
+      uid:uid, email:(D.acc[uid]||{}).email||uid, ng:ng, soCn:soCn, them:them,
+      qty:Math.max(qNg,qCh), lic:conHan(dung)?dung:null, maLic:maDung,
+      licNg:lNg, licCh:lCh, mienTru:(D.acc[uid]||{}).cnMienTru===true
+    });
+    xong++; D.tienDo='Đang quét shop… '+xong+'/'+uids.length; if(ve && xong%SONG===0) ve();
+  }
+  for (var i=0;i<uids.length;i+=SONG){
+    await Promise.all(uids.slice(i,i+SONG).map(motCai));
+  }
+
+  rows.forEach(function(x){
+    x.du = (x.them===0) || x.mienTru || (x.qty>=x.them);
+    x.thieu = (x.them>0) && !x.mienTru && (x.qty<x.them);
+    x.tra = (x.them>0) && !x.mienTru && (x.qty>=x.them);
+  });
+  rows.sort(function(a,b){
+    if (a.thieu!==b.thieu) return a.thieu?-1:1;
+    if ((a.them>0)!==(b.them>0)) return a.them>0?-1:1;
+    return String(a.email).localeCompare(String(b.email));
+  });
+  D.rows=rows; D.loaded=true; D.dang=false; D.tienDo='';
+  return '';
+}
+
+/* ---------- GIAO DIỆN ---------- */
+var CSS =
+ '.cnq-mask{position:fixed;inset:0;z-index:2147483180;background:rgba(6,16,26,.6);display:none;align-items:flex-start;justify-content:center;padding:14px;overflow:auto;-webkit-overflow-scrolling:touch}'
++'.cnq-mask.on{display:flex}'
++'.cnq-card{background:#fff;color:#1b2430;border-radius:16px;width:100%;max-width:620px;padding:14px;font:400 14px system-ui,-apple-system,Roboto,Arial,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.4);margin:auto 0}'
++'.cnq-top{display:flex;align-items:center;gap:8px;margin-bottom:10px}'
++'.cnq-title{flex:1;min-width:0;font-size:16px;font-weight:800;color:#0a3d62}'
++'.cnq-x{border:none;background:#eef2f6;color:#33424f;border-radius:9px;width:34px;height:34px;font-size:16px;font-weight:800;cursor:pointer}'
++'.cnq-h{font-size:12.5px;font-weight:800;color:#5b6a78;letter-spacing:.3px;margin:14px 0 7px;display:flex;align-items:center;gap:8px}'
++'.cnq-h span{flex:1;height:1px;background:#e6ebf0}'
++'.cnq-sw{border-radius:11px;padding:10px 12px;font-size:13px;line-height:1.55;margin-bottom:9px}'
++'.cnq-sw.on{background:#e8f7ef;border:1px solid #a9dcc6;color:#0a5f4a}'
++'.cnq-sw.off{background:#fff3e0;border:1px solid #f3d08a;color:#95590c}'
++'.cnq-row{border:1px solid #e6ebf0;border-radius:11px;padding:10px 11px;margin-bottom:8px;font-size:13px;background:#fff}'
++'.cnq-row.thieu{border-color:#e88;background:#fff7f7}'
++'.cnq-row.mt{border-color:#bcd6f5;background:#f7fbff}'
++'.cnq-em{font-weight:800;word-break:break-all}'
++'.cnq-meta{color:#5b6a78;font-size:12px;margin-top:3px;word-break:break-word}'
++'.cnq-act{margin-top:8px;display:flex;gap:7px;align-items:center;flex-wrap:wrap}'
++'.cnq-b{border:none;border-radius:9px;padding:9px 12px;font-size:13px;font-weight:800;cursor:pointer;background:#eef2f6;color:#33424f;font-family:inherit}'
++'.cnq-b.ok{background:#0a7d55;color:#fff}.cnq-b.pri{background:#2563eb;color:#fff}.cnq-b.dan{background:#c0392b;color:#fff}'
++'.cnq-b:disabled{opacity:.5;cursor:default}'
++'.cnq-tag{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:999px;white-space:nowrap;display:inline-block}'
++'.cnq-tag.ok{background:#e8f7ef;color:#0a7d55}.cnq-tag.warn{background:#fff3e0;color:#b8560f}'
++'.cnq-tag.bad{background:#fdecec;color:#b02a2a}.cnq-tag.na{background:#eef2f6;color:#5b6a78}'
++'.cnq-tag.mt{background:#eaf2ff;color:#1c4e80}'
++'.cnq-note{background:#eef5ff;border:1px solid #bcd6f5;color:#1c4e80;border-radius:9px;padding:9px 11px;font-size:12px;line-height:1.6;margin-bottom:9px}'
++'.cnq-warn{background:#fdecec;border:1px solid #f0bcbc;color:#b02a2a;border-radius:9px;padding:9px 11px;font-size:12px;line-height:1.6;margin-bottom:9px}'
++'.cnq-empty{color:#5b6a78;font-size:13px;padding:14px;text-align:center;border:1px dashed #dfe6ec;border-radius:11px}'
++'.cnq-pr{display:flex;align-items:center;gap:8px;margin-bottom:7px}'
++'.cnq-pr label{flex:1;min-width:0;font-size:13px}'
++'.cnq-pr input{width:128px;text-align:right;border:1px solid #cfd8e0;border-radius:9px;padding:8px 10px;font-size:14px;font-family:inherit;box-sizing:border-box;background:#fff;color:#1b2430}'
++'.cnq-sum{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:9px}'
++'.cnq-s{flex:1 1 120px;border:1px solid #e6ebf0;border-radius:11px;padding:9px 10px;background:#fbfdff}'
++'.cnq-s b{display:block;font-size:17px;color:#0a3d62}'
++'.cnq-s span{font-size:11.5px;color:#5b6a78}'
++'.cnq-fab{position:fixed;right:16px;bottom:calc(186px + env(safe-area-inset-bottom));z-index:2147483105;background:#0a7d55;color:#fff;border:none;border-radius:999px;padding:12px 15px;font:800 14px system-ui,-apple-system,Roboto,Arial,sans-serif;box-shadow:0 8px 22px rgba(0,0,0,.3);cursor:pointer;display:flex;align-items:center;gap:7px}'
++'.cnq-fab i{font-style:normal;min-width:19px;height:19px;line-height:19px;border-radius:999px;background:rgba(255,255,255,.25);font-size:11.5px;text-align:center;padding:0 5px;display:none}'
++'.cnq-fab i.on{display:inline-block;background:#e11d48}';
+
+function build(){
+  if (el('cnq-mask')) return;
+  var st=document.createElement('style'); st.textContent=CSS; document.head.appendChild(st);
+  var w=document.createElement('div');
+  w.innerHTML='<div id="cnq-mask" class="cnq-mask"><div class="cnq-card" role="dialog" aria-modal="true">'
+    +'<div class="cnq-top"><div class="cnq-title">🏪 Chi nhánh — thu phí theo ngành</div>'
+    +'<button type="button" class="cnq-b" data-cnq="rl">↻ Quét lại</button>'
+    +'<button type="button" class="cnq-x" data-cnq="x">✕</button></div>'
+    +'<div id="cnq-body"><div class="cnq-empty">Bấm <b>↻ Quét lại</b> để đọc số liệu.</div></div>'
+    +'</div></div>';
+  document.body.appendChild(w.firstChild);
+  el('cnq-mask').addEventListener('click', function(e){ if (e.target===el('cnq-mask')) dong(); });
+  el('cnq-mask').addEventListener('click', bam, false);
+}
+function mo(){ build(); el('cnq-mask').classList.add('on'); if (!D.loaded) quet(); else ve(); }
+function dong(){ var m=el('cnq-mask'); if (m) m.classList.remove('on'); }
+
+async function quet(){
+  ve();
+  var e = await nap(ve);
+  if (e) noi(e,1);
+  ve(); veBadge();
+}
+
+function ve(){
+  var b=el('cnq-body'); if (!b) return;
+  if (D.dang){ b.innerHTML='<div class="cnq-empty">'+esc(D.tienDo||'Đang quét…')+'</div>'; return; }
+  if (!D.loaded){ b.innerHTML='<div class="cnq-empty">Bấm <b>↻ Quét lại</b> để đọc số liệu.</div>'; return; }
+
+  var bat = (D.cfg.enforceCn===true);
+  var dungCn = D.rows.filter(function(r){ return r.them>0; });
+  var thieu  = D.rows.filter(function(r){ return r.thieu; });
+  var mt     = D.rows.filter(function(r){ return r.mienTru && r.them>0; });
+  var tra    = D.rows.filter(function(r){ return r.tra; });
+  var mrr=0; tra.forEach(function(r){ var ng=(r.maLic==='sono_cn')?CHUNG:(function(){ for(var i=0;i<NGANH.length;i++) if(NGANH[i].lic===r.maLic) return NGANH[i]; return CHUNG; })();
+    mrr += giaCua(ng.pf)*Math.max(1,r.qty); });
+
+  var h='';
+
+  h += '<div class="cnq-sw '+(bat?'on':'off')+'">'
+     + (bat ? '🔒 <b>Công tắc thu phí chi nhánh: ĐANG BẬT</b> — chi nhánh thêm không có giấy phép còn hạn sẽ bị máy chủ chối đọc/ghi. Chi nhánh chính không ảnh hưởng.'
+            : '🔓 <b>Công tắc thu phí chi nhánh: ĐANG TẮT</b> — chưa chặn ai. Bật ở tab <b>Công tắc</b> (mục “Thu phí CHI NHÁNH”).')
+     + '</div>';
+
+  if (thieu.length){
+    h += '<div class="cnq-warn">⚠️ Có <b>'+thieu.length+'</b> khách đang dùng chi nhánh thêm mà <b>chưa có giấy phép</b>. '
+       + (bat ? 'Công tắc đang BẬT nên họ ĐANG bị chặn.' : 'Bật công tắc lúc này là họ mất quyền đọc/ghi ngay.')
+       + ' Hãy miễn trừ khách cũ, hoặc bán gói cho họ, rồi mới bật.</div>';
+  }
+
+  h += '<div class="cnq-sum">'
+     + '<div class="cnq-s"><b>'+dungCn.length+'</b><span>khách có chi nhánh thêm</span></div>'
+     + '<div class="cnq-s"><b>'+tra.length+'</b><span>đang trả tiền</span></div>'
+     + '<div class="cnq-s"><b>'+mt.length+'</b><span>được miễn trừ</span></div>'
+     + '<div class="cnq-s"><b>'+thieu.length+'</b><span>thiếu phép</span></div>'
+     + '<div class="cnq-s"><b>'+vnd(mrr)+'</b><span>doanh thu chi nhánh/tháng</span></div>'
+     + '</div>';
+
+  if (thieu.length){
+    h += '<div class="cnq-act" style="margin-bottom:10px">'
+       + '<button type="button" class="cnq-b pri" data-cnq="mtall">🛡️ Miễn trừ TẤT CẢ '+thieu.length+' khách thiếu phép</button></div>';
+  }
+
+  /* ── bảng giá ── */
+  h += '<div class="cnq-h">💰 Giá chi nhánh thêm (đ/chi nhánh/tháng)<span></span></div>'
+     + '<div class="cnq-note">Để trống = dùng giá của <b>Bán hàng thường</b>. Ghi vào <b>billing/info</b> — đúng ô mà app khách đang đọc.</div>';
+  var list=[CHUNG].concat(NGANH);
+  list.forEach(function(m){
+    h += '<div class="cnq-pr"><label>'+m.ic+' '+esc(m.n)+'</label>'
+       + '<input id="cnq-p-'+(m.k||'base')+'" type="number" inputmode="numeric" value="'+(num(D.price[m.pf])||'')+'" placeholder="'+giaCua(m.pf)+'"></div>';
+  });
+  h += '<div class="cnq-act" style="margin-bottom:4px"><button type="button" class="cnq-b ok" data-cnq="luugia">Lưu bảng giá</button></div>';
+
+  /* ── danh sách khách ── */
+  h += '<div class="cnq-h">👥 Khách đang dùng chi nhánh thêm<span></span></div>';
+  if (!dungCn.length){
+    h += '<div class="cnq-empty">Chưa có khách nào mở chi nhánh thêm.</div>';
+  }else{
+    dungCn.forEach(function(r){
+      var tag, cls='';
+      if (r.mienTru){ tag='<span class="cnq-tag mt">🛡️ Miễn trừ</span>'; cls=' mt'; }
+      else if (r.thieu){ tag='<span class="cnq-tag bad">⛔ Thiếu phép</span>'; cls=' thieu'; }
+      else tag='<span class="cnq-tag ok">✅ Đủ phép</span>';
+
+      var hanTxt='chưa có giấy phép';
+      if (r.lic){
+        var u=ngay(r.lic.paidUntil);
+        hanTxt = u ? ('hạn '+dstr(u)+' · còn '+conNgay(u)+' ngày') : '♾️ vĩnh viễn';
+        hanTxt = r.maLic+' · '+r.qty+' suất · '+hanTxt;
+      }
+      h += '<div class="cnq-row'+cls+'">'
+         + '<div class="cnq-em">'+esc(r.email)+' '+tag+'</div>'
+         + '<div class="cnq-meta">'+r.ng.ic+' '+esc(r.ng.n)+' · đang dùng <b>'+r.them+'</b> chi nhánh thêm'
+         +   (r.soCn<0?' <b style="color:#b02a2a">(không đọc được)</b>':'')+'</div>'
+         + '<div class="cnq-meta">Giấy phép: '+esc(hanTxt)+' · gói đúng ngành: <b>'+esc(r.ng.lic)+'</b> · '+vnd(giaCua(r.ng.pf))+'/CN/tháng</div>'
+         + '<div class="cnq-act">'
+         +   (r.mienTru
+               ? '<button type="button" class="cnq-b dan" data-cnq="mt0" data-uid="'+esc(r.uid)+'">Bỏ miễn trừ</button>'
+               : '<button type="button" class="cnq-b pri" data-cnq="mt1" data-uid="'+esc(r.uid)+'">🛡️ Miễn trừ khách này</button>')
+         + '</div></div>';
+    });
+  }
+
+  h += '<div class="cnq-note" style="margin-top:10px">Cấp / gia hạn / khoá gói chi nhánh vẫn làm ở <b>hồ sơ khách</b> hoặc tab <b>Đơn chờ</b> như cũ — ở đó có ô <b>Số chi nhánh</b> để nhập đúng số suất.</div>';
+
+  b.innerHTML=h;
+}
+
+/* ---------- HÀNH ĐỘNG ---------- */
+async function datMienTru(uid, bat){
+  var c=ctx(); if (!c.db) return false;
+  try{
+    await setDoc(doc(c.db,'accounts',uid), { cnMienTru: !!bat }, {merge:true});
+    try{ await setDoc(doc(c.db,'accounts',uid),
+      { lichSu: arrayUnion({ viec:(bat?'mien_tru_chi_nhanh':'go_mien_tru_chi_nhanh'), luc:new Date().toISOString(), boi:(c.user&&c.user.email)||'' }) },
+      {merge:true}); }catch(e){}
+    if (D.acc[uid]) D.acc[uid].cnMienTru=!!bat;
+    for (var i=0;i<D.rows.length;i++) if (D.rows[i].uid===uid){
+      D.rows[i].mienTru=!!bat;
+      D.rows[i].thieu=(D.rows[i].them>0)&&!D.rows[i].mienTru&&(D.rows[i].qty<D.rows[i].them);
+      D.rows[i].tra  =(D.rows[i].them>0)&&!D.rows[i].mienTru&&(D.rows[i].qty>=D.rows[i].them);
+    }
+    return true;
+  }catch(e){ noi('Lỗi: '+((e&&(e.code||e.message))||e),1); return false; }
+}
+
+async function mienTruTatCa(){
+  var ds=D.rows.filter(function(r){ return r.thieu; });
+  if (!ds.length) return;
+  if (!confirm('Miễn trừ thu phí chi nhánh cho '+ds.length+' khách đang thiếu phép?\n\nHọ sẽ giữ nguyên số chi nhánh hiện có, không bị chặn khi bật công tắc.\nKhách MỚI mở chi nhánh sau này vẫn phải trả tiền bình thường.')) return;
+  var ok=0;
+  for (var i=0;i<ds.length;i++){ if (await datMienTru(ds[i].uid,true)) ok++; }
+  noi('Đã miễn trừ '+ok+'/'+ds.length+' khách');
+  ve(); veBadge();
+}
+
+async function luuGia(){
+  var c=ctx(); if (!c.db) return;
+  var m={}, list=[CHUNG].concat(NGANH), i;
+  for (i=0;i<list.length;i++){
+    var inp=el('cnq-p-'+(list[i].k||'base')); if (!inp) continue;
+    var t=String(inp.value||'').trim();
+    if (t!=='') m[list[i].pf]=num(t);
+  }
+  try{
+    await setDoc(doc(c.db,'billing','info'), m, {merge:true});
+    D.price=Object.assign({},D.price,m);
+    try{ await addDoc(collection(c.db,'audit'),
+      { viec:'doi_gia_chi_nhanh', luc:new Date().toISOString(), boi:(c.user&&c.user.email)||'', uid:'', app:'',
+        ghi:Object.keys(m).map(function(k){return k+':'+m[k];}).join(' ') }); }catch(e){}
+    noi('Đã lưu bảng giá chi nhánh');
+    ve();
+  }catch(e){ noi('Lỗi: '+((e&&(e.code||e.message))||e),1); }
+}
+
+function bam(ev){
+  var b=ev.target && ev.target.closest ? ev.target.closest('[data-cnq]') : null;
+  if (!b) return;
+  var a=b.getAttribute('data-cnq');
+  if (a==='x'){ dong(); return; }
+  if (a==='rl'){ quet(); return; }
+  if (a==='luugia'){ luuGia(); return; }
+  if (a==='mtall'){ mienTruTatCa(); return; }
+  if (a==='mt1' || a==='mt0'){
+    var uid=b.getAttribute('data-uid');
+    b.disabled=true;
+    datMienTru(uid, a==='mt1').then(function(){ ve(); veBadge(); });
+    return;
+  }
+}
+
+/* ---------- NÚT NỔI ---------- */
+function veBadge(){
+  var f=el('cnq-fab'); if (!f) return;
+  var i=f.querySelector('i'); if (!i) return;
+  var n=D.loaded ? D.rows.filter(function(r){ return r.thieu; }).length : 0;
+  i.textContent=n; i.className=(n>0?'on':'');
+}
+function fab(){
+  if (el('cnq-fab')) return;
+  var b=document.createElement('button');
+  b.id='cnq-fab'; b.type='button'; b.className='cnq-fab';
+  b.innerHTML='🏪 Chi nhánh <i></i>';
+  b.onclick=mo;
+  document.body.appendChild(b);
+}
+function boot(){
+  var c=ctx();
+  if (c.user && !c.user.isAnonymous && c.user.email) fab();
+}
+setInterval(boot,1500);
+document.addEventListener('DOMContentLoaded',boot);
+setTimeout(boot,700);
+window.moChiNhanh = mo;
+})();
+</script>
+<!-- ═══════════ HẾT G5 · CHI NHÁNH THU PHÍ THEO NGÀNH ═══════════ -->
 </body>
 </html>
