@@ -2729,7 +2729,8 @@ var MODS = [
   { lic:'sono_fnb', pf:'priceFnb', ic:'🍽️', n:'F&B · Nhà hàng / Quán ăn / Cafe' },
   { lic:'sono_fs',  pf:'priceFs',  ic:'👕', n:'Thời trang · Mỹ phẩm' },
   { lic:'sono_rm',  pf:'priceRm',  ic:'🛏️', n:'Karaoke · Spa · Nhà nghỉ' },
-  { lic:'sono_kg',  pf:'priceKg',  ic:'⚖️', n:'Vật liệu XD · Nông sản · Bán sỉ' }
+  { lic:'sono_kg',  pf:'priceKg',  ic:'⚖️', n:'Vật liệu XD · Nông sản · Bán sỉ' },
+  { lic:'sono_qr',  pf:'priceQr',  ic:'📱', n:'Đơn QR — Khách tự đặt tại bàn' }
 ];
 var KM    = { 12:2 };          // mua 12 tặng 2 — giống KM_GIA_HAN của lõi
 var THANG = [1,3,6,12];        // đúng 4 mốc app khách cho chọn
@@ -3599,7 +3600,8 @@ if (window.__DKX_READY__) return; window.__DKX_READY__ = true;
 /* Mọi app khách có thể có giấy phép — dùng khi khoá/mở TOÀN BỘ một tài khoản */
 var APPS = [ ['sono','Sổ Nợ'], ['sono_pos','Bán hàng (POS)'], ['sono_cn','Chi nhánh thêm'],
              ['sono_fnb','Gói F&B'], ['sono_fs','Gói Thời trang'], ['sono_rm','Gói Karaoke/Spa'],
-             ['sono_kg','Gói Cân ký'], ['cafe','Quản Lý Cafe'], ['tro','TrọSafe'],
+             ['sono_kg','Gói Cân ký'], ['sono_qr','Gói Đơn QR'],
+             ['cafe','Quản Lý Cafe'], ['tro','TrọSafe'],
              ['xe','NhàXe Pro'], ['hd','Xe Hợp Đồng'] ];
 
 var S = { uid:'', mail:'', may:null, rmt:null, nv:[], sh:[], lic:[], dang:false };
