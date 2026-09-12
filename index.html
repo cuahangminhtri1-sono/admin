@@ -428,8 +428,12 @@ const CFG = {
   ten:{ sono:"Sổ Nợ", sono_pos:"Bán hàng (POS)", cafe:"Quản Lý Cafe",
         tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng", sono_cn:"Chi nhánh (thêm)",
         sono_cn_fnb:"Chi nhánh · F&B", sono_cn_fs:"Chi nhánh · Thời trang",
-        sono_cn_rm:"Chi nhánh · Karaoke/Spa", sono_cn_kg:"Chi nhánh · Cân ký" },
-  apps:["sono","sono_pos","sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg","cafe","tro","xe","hd"],
+        sono_cn_rm:"Chi nhánh · Karaoke/Spa", sono_cn_kg:"Chi nhánh · Cân ký",
+        sono_fnb:"Gói ngành · F&B", sono_fs:"Gói ngành · Thời trang",
+        sono_rm:"Gói ngành · Karaoke/Spa", sono_kg:"Gói ngành · Cân ký",
+        sono_qr:"Gói Đơn QR tại bàn" },
+  apps:["sono","sono_pos","sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg",
+        "sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr","cafe","tro","xe","hd"],
   /* Tên ô giá và giá mặc định — chép đúng hàm priceFor() trong các app.
      Sai tên ô là app đọc ra 0đ, khách quét mã QR ra số tiền 0. */
   oGia:{ sono:["priceSono","pricePerMonth",10000],
@@ -439,6 +443,11 @@ const CFG = {
          sono_cn_fs:["priceCnFs","priceCn",10000],
          sono_cn_rm:["priceCnRm","priceCn",10000],
          sono_cn_kg:["priceCnKg","priceCn",10000],
+         sono_fnb:["priceFnb","priceSono",10000],
+         sono_fs:["priceFs","priceSono",10000],
+         sono_rm:["priceRm","priceSono",10000],
+         sono_kg:["priceKg","priceSono",10000],
+         sono_qr:["priceQr","priceSono",10000],
          cafe:["priceCafe","pricePerMonth",10000],
          tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000],
@@ -1952,10 +1961,12 @@ function veCaiDat(){
      không đổi gì — để lại chỉ khiến mình tưởng đã bịt lỗ mà thật ra chưa bịt. */
   $("#congTac").innerHTML =
     sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false)
-  + sw("enforceCn","Thu phí CHI NHÁNH","Bật = chi nhánh THÊM phải có giấy phép còn hạn mới đọc/ghi được (chi nhánh chính luôn miễn phí). PHẢI quét miễn trừ khách cũ ở 🏪 Chi nhánh trước khi bật.", CFGDB.enforceCn === true);
+  + sw("enforceCn","Thu phí CHI NHÁNH","Bật = chi nhánh THÊM phải có giấy phép còn hạn mới đọc/ghi được (chi nhánh chính luôn miễn phí). PHẢI quét miễn trừ khách cũ ở 🏪 Chi nhánh trước khi bật.", CFGDB.enforceCn === true)
+  + sw("enforceNganh","Thu phí GÓI NGÀNH (F&B)","Bật = hết hạn gói sono_fnb là máy chủ chối luôn sơ đồ bàn (kho pos_tables), không chỉ ẩn nút ở máy khách. Ba ngành còn lại ghi chung kho 'products' nên vẫn khoá ở app.", CFGDB.enforceNganh === true);
   $$("#congTac [data-sw]").forEach(el=>el.onclick=async()=>{
     const k = el.dataset.sw, moi = !el.classList.contains("on");
     if(k==="enforce" && !moi && !confirm("Tắt bắt buộc giấy phép = mọi khách dùng miễn phí. Chắc chưa?")) return;
+    if(k==="enforceNganh" && moi && !confirm("BẬT thu phí GÓI NGÀNH.\n\nKhách F&B hết hạn gói sono_fnb sẽ KHÔNG đọc/ghi được sơ đồ bàn nữa. Kiểm tra danh sách khách F&B còn hạn trước khi bật. Chắc chưa?")) return;
     if(k==="enforceCn" && moi && !confirm("BẬT thu phí CHI NHÁNH.\n\nKhách đang có chi nhánh thêm mà CHƯA mua gói sẽ mất quyền đọc/ghi dữ liệu trong chi nhánh đó NGAY LẬP TỨC (chi nhánh chính không ảnh hưởng).\n\nĐã bấm 🏪 Chi nhánh → Quét lại → Miễn trừ khách cũ chưa?")) return;
     try{
       await setDoc(doc(fdb,"billing","config"), {[k]:moi}, {merge:true});
@@ -4025,6 +4036,30 @@ function nganhCua(mods){
 }
 function giaCua(pf){ var v=num(D.price[pf]); if (v>0) return v; var c=num(D.price.priceCn); return c>0?c:10000; }
 
+/* ══════ [v7] ĐỌC NGÀNH THEO MÃ CỬA HÀNG ══════
+   Bản cũ đoán ngành qua meta/shopSettings.mods. App khách đã bỏ hẳn mods nên
+   bảng này luôn hiện "Bán hàng thường", sai giá sai gói. Nặng hơn: nó tính
+   "thiếu = tổng chi nhánh − 1" nên khách chạy 3 ngành (3 cửa hàng chính đều
+   MIỄN PHÍ) bị báo thiếu 2 suất ⇒ đi đòi nhầm tiền khách.
+   Nay đọc thẳng MÃ document — đúng thứ Firestore Rules đang dùng để chặn:
+     main · main_fnb · main_fs · main_rm · main_kg  → CHÍNH, miễn phí
+     cn_1… · cn_fnb_1…                              → THÊM, thu tiền theo ngành
+     mã khác (tự sinh, của bản cũ)                  → phải miễn trừ hoặc duyệt */
+function maLaChinh(id){ return /^main(_(fnb|fs|rm|kg))?$/.test(id); }
+function maLaThem(id){ return /^cn_((fnb|fs|rm|kg)_)?[0-9]+$/.test(id); }
+function nganhTheoMa(id){
+  if (id==='main') return '';
+  var m=/^main_(fnb|fs|rm|kg)$/.exec(id); if (m) return m[1];
+  if (/^cn_[0-9]+$/.test(id)) return '';
+  m=/^cn_(fnb|fs|rm|kg)_[0-9]+$/.exec(id); if (m) return m[1];
+  return null;                       /* mã cũ — không suy ra được ngành */
+}
+function ngObj(k){
+  if (k===''||k==null) return CHUNG;
+  for (var i=0;i<NGANH.length;i++) if (NGANH[i].k===k) return NGANH[i];
+  return CHUNG;
+}
+
 /* ---------- NẠP DỮ LIỆU ---------- */
 async function nap(ve){
   var c=ctx(); if (!c.db || !c.user){ return 'Chưa đăng nhập quản trị'; }
@@ -4039,7 +4074,10 @@ async function nap(ve){
   }catch(e){ D.dang=false; return 'Lỗi đọc: '+((e&&(e.code||e.message))||e); }
 
   D.acc={}; var uids=[];
-  r[0].forEach(function(d){ var x=d.data()||{}; D.acc[d.id]={email:x.email||'', cnMienTru:(x.cnMienTru===true)}; uids.push(d.id); });
+  r[0].forEach(function(d){ var x=d.data()||{};
+    D.acc[d.id]={email:x.email||'', cnMienTru:(x.cnMienTru===true),
+                 cnCho:(Array.isArray(x.cnCho)?x.cnCho:[])};
+    uids.push(d.id); });
 
   D.lic={};
   r[1].forEach(function(d){
@@ -4053,19 +4091,38 @@ async function nap(ve){
   /* Quét từng shop: số chi nhánh + ngành đang bật. Chạy theo lô để đỡ nghẽn. */
   var rows=[], xong=0;
   async function motCai(uid){
-    var soCn=0, mods={};
-    try{ var b=await getDocs(collection(c.db,'users',uid,'branches')); soCn=b.size||0; }catch(e){ soCn=-1; }
-    try{ var m=await getDoc(doc(c.db,'users',uid,'meta','shopSettings')); if (m.exists()) mods=(m.data()||{}).mods||{}; }catch(e){}
-    var ng=nganhCua(mods);
-    var lNg=D.lic[uid+'|'+ng.lic]||null, lCh=D.lic[uid+'|sono_cn']||null;
-    var qNg=conHan(lNg)?Math.max(0,Math.floor(num(lNg.qty))):0;
-    var qCh=conHan(lCh)?Math.max(0,Math.floor(num(lCh.qty))):0;
-    var them=Math.max(0,(soCn>0?soCn:1)-1);
-    var dung=(qNg>=qCh)?lNg:lCh, maDung=(qNg>=qCh)?ng.lic:'sono_cn';
+    var ids=[], loi=false, i;
+    try{ var b=await getDocs(collection(c.db,'users',uid,'branches')); b.forEach(function(d){ ids.push(d.id); }); }
+    catch(e){ loi=true; }
+    var acc=D.acc[uid]||{}, cho=acc.cnCho||[];
+    var nhom={}, maCu=[];
+    for (i=0;i<ids.length;i++){
+      var k=nganhTheoMa(ids[i]);
+      if (k===null){ maCu.push(ids[i]); continue; }
+      if (!nhom[k]) nhom[k]={chinh:0, them:[]};
+      if (maLaChinh(ids[i])) nhom[k].chinh++; else nhom[k].them.push(ids[i]);
+    }
+    var ct=[], themTong=0, thieuTong=0, qtyTong=0;
+    Object.keys(nhom).forEach(function(k){
+      var ngo=ngObj(k);
+      var lNg=D.lic[uid+'|'+ngo.lic]||null, lCh=D.lic[uid+'|sono_cn']||null;
+      var qNg=conHan(lNg)?Math.max(0,Math.floor(num(lNg.qty))):0;
+      var qCh=conHan(lCh)?Math.max(0,Math.floor(num(lCh.qty))):0;
+      var q=Math.max(qNg,qCh), n=nhom[k].them.length;
+      themTong+=n; qtyTong+=q;
+      if (n>q) thieuTong+=(n-q);
+      ct.push({ k:k, ng:ngo, chinh:nhom[k].chinh, them:n, qty:q,
+                ma:(qNg>=qCh?ngo.lic:'sono_cn'),
+                lic:(qNg>=qCh?(conHan(lNg)?lNg:null):(conHan(lCh)?lCh:null)) });
+    });
+    var cuChua=maCu.filter(function(x){ return cho.indexOf(x)<0; });
+    ct.sort(function(a,b){ return (b.them-a.them)||(b.chinh-a.chinh); });
     rows.push({
-      uid:uid, email:(D.acc[uid]||{}).email||uid, ng:ng, soCn:soCn, them:them,
-      qty:Math.max(qNg,qCh), lic:conHan(dung)?dung:null, maLic:maDung,
-      licNg:lNg, licCh:lCh, mienTru:(D.acc[uid]||{}).cnMienTru===true
+      uid:uid, email:acc.email||uid, ng:(ct.length?ct[0].ng:CHUNG),
+      soCn:(loi?-1:ids.length), them:themTong+maCu.length, qty:qtyTong,
+      chiTiet:ct, maCu:maCu, cuChua:cuChua, cho:cho,
+      thieuSo:thieuTong+cuChua.length,
+      lic:null, maLic:'', mienTru:acc.cnMienTru===true
     });
     xong++; D.tienDo='Đang quét shop… '+xong+'/'+uids.length; if(ve && xong%SONG===0) ve();
   }
@@ -4074,9 +4131,9 @@ async function nap(ve){
   }
 
   rows.forEach(function(x){
-    x.du = (x.them===0) || x.mienTru || (x.qty>=x.them);
-    x.thieu = (x.them>0) && !x.mienTru && (x.qty<x.them);
-    x.tra = (x.them>0) && !x.mienTru && (x.qty>=x.them);
+    x.thieu = !x.mienTru && x.thieuSo>0;                 /* có ngành vượt suất, hoặc còn cửa hàng mã cũ chưa duyệt */
+    x.tra   = !x.mienTru && !x.thieu && x.them>0;        /* dùng chi nhánh thêm và đã trả đủ */
+    x.du    = x.mienTru || !x.thieu;
   });
   rows.sort(function(a,b){
     if (a.thieu!==b.thieu) return a.thieu?-1:1;
@@ -4161,8 +4218,10 @@ function ve(){
   var thieu  = D.rows.filter(function(r){ return r.thieu; });
   var mt     = D.rows.filter(function(r){ return r.mienTru && r.them>0; });
   var tra    = D.rows.filter(function(r){ return r.tra; });
-  var mrr=0; tra.forEach(function(r){ var ng=(r.maLic==='sono_cn')?CHUNG:(function(){ for(var i=0;i<NGANH.length;i++) if(NGANH[i].lic===r.maLic) return NGANH[i]; return CHUNG; })();
-    mrr += giaCua(ng.pf)*Math.max(1,r.qty); });
+  /* [v7] Cộng tiền theo TỪNG NGÀNH của từng khách — mỗi chi nhánh thêm tính đúng
+     giá của ngành nó thuộc về. Cửa hàng chính không tính (miễn phí). */
+  var mrr=0; tra.forEach(function(r){
+    (r.chiTiet||[]).forEach(function(x){ if (x.them>0) mrr += giaCua(x.ng.pf)*x.them; }); });
 
   var h='';
 
@@ -4212,17 +4271,34 @@ function ve(){
       else tag='<span class="cnq-tag ok">✅ Đủ phép</span>';
 
       var hanTxt='chưa có giấy phép';
-      if (r.lic){
-        var u=ngay(r.lic.paidUntil);
-        hanTxt = u ? ('hạn '+dstr(u)+' · còn '+conNgay(u)+' ngày') : '♾️ vĩnh viễn';
-        hanTxt = r.maLic+' · '+r.qty+' suất · '+hanTxt;
+      var ctHtml='';
+      (r.chiTiet||[]).forEach(function(x){
+        if (x.chinh===0 && x.them===0) return;
+        var hh='chưa có gói chi nhánh';
+        if (x.lic){ var u=ngay(x.lic.paidUntil);
+          hh = u ? ('hạn '+dstr(u)+' · còn '+conNgay(u)+' ngày') : '♾️ vĩnh viễn'; }
+        ctHtml += '<div class="cnq-meta">'+x.ng.ic+' <b>'+esc(x.ng.n)+'</b> — chính <b>'+x.chinh+'</b> (miễn phí)'
+               +  ' · thêm <b>'+x.them+'</b> / đã mua <b>'+x.qty+'</b> suất'
+               +  (x.them>x.qty ? ' <b style="color:#b02a2a">⛔ thiếu '+(x.them-x.qty)+'</b>' : '')
+               +  '<br>Gói: <b>'+esc(x.ma)+'</b> · '+esc(hh)+' · '+vnd(giaCua(x.ng.pf))+'/CN/tháng</div>';
+      });
+      var cuHtml='';
+      if ((r.maCu||[]).length){
+        cuHtml = '<div class="cnq-meta" style="color:#b02a2a">🗂️ <b>'+r.maCu.length+'</b> cửa hàng mã cũ (bản trước tự sinh mã)'
+               + (r.cuChua.length
+                   ? ' — <b>'+r.cuChua.length+'</b> CHƯA duyệt: '+esc(r.cuChua.slice(0,6).join(', '))+(r.cuChua.length>6?'…':'')
+                   : ' — đã duyệt hết ✅')
+               + '</div>';
       }
       h += '<div class="cnq-row'+cls+'">'
          + '<div class="cnq-em">'+esc(r.email)+' '+tag+'</div>'
-         + '<div class="cnq-meta">'+r.ng.ic+' '+esc(r.ng.n)+' · đang dùng <b>'+r.them+'</b> chi nhánh thêm'
+         + '<div class="cnq-meta">🏪 Tổng <b>'+(r.soCn<0?'?':r.soCn)+'</b> cửa hàng · chi nhánh THÊM <b>'+r.them+'</b>'
          +   (r.soCn<0?' <b style="color:#b02a2a">(không đọc được)</b>':'')+'</div>'
-         + '<div class="cnq-meta">Giấy phép: '+esc(hanTxt)+' · gói đúng ngành: <b>'+esc(r.ng.lic)+'</b> · '+vnd(giaCua(r.ng.pf))+'/CN/tháng</div>'
+         + ctHtml + cuHtml
          + '<div class="cnq-act">'
+         +   (r.cuChua && r.cuChua.length
+               ? '<button type="button" class="cnq-b ok" data-cnq="duyetcu" data-uid="'+esc(r.uid)+'">✅ Duyệt '+r.cuChua.length+' cửa hàng mã cũ</button>'
+               : '')
          +   (r.mienTru
                ? '<button type="button" class="cnq-b dan" data-cnq="mt0" data-uid="'+esc(r.uid)+'">Bỏ miễn trừ</button>'
                : '<button type="button" class="cnq-b pri" data-cnq="mt1" data-uid="'+esc(r.uid)+'">🛡️ Miễn trừ khách này</button>')
@@ -4246,9 +4322,39 @@ async function datMienTru(uid, bat){
     if (D.acc[uid]) D.acc[uid].cnMienTru=!!bat;
     for (var i=0;i<D.rows.length;i++) if (D.rows[i].uid===uid){
       D.rows[i].mienTru=!!bat;
-      D.rows[i].thieu=(D.rows[i].them>0)&&!D.rows[i].mienTru&&(D.rows[i].qty<D.rows[i].them);
-      D.rows[i].tra  =(D.rows[i].them>0)&&!D.rows[i].mienTru&&(D.rows[i].qty>=D.rows[i].them);
+      D.rows[i].thieu=!D.rows[i].mienTru&&D.rows[i].thieuSo>0;
+      D.rows[i].tra  =!D.rows[i].mienTru&&!D.rows[i].thieu&&D.rows[i].them>0;
+      D.rows[i].du   =D.rows[i].mienTru||!D.rows[i].thieu;
     }
+    return true;
+  }catch(e){ noi('Lỗi: '+((e&&(e.code||e.message))||e),1); return false; }
+}
+
+/* [v7] Duyệt cửa hàng MÃ CŨ: ghi vào accounts/{uid}.cnCho — Rules cho đi qua
+   đúng mấy mã này thôi, không mở toang cả tài khoản như cnMienTru.
+   Khách CHỈ ADMIN ghi được field này (hasOnly ở Rules không có nó). */
+async function duyetMaCu(uid){
+  var c=ctx(); if (!c.db) return false;
+  var r=null, i;
+  for (i=0;i<D.rows.length;i++) if (D.rows[i].uid===uid) r=D.rows[i];
+  if (!r || !r.cuChua || !r.cuChua.length) return false;
+  if (!confirm('Duyệt '+r.cuChua.length+' cửa hàng mã cũ của '+r.email+'?\n\n'
+     +r.cuChua.join('\n')+'\n\nMấy cửa hàng này sẽ KHÔNG bị chặn khi bật công tắc.\n'
+     +'Cửa hàng mở MỚI sau này vẫn phải trả tiền bình thường.')) return false;
+  try{
+    var moi=(r.cho||[]).slice();
+    for (i=0;i<r.cuChua.length;i++) if (moi.indexOf(r.cuChua[i])<0) moi.push(r.cuChua[i]);
+    await setDoc(doc(c.db,'accounts',uid), { cnCho: moi }, {merge:true});
+    try{ await setDoc(doc(c.db,'accounts',uid),
+      { lichSu: arrayUnion({ viec:'duyet_chi_nhanh_ma_cu', luc:new Date().toISOString(),
+                             boi:(c.user&&c.user.email)||'', ghi:r.cuChua.join(',') }) }, {merge:true}); }catch(e){}
+    if (D.acc[uid]) D.acc[uid].cnCho=moi;
+    r.cho=moi; r.cuChua=[];
+    r.thieuSo=0; (r.chiTiet||[]).forEach(function(x){ if (x.them>x.qty) r.thieuSo+=(x.them-x.qty); });
+    r.thieu=!r.mienTru&&r.thieuSo>0;
+    r.tra  =!r.mienTru&&!r.thieu&&r.them>0;
+    r.du   =r.mienTru||!r.thieu;
+    noi('Đã duyệt '+moi.length+' cửa hàng mã cũ');
     return true;
   }catch(e){ noi('Lỗi: '+((e&&(e.code||e.message))||e),1); return false; }
 }
@@ -4294,6 +4400,12 @@ function bam(ev){
     var uid=b.getAttribute('data-uid');
     b.disabled=true;
     datMienTru(uid, a==='mt1').then(function(){ ve(); veBadge(); });
+    return;
+  }
+  if (a==='duyetcu'){
+    var uid2=b.getAttribute('data-uid');
+    b.disabled=true;
+    duyetMaCu(uid2).then(function(){ ve(); veBadge(); });
     return;
   }
 }
