@@ -1962,11 +1962,11 @@ function veCaiDat(){
   $("#congTac").innerHTML =
     sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false)
   + sw("enforceCn","Thu phí CHI NHÁNH","Bật = chi nhánh THÊM phải có giấy phép còn hạn mới đọc/ghi được (chi nhánh chính luôn miễn phí). PHẢI quét miễn trừ khách cũ ở 🏪 Chi nhánh trước khi bật.", CFGDB.enforceCn === true)
-  + sw("enforceNganh","Thu phí GÓI NGÀNH (F&B)","Bật = hết hạn gói sono_fnb là máy chủ chối luôn sơ đồ bàn (kho pos_tables), không chỉ ẩn nút ở máy khách. Ba ngành còn lại ghi chung kho 'products' nên vẫn khoá ở app.", CFGDB.enforceNganh === true);
+  + sw("enforceNganh","Thu phí GÓI NGÀNH (F&B)","Bật = hết hạn gói sono_fnb là máy chủ chối luôn sơ đồ bàn (kho pos_tables), không chỉ ẩn nút ở máy khách. Ba ngành kia cũng bị khoá THẬT theo mã cửa hàng (main_fs / main_rm / main_kg · cn_fs_* · cn_rm_* · cn_kg_*).", CFGDB.enforceNganh === true);
   $$("#congTac [data-sw]").forEach(el=>el.onclick=async()=>{
     const k = el.dataset.sw, moi = !el.classList.contains("on");
     if(k==="enforce" && !moi && !confirm("Tắt bắt buộc giấy phép = mọi khách dùng miễn phí. Chắc chưa?")) return;
-    if(k==="enforceNganh" && moi && !confirm("BẬT thu phí GÓI NGÀNH.\n\nKhách F&B hết hạn gói sono_fnb sẽ KHÔNG đọc/ghi được sơ đồ bàn nữa. Kiểm tra danh sách khách F&B còn hạn trước khi bật. Chắc chưa?")) return;
+    if(k==="enforceNganh" && moi && !confirm("BẬT thu phí GÓI NGÀNH.\n\nKhách hết hạn gói ngành (F&B / Thời trang / Karaoke-Spa / Cân ký) sẽ KHÔNG đọc/ghi được dữ liệu trong cửa hàng ngành đó nữa (sổ nợ và cửa hàng thường vẫn nguyên). Kiểm tra danh sách khách còn hạn trước khi bật. Chắc chưa?")) return;
     if(k==="enforceCn" && moi && !confirm("BẬT thu phí CHI NHÁNH.\n\nKhách đang có chi nhánh thêm mà CHƯA mua gói sẽ mất quyền đọc/ghi dữ liệu trong chi nhánh đó NGAY LẬP TỨC (chi nhánh chính không ảnh hưởng).\n\nĐã bấm 🏪 Chi nhánh → Quét lại → Miễn trừ khách cũ chưa?")) return;
     try{
       await setDoc(doc(fdb,"billing","config"), {[k]:moi}, {merge:true});
@@ -2028,7 +2028,7 @@ function moDuyet(r, uidIn, appIn){
                 : (hanCu ? ngayVN(dToS(hanCu)) : "chưa đặt");
   const t0 = r ? (num(r.months)||1) : 1;
   const laCN = String(app||'').indexOf('sono_cn')===0;                          // gói chi nhánh thêm: cần thêm ô Số chi nhánh
-  const cnQty0 = laCN ? Math.max(1, num(r&&r.qty) || num(l.qty) || 1) : 1;   /* ưu tiên số suất khách xin */
+  const cnQty0 = laCN ? Math.min(50, Math.max(1, num(r&&r.qty) || num(l.qty) || 1)) : 1;   /* ưu tiên số suất khách xin — CHẶN TRẦN 50: field qty do khách tự ghi được */
   moSheet("Đặt hạn & ghi sổ", `
     <div class="card">
       <div class="kv"><span class="k">Khách</span><span class="v">${esc(r?.email || emailCua(uid) || uid)}</span></div>
@@ -4436,5 +4436,673 @@ window.moChiNhanh = mo;
 })();
 </script>
 <!-- ═══════════ HẾT G5 · CHI NHÁNH THU PHÍ THEO NGÀNH ═══════════ -->
+
+<!-- ═══════════ G6 · CỨU HỘ & KIỂM SOÁT TOÀN HỆ ═══════════
+     Bù đúng 5 mảng còn thiếu để app Quản Trị nắm 100% app Sổ Nợ:
+       1) Nhân viên & PIN   — xem PIN, đặt lại PIN, xoá nhân viên, bật/tắt hỏi PIN
+       2) Ca bán kẹt        — quét mọi cửa hàng, ÉP CHỐT ca treo
+       3) Thu hồi link      — shares · shares_qr · shares_hd · shares_xe (khối cũ chỉ có shares)
+       4) Bắn tin HÀNG LOẠT — gửi thông báo / ép cập nhật cho TOÀN BỘ khách
+       5) Soi hoa hồng      — bắt khách CŨ gắn người giới thiệu sau để ăn thưởng
+     KHÔNG cần sửa Firestore Rules: mọi đường đi ở đây đều nằm trong quyền isAdmin() sẵn có. -->
+<script type="module">
+
+import { getApps } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+import { getAuth } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+import { getFirestore, collection, collectionGroup, doc, getDoc, getDocs, setDoc,
+         deleteDoc, query, where, limit, writeBatch }
+  from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+(function(){
+if (window.__CHQ_READY__) return; window.__CHQ_READY__ = true;
+
+/* ══════════════════ TIỆN ÍCH CHUNG ══════════════════ */
+var _tid=null;
+function el(id){ return document.getElementById(id); }
+function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':String(s)); return d.innerHTML; }
+/* esc() KHÔNG thoát dấu nháy — tên nhân viên kiểu  Anh "Ba"  sẽ làm vỡ thuộc tính HTML.
+   att() dùng cho MỌI giá trị nằm trong  data-x="…"  . */
+function att(s){ return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function num(v){ var n=Number(v); return isFinite(n)?n:0; }
+function ngay(v){ if(v==null) return null;
+  if (typeof v.toDate==='function'){ var a=v.toDate(); return isNaN(a)?null:a; }
+  if (typeof v==='number'){ var b=new Date(v); return isNaN(b)?null:b; }
+  if (v && typeof v.seconds==='number') return new Date(v.seconds*1000);
+  var c=new Date(v); return isNaN(c)?null:c; }
+function dstr(d){ try{ return d.getDate()+'/'+(d.getMonth()+1)+'/'+d.getFullYear(); }catch(e){ return '—'; } }
+function gio(d){ try{ return dstr(d)+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }catch(e){ return '—'; } }
+function lau(ms){ if(!(ms>0)) return '—';
+  var p=Math.floor(ms/60000);
+  if (p<60) return p+' phút';
+  var h=Math.floor(p/60); if (h<48) return h+' giờ';
+  return Math.floor(h/24)+' ngày'; }
+function toast(m,bad){ var t=el('toast'); if(!t){ try{ alert(m); }catch(e){} return; }
+  t.textContent=m; t.className='on'+(bad?' bad':''); clearTimeout(_tid);
+  _tid=setTimeout(function(){ t.className=''; },3000); }
+
+function ctx(){
+  var apps=[]; try{ apps=getApps()||[]; }catch(e){ apps=[]; }
+  var app=null,i;
+  for (i=0;i<apps.length;i++){ var a=apps[i]; if (a && a.name!=='errlog' && a.name!=='pub'){ app=a; break; } }
+  if (!app && apps.length) app=apps[0];
+  var au=null,db=null,u=null;
+  if (app){ try{ au=getAuth(app); }catch(e){} }
+  u=au&&au.currentUser;
+  if (!u || u.isAnonymous || !u.email){
+    for (i=0;i<apps.length;i++){ var b=apps[i]; if(!b||b.name==='errlog') continue;
+      try{ var x=getAuth(b); if(x.currentUser&&!x.currentUser.isAnonymous&&x.currentUser.email){ app=b; au=x; u=x.currentUser; break; } }catch(e){} } }
+  if (app){ try{ db=getFirestore(app); }catch(e){} }
+  return { db:db, user:u };
+}
+function boi(){ var c=ctx(); return (c.user&&c.user.email)||''; }
+
+/* Kho của chi nhánh: 'main' nằm THẲNG dưới users/{uid}/… — y hệt app khách (hàm brCol). */
+function bcol(db,uid,b,n){ return (b==='main') ? collection(db,'users',uid,n)
+                                               : collection(db,'users',uid,'branches',b,n); }
+function bdoc(db,uid,b,n,id){ return (b==='main') ? doc(db,'users',uid,n,id)
+                                                  : doc(db,'users',uid,'branches',b,n,id); }
+function conHanLic(d){
+  if (!d) return false;
+  if (d.active===false) return false;
+  if (d.vinhVien===true && !d.paidUntil) return true;
+  var u=ngay(d.paidUntil); return !!(u && u.getTime()>Date.now());
+}
+
+/* ══════════════════ CSS ══════════════════ */
+var CSS=''
++'.chq-mask{position:fixed;inset:0;background:rgba(15,23,32,.68);z-index:2147483260;display:none;align-items:center;justify-content:center;padding:12px}'
++'.chq-mask.on{display:flex}'
++'.chq-card{width:100%;max-width:680px;max-height:93vh;overflow:auto;background:#fff;border-radius:15px;box-shadow:0 20px 60px rgba(0,0,0,.45);padding:15px;box-sizing:border-box;color:#1b2430;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}'
++'.chq-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px}'
++'.chq-title{font-size:16px;font-weight:800;line-height:1.35}'
++'.chq-sub{font-size:12px;color:#5b6a78;margin-top:2px;word-break:break-all}'
++'.chq-x{border:none;background:transparent;font-size:19px;cursor:pointer;color:#7a8794;padding:4px 6px}'
++'.chq-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}'
++'.chq-tab{border:1px solid #dfe6ec;background:#f6f8fa;border-radius:999px;padding:7px 12px;font:700 12.5px system-ui;cursor:pointer;color:#42526b}'
++'.chq-tab.on{background:#12324d;border-color:#12324d;color:#fff}'
++'.chq-sec{border:1px solid #e6ebf0;border-radius:12px;padding:11px;margin-bottom:10px}'
++'.chq-h{font-size:13px;font-weight:800;margin-bottom:7px;color:#12324d}'
++'.chq-li{display:flex;align-items:center;gap:8px;justify-content:space-between;border-top:1px solid #f0f3f6;padding:8px 0;font-size:13px}'
++'.chq-li:first-of-type{border-top:none}'
++'.chq-li .l{flex:1;min-width:0}'
++'.chq-li em{display:block;font-style:normal;color:#6b7a89;font-size:11.5px;margin-top:2px;word-break:break-all}'
++'.chq-b{border:none;border-radius:9px;padding:8px 11px;font:800 12.5px system-ui;cursor:pointer;background:#eef2f6;color:#26364a;flex:none}'
++'.chq-b.ok{background:#0a7d55;color:#fff}.chq-b.dan{background:#c0392b;color:#fff}'
++'.chq-b.pri{background:#12324d;color:#fff}.chq-b.warn{background:#e67e22;color:#fff}'
++'.chq-b:disabled{opacity:.5;cursor:default}'
++'.chq-note{background:#f2f6fa;color:#3d5166;border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.55;margin-top:8px}'
++'.chq-warn{background:#fff3e0;color:#8a4b0a;border:1px solid #f3d3a8;border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.55;margin-top:8px}'
++'.chq-bad{background:#fdecea;color:#93251a;border:1px solid #f3bdb6;border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.55;margin-top:8px}'
++'.chq-empty{color:#5b6a78;font-size:13px;padding:12px;text-align:center}'
++'.chq-in{width:100%;box-sizing:border-box;border:1px solid #d7dee6;border-radius:9px;padding:9px 10px;font:600 13px system-ui;color:#1b2430}'
++'.chq-ta{width:100%;box-sizing:border-box;border:1px solid #d7dee6;border-radius:9px;padding:9px 10px;font:500 13px/1.5 system-ui;min-height:78px;resize:vertical;color:#1b2430}'
++'.chq-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}'
++'.chq-tag{font:800 11px system-ui;padding:3px 8px;border-radius:999px;flex:none}'
++'.chq-tag.do{background:#fdecea;color:#93251a}.chq-tag.cam{background:#fff3e0;color:#8a4b0a}'
++'.chq-tag.xanh{background:#e8f7ef;color:#0a7d55}.chq-tag.xam{background:#eef2f6;color:#4b5b6b}'
++'.chq-fab{position:fixed;right:16px;bottom:calc(240px + env(safe-area-inset-bottom));z-index:2147483105;background:#b3541e;color:#fff;border:none;border-radius:999px;padding:12px 15px;font:800 14px system-ui,-apple-system,Roboto,Arial,sans-serif;box-shadow:0 8px 22px rgba(0,0,0,.3);cursor:pointer;display:flex;align-items:center;gap:7px}';
+function css(){ if (el('chq-css')) return;
+  var s=document.createElement('style'); s.id='chq-css'; s.textContent=CSS; document.head.appendChild(s); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PHẦN 1 — CỨU HỘ MỘT SHOP  (mở từ hồ sơ khách)
+   ═══════════════════════════════════════════════════════════════════════ */
+var S = { uid:'', mail:'', tab:'nv', dang:false, loi:'',
+          staff:[], cfg:null, ca:[], link:{sono:[],qr:[],hd:[],xe:[]} };
+
+async function docShop(uid){
+  var c=ctx(); if (!c.db) return 'chưa đăng nhập';
+  try{
+    var r=await Promise.all([
+      getDocs(collection(c.db,'users',uid,'staff')).catch(function(){return null;}),
+      getDoc(doc(c.db,'users',uid,'meta','shopSettings')).catch(function(){return null;}),
+      getDocs(collection(c.db,'users',uid,'branches')).catch(function(){return null;}),
+      getDocs(query(collection(c.db,'shares'),    where('ownerUid','==',uid), limit(200))).catch(function(){return null;}),
+      getDocs(query(collection(c.db,'shares_qr'), where('ownerUid','==',uid), limit(200))).catch(function(){return null;}),
+      getDocs(query(collection(c.db,'shares_hd'), where('ownerUid','==',uid), limit(200))).catch(function(){return null;}),
+      getDocs(query(collection(c.db,'shares_xe'), where('ownerUid','==',uid), limit(200))).catch(function(){return null;})
+    ]);
+    var L=function(s){ var o=[]; if(s) s.forEach(function(d){ o.push(Object.assign({id:d.id},d.data()||{})); }); return o; };
+
+    /* Danh sách cửa hàng để quét ca. Luôn có 'main' vì kho gốc nằm thẳng dưới users/{uid}. */
+    var brs=L(r[2]).map(function(x){ return { id:x.id, name:x.name||x.id }; });
+    var coMain=false, i;
+    for (i=0;i<brs.length;i++) if (brs[i].id==='main') coMain=true;
+    if (!coMain) brs.unshift({ id:'main', name:'Cửa hàng chính' });
+
+    /* Ca ĐANG MỞ ở từng cửa hàng. Lọc status=='open' ngay trên máy chủ nên
+       các doc "ảnh kho" (không có trường status) không bao giờ lọt vào. */
+    var ca=[];
+    var lo=await Promise.all(brs.map(function(b){
+      return getDocs(query(bcol(c.db,uid,b.id,'shifts'), where('status','==','open'), limit(12)))
+        .then(function(s){ return { b:b, s:s }; })
+        .catch(function(){ return { b:b, s:null }; });
+    }));
+    for (i=0;i<lo.length;i++){
+      var o=lo[i]; if (!o.s) continue;
+      o.s.forEach(function(d){
+        var x=d.data()||{};
+        ca.push({ id:d.id, br:o.b.id, brTen:(x.branchName||o.b.name||o.b.id),
+                  nv:(x.staffName||x.openBy||''), openAtMs:num(x.openAtMs),
+                  openFloat:num(x.openFloat), nganh:(x.nganhTen||'') });
+      });
+    }
+    ca.sort(function(a,b){ return a.openAtMs-b.openAtMs; });
+
+    return { staff:L(r[0]),
+             cfg:((r[1]&&r[1].exists&&r[1].exists())?(r[1].data()||{}):null),
+             ca:ca,
+             link:{ sono:L(r[3]), qr:L(r[4]), hd:L(r[5]), xe:L(r[6]) } };
+  }catch(e){ return String((e&&(e.code||e.message))||e); }
+}
+
+async function lamMoi(){
+  S.dang=true; S.loi=''; ve();
+  var r=await docShop(S.uid);
+  S.dang=false;
+  if (typeof r==='string'){ S.loi=r; ve(); return; }
+  S.staff=r.staff; S.cfg=r.cfg; S.ca=r.ca; S.link=r.link;
+  ve();
+}
+
+/* ─────── 1) NHÂN VIÊN & PIN ─────── */
+async function datPin(id, ten){
+  var c=ctx(); if (!c.db) return;
+  var p=prompt('Đặt lại PIN cho nhân viên "'+ten+'"\n\nNhập 4–6 chữ số. Bấm Huỷ để thôi.', '');
+  if (p===null) return;
+  p=String(p).replace(/[^0-9]/g,'');
+  if (p.length<4 || p.length>6) return toast('PIN phải là 4–6 chữ số',1);
+  try{
+    await setDoc(doc(c.db,'users',S.uid,'staff',id), { pin:p }, { merge:true });
+    toast('✅ Đã đặt PIN mới: '+p+' — báo lại cho khách'); await lamMoi();
+  }catch(e){ toast('Lỗi: '+((e&&(e.code||e.message))||e),1); }
+}
+async function xoaNv(id, ten){
+  var c=ctx(); if (!c.db) return;
+  if (!confirm('XOÁ nhân viên "'+ten+'" khỏi danh sách?\n\n• Người này sẽ không còn hiện ở cổng PIN.\n• Đơn hàng / ca bán cũ đứng tên họ VẪN GIỮ NGUYÊN.\n\nChắc chưa?')) return;
+  try{
+    await deleteDoc(doc(c.db,'users',S.uid,'staff',id));
+    toast('✅ Đã xoá nhân viên'); await lamMoi();
+  }catch(e){ toast('Lỗi: '+((e&&(e.code||e.message))||e),1); }
+}
+async function doiHoiPin(bat){
+  var c=ctx(); if (!c.db) return;
+  if (!confirm((bat?'BẬT':'TẮT')+' yêu cầu nhập PIN khi khách mở Bán hàng?\n\n'
+      +(bat?'Mỗi lần mở Bán hàng sẽ phải chọn tên và nhập PIN.'
+           :'Mở Bán hàng là vào thẳng quyền CHỦ — dùng khi khách quên sạch PIN và đang cần bán gấp.'))) return;
+  try{
+    await setDoc(doc(c.db,'users',S.uid,'meta','shopSettings'), { requirePin:!!bat }, { merge:true });
+    toast(bat?'🔒 Đã BẬT hỏi PIN':'🔓 Đã TẮT hỏi PIN'); await lamMoi();
+  }catch(e){ toast('Lỗi: '+((e&&(e.code||e.message))||e),1); }
+}
+
+/* ─────── 2) ÉP CHỐT CA KẸT ─────── */
+async function epChot(caId, br, nvTen, moMs){
+  var c=ctx(); if (!c.db) return;
+  if (!confirm('ÉP CHỐT ca của "'+(nvTen||'—')+'"?\n\n'
+      +'• Ca đang mở '+lau(Date.now()-moMs)+'.\n'
+      +'• Ca sẽ chuyển sang ĐÃ CHỐT, người bán mở được ca mới ngay.\n'
+      +'• KHÔNG bịa số: tiền đếm / chênh lệch để trống, có ghi chú rõ là quản trị ép chốt.\n'
+      +'• Đơn hàng, sổ quỹ, kho — KHÔNG đụng tới một dòng nào.\n\nChắc chưa?')) return;
+  var at=Date.now();
+  try{
+    await setDoc(bdoc(c.db,S.uid,br,'shifts',caId), {
+      status:'closed', closeAtMs:at, closeAt:new Date(),
+      closedBy:'QUẢN TRỊ', closedById:'admin',
+      closeNote:'Quản trị ép chốt (ca treo) — chưa đếm tiền mặt',
+      epChot:true, epChotBoi:boi(), epChotLuc:new Date()
+    }, { merge:true });
+    toast('✅ Đã ép chốt ca'); await lamMoi();
+  }catch(e){ toast('Lỗi: '+((e&&(e.code||e.message))||e),1); }
+}
+
+/* ─────── 3) THU HỒI LINK ─────── */
+var KHO_LINK = { sono:'shares', qr:'shares_qr', hd:'shares_hd', xe:'shares_xe' };
+var TEN_LINK = { sono:'link nhắc nợ', qr:'link thực đơn QR', hd:'link tra cứu tài xế', xe:'link định vị xe' };
+async function xoaLink(loai, tok){
+  var c=ctx(); if (!c.db) return;
+  var col=KHO_LINK[loai]; if (!col) return;
+  if (!confirm('XOÁ '+TEN_LINK[loai]+' này?\n\n'
+      +'Ai đang cầm link sẽ không mở được nữa.\n'
+      +'Dữ liệu gốc trong app của khách KHÔNG bị đụng.')) return;
+  try{
+    await deleteDoc(doc(c.db,col,tok));
+    toast('✅ Đã thu hồi link'); await lamMoi();
+  }catch(e){ toast('Lỗi: '+((e&&(e.code||e.message))||e),1); }
+}
+
+/* ─────── GIAO DIỆN PHẦN 1 ─────── */
+function build(){
+  if (el('chq-mask')) return;
+  css();
+  var w=document.createElement('div');
+  w.innerHTML='<div id="chq-mask" class="chq-mask"><div class="chq-card" role="dialog" aria-modal="true">'
+    +'<div class="chq-top"><div><div class="chq-title">🛠️ Cứu hộ shop</div>'
+    +'<div class="chq-sub" id="chq-sub"></div></div>'
+    +'<button type="button" class="chq-x" id="chq-x">✕</button></div>'
+    +'<div id="chq-body"></div></div></div>';
+  document.body.appendChild(w.firstChild);
+  el('chq-x').onclick=dong;
+  el('chq-mask').addEventListener('click',function(e){ if(e.target===el('chq-mask')) dong(); });
+  el('chq-mask').addEventListener('click',bam,false);
+}
+function dong(){ var m=el('chq-mask'); if(m) m.classList.remove('on'); }
+function mo(uid, mail){
+  if (!uid){ toast('Chưa lấy được mã tài khoản',1); return; }
+  build();
+  S.uid=uid; S.mail=mail||''; S.tab='nv';
+  S.staff=[]; S.cfg=null; S.ca=[]; S.link={sono:[],qr:[],hd:[],xe:[]};
+  el('chq-mask').classList.add('on');
+  lamMoi();
+}
+
+function tabs(){
+  var t=[['nv','👤 Nhân viên & PIN'],['ca','🔁 Ca bán ('+S.ca.length+')'],['link','🔗 Link chia sẻ']];
+  return '<div class="chq-tabs">'+t.map(function(x){
+    return '<button type="button" class="chq-tab'+(S.tab===x[0]?' on':'')+'" data-chq="tab" data-t="'+x[0]+'">'+x[1]+'</button>';
+  }).join('')+'</div>';
+}
+
+function ve(){
+  var b=el('chq-body'); if(!b) return;
+  var sb=el('chq-sub'); if(sb) sb.textContent=(S.mail||S.uid);
+  if (S.dang){ b.innerHTML=tabs()+'<div class="chq-empty">⏳ Đang đọc dữ liệu shop…</div>'; return; }
+  if (S.loi){ b.innerHTML=tabs()+'<div class="chq-bad">Không đọc được: '+esc(S.loi)
+    +'</div><div class="chq-row"><button class="chq-b pri" data-chq="lai">↻ Thử lại</button></div>'; return; }
+
+  var h=tabs();
+
+  if (S.tab==='nv') h+=veNv();
+  else if (S.tab==='ca') h+=veCa();
+  else h+=veLink();
+
+  h+='<div class="chq-row"><button class="chq-b" data-chq="lai">↻ Tải lại</button>'
+    +'<span style="flex:1"></span><button class="chq-b" data-chq="x">Đóng</button></div>';
+  b.innerHTML=h;
+}
+
+function veNv(){
+  var hoi=!!(S.cfg && S.cfg.requirePin===true);
+  var h='<div class="chq-sec"><div class="chq-h">Cổng PIN khi mở Bán hàng</div>'
+    +'<div class="chq-li"><div class="l">Đang '+(hoi?'<b>BẬT</b> — phải chọn tên + nhập PIN':'<b>TẮT</b> — vào thẳng quyền Chủ')+'</div>'
+    +'<button class="chq-b '+(hoi?'':'ok')+'" data-chq="pinOn">'+(hoi?'Tắt hỏi PIN':'Bật hỏi PIN')+'</button></div>'
+    +'<div class="chq-note">Khách gọi than <b>“quên sạch PIN, không bán được”</b> thì TẮT cho họ bán ngay, rồi đặt PIN mới và BẬT lại.</div></div>';
+
+  h+='<div class="chq-sec"><div class="chq-h">Nhân viên ('+S.staff.length+')</div>';
+  if (!S.staff.length) h+='<div class="chq-empty">Shop chưa lập nhân viên nào.</div>';
+  else h+=S.staff.map(function(x){
+    var vt = x.role==='owner'?'Chủ':(x.role==='manager'?'Quản lý':'Thu ngân');
+    var pin = x.pin ? String(x.pin) : '(chưa đặt)';
+    return '<div class="chq-li"><div class="l">'+esc(x.name||'(không tên)')
+      +'<em>'+esc(vt)+' · PIN <b>'+esc(pin)+'</b></em></div>'
+      +'<button class="chq-b" data-chq="pin" data-i="'+att(x.id)+'" data-n="'+att(x.name||'')+'">Đặt PIN</button>'
+      +'<button class="chq-b dan" data-chq="xoaNv" data-i="'+att(x.id)+'" data-n="'+att(x.name||'')+'">Xoá</button></div>';
+  }).join('');
+  h+='<div class="chq-note">PIN hiện nguyên số vì đây là bảng quản trị. Đặt PIN mới xong nhớ nhắn cho khách.</div></div>';
+  return h;
+}
+
+function veCa(){
+  var h='<div class="chq-sec"><div class="chq-h">Ca đang mở ('+S.ca.length+')</div>';
+  if (!S.ca.length) h+='<div class="chq-empty">Không có ca nào đang treo. 👍</div>';
+  else h+=S.ca.map(function(x){
+    var d=Date.now()-x.openAtMs, keo=d>18*3600000;
+    return '<div class="chq-li"><div class="l">'
+      +(keo?'<span class="chq-tag do">TREO '+lau(d)+'</span> ':'<span class="chq-tag xanh">'+lau(d)+'</span> ')
+      +esc(x.nv||'(không rõ người trực)')
+      +'<em>'+esc(x.brTen)+(x.nganh?' · '+esc(x.nganh):'')+' · mở '+gio(new Date(x.openAtMs))+'</em></div>'
+      +'<button class="chq-b '+(keo?'dan':'warn')+'" data-chq="ep" data-i="'+att(x.id)+'" data-b="'+att(x.br)+'" data-n="'+att(x.nv||'')+'" data-m="'+x.openAtMs+'">Ép chốt</button></div>';
+  }).join('');
+  h+='<div class="chq-warn">Ca treo quá lâu làm người bán <b>không mở được ca mới</b> và báo cáo doanh thu theo ca sai lệch. '
+    +'Ép chốt chỉ đóng ca lại — <b>không đụng đơn hàng, sổ quỹ hay kho</b>, và ghi rõ là quản trị ép chốt để sau này còn truy được.</div></div>';
+  return h;
+}
+
+function veLink(){
+  var nhom=[['sono','🧾 Link nhắc nợ'],['qr','📱 Link thực đơn QR'],['hd','🚚 Link tra cứu tài xế'],['xe','📍 Link định vị xe']];
+  var h='';
+  nhom.forEach(function(g){
+    var ds=S.link[g[0]]||[];
+    h+='<div class="chq-sec"><div class="chq-h">'+g[1]+' ('+ds.length+(ds.length>=200?'+':'')+')</div>';
+    if (!ds.length) h+='<div class="chq-empty">Chưa có link nào.</div>';
+    else h+=ds.slice(0,15).map(function(x){
+      var ten=x.name||x.tenKhach||x.tenQuan||x.shopName||x.bienSo||x.plate||'(không tên)';
+      return '<div class="chq-li"><div class="l">'+esc(ten)+'<em>'+esc(x.id)+'</em></div>'
+        +'<button class="chq-b dan" data-chq="xoaLk" data-l="'+g[0]+'" data-t="'+att(x.id)+'">Xoá</button></div>';
+    }).join('')+(ds.length>15?'<div class="chq-note">Hiện 15 link đầu. Xoá xong bấm ↻ để xem tiếp.</div>':'');
+    h+='</div>';
+  });
+  h+='<div class="chq-note">Dùng khi khách <b>lỡ gửi link cho nhầm người</b>. Xoá link không hề đụng tới sổ nợ, thực đơn hay dữ liệu xe của khách.</div>';
+  return h;
+}
+
+function bam(ev){
+  var b=(ev.target&&ev.target.closest)?ev.target.closest('[data-chq]'):null;
+  if (!b) return;
+  var a=b.getAttribute('data-chq');
+  if (a==='x'){ dong(); return; }
+  if (a==='lai'){ lamMoi(); return; }
+  if (a==='tab'){ S.tab=b.getAttribute('data-t'); ve(); return; }
+  if (a==='pinOn'){ doiHoiPin(!(S.cfg&&S.cfg.requirePin===true)); return; }
+  if (a==='pin'){ datPin(b.getAttribute('data-i'), b.getAttribute('data-n')); return; }
+  if (a==='xoaNv'){ xoaNv(b.getAttribute('data-i'), b.getAttribute('data-n')); return; }
+  if (a==='ep'){ epChot(b.getAttribute('data-i'), b.getAttribute('data-b'),
+                        b.getAttribute('data-n'), num(b.getAttribute('data-m'))); return; }
+  if (a==='xoaLk'){ xoaLink(b.getAttribute('data-l'), b.getAttribute('data-t')); return; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PHẦN 2 — TOÀN HỆ:  BẮN TIN HÀNG LOẠT  +  SOI HOA HỒNG
+   ═══════════════════════════════════════════════════════════════════════ */
+var T = { tab:'tin', dang:false, loi:'', tienDo:'',
+          acc:[], licCon:{}, muc:'info', loc:'con', gt:[], gtLoaded:false };
+
+async function napToanHe(){
+  var c=ctx(); if (!c.db) return 'chưa đăng nhập';
+  try{
+    var r=await Promise.all([
+      getDocs(collection(c.db,'accounts')),
+      getDocs(collectionGroup(c.db,'lic'))
+    ]);
+    var acc=[]; r[0].forEach(function(d){ var x=d.data()||{};
+      acc.push({ uid:d.id, email:x.email||'', tao:ngay(x.createdAt) }); });
+    var con={};
+    r[1].forEach(function(d){
+      var p=d.ref.parent && d.ref.parent.parent; if(!p) return;
+      if (conHanLic(d.data()||{})) con[p.id]=1;
+    });
+    return { acc:acc, con:con };
+  }catch(e){ return String((e&&(e.code||e.message))||e); }
+}
+
+function dsNhan(){
+  var out=[], i;
+  for (i=0;i<T.acc.length;i++){
+    var a=T.acc[i], co=!!T.licCon[a.uid];
+    if (T.loc==='tat') out.push(a);
+    else if (T.loc==='con' && co) out.push(a);
+    else if (T.loc==='het' && !co) out.push(a);
+  }
+  return out;
+}
+
+async function ghiLoat(patch, nhan, nhanViec){
+  var c=ctx(); if (!c.db) return;
+  var i, j, xong=0;
+  try{
+    for (i=0;i<nhan.length;i+=400){
+      var lo=nhan.slice(i,i+400), w=writeBatch(c.db);
+      for (j=0;j<lo.length;j++) w.set(doc(c.db,'accounts',lo[j].uid), patch, { merge:true });
+      await w.commit();
+      xong+=lo.length;
+      T.tienDo='Đang gửi… '+xong+'/'+nhan.length; veT();
+    }
+    T.tienDo='';
+    toast('✅ '+nhanViec+' — '+xong+' tài khoản'); veT();
+  }catch(e){ T.tienDo=''; toast('Lỗi: '+((e&&(e.code||e.message))||e),1); veT(); }
+}
+
+async function banTin(){
+  var t=el('chqt-tin'), text=t?String(t.value||'').trim():'';
+  if (!text) return toast('Chưa nhập nội dung',1);
+  if (text.length>500) return toast('Tin quá dài (tối đa 500 ký tự)',1);
+  var nhan=dsNhan();
+  if (!nhan.length) return toast('Không có tài khoản nào khớp bộ lọc',1);
+  if (!confirm('GỬI THÔNG BÁO cho '+nhan.length+' tài khoản?\n\n'
+      +'“'+text.slice(0,160)+(text.length>160?'…':'')+'”\n\n'
+      +'Kiểu: '+(T.muc==='warn'?'HỘP BẬT GIỮA MÀN (bắt buộc bấm Đã hiểu)':'Thanh xanh trên đầu (khách tự tắt được)')+'\n\n'
+      +'Máy khách đang mở sẽ hiện trong vài giây. Chắc chưa?')) return;
+  await ghiLoat({ remote:{ msg:{ id:'m'+Date.now(), text:text, muc:(T.muc==='warn'?'warn':'info'),
+                                 at:new Date(), boi:boi() } } }, nhan, 'Đã gửi thông báo');
+}
+async function goTinLoat(){
+  var nhan=dsNhan();
+  if (!nhan.length) return toast('Không có tài khoản nào khớp bộ lọc',1);
+  if (!confirm('GỠ thông báo đang treo trên '+nhan.length+' máy khách?')) return;
+  await ghiLoat({ remote:{ msg:null } }, nhan, 'Đã gỡ thông báo');
+}
+async function epCapNhat(){
+  var nhan=dsNhan();
+  if (!nhan.length) return toast('Không có tài khoản nào khớp bộ lọc',1);
+  if (!confirm('BẬT thanh CẬP NHẬT cho '+nhan.length+' tài khoản?\n\n'
+      +'Máy khách hiện thanh cam “Có bản mới — Cập nhật ngay”.\n'
+      +'Cố ý KHÔNG tự tải lại để không làm bay giỏ hàng đang bán.\n\n'
+      +'Dùng NGAY SAU KHI bạn đã đẩy bản mới lên GitHub Pages.')) return;
+  await ghiLoat({ remote:{ reload:{ id:'r'+Date.now(), at:new Date(), boi:boi() } } }, nhan, 'Đã bật thanh cập nhật');
+}
+async function tatCapNhatLoat(){
+  var nhan=dsNhan();
+  if (!nhan.length) return toast('Không có tài khoản nào khớp bộ lọc',1);
+  if (!confirm('TẮT thanh cập nhật trên '+nhan.length+' máy khách?')) return;
+  await ghiLoat({ remote:{ reload:null } }, nhan, 'Đã tắt thanh cập nhật');
+}
+
+/* ─────── SOI HOA HỒNG ─────── */
+async function napHoaHong(){
+  var c=ctx(); if (!c.db) return 'chưa đăng nhập';
+  try{
+    var r=await Promise.all([
+      getDocs(collection(c.db,'referrals')),
+      getDocs(collection(c.db,'signups')).catch(function(){return null;}),
+      getDocs(collection(c.db,'payments')).catch(function(){return null;})
+    ]);
+    var mailAcc={}, taoAcc={}, i;
+    for (i=0;i<T.acc.length;i++){ mailAcc[T.acc[i].uid]=T.acc[i].email; taoAcc[T.acc[i].uid]=T.acc[i].tao; }
+    if (r[1]) r[1].forEach(function(d){ var x=d.data()||{};
+      if (!mailAcc[d.id] && x.email) mailAcc[d.id]=x.email;
+      var t=ngay(x.createdAt||x.at); if (t && !taoAcc[d.id]) taoAcc[d.id]=t; });
+
+    /* Đã trả tiền chưa — đủ 12 tháng trong 1 lần mới tính là "đơn trọn gói" */
+    var traTron={};
+    if (r[2]) r[2].forEach(function(d){ var p=d.data()||{};
+      if (num(p.months!=null?p.months:p.soThang)>=12 && p.uid) traTron[p.uid]=1; });
+
+    var rows=[], byRef={};
+    r[0].forEach(function(d){
+      var x=d.data()||{};
+      if (!x.referredByUid) return;
+      var tRef=ngay(x.createdAt)||ngay(x.updatedAt);
+      var tAcc=taoAcc[d.id]||null;
+      var cach=(tRef&&tAcc)?Math.round((tRef.getTime()-tAcc.getTime())/86400000):null;
+      rows.push({ uid:d.id, email:(x.email||mailAcc[d.id]||d.id),
+                  ref:x.referredByUid, refMail:(mailAcc[x.referredByUid]||x.referredByUid),
+                  ma:(x.referredByCode||''), app:(x.appJoined||''),
+                  tRef:tRef, tAcc:tAcc, cach:cach, tron:!!traTron[d.id] });
+      byRef[x.referredByUid]=(byRef[x.referredByUid]||0)+1;
+    });
+
+    /* Đã cộng thưởng chưa: đọc reflog của những người giới thiệu có mặt (tối đa 60) */
+    var refUids=Object.keys(byRef).slice(0,60), daTra={};
+    var lg=await Promise.all(refUids.map(function(u){
+      return getDocs(collection(c.db,'accounts',u,'reflog'))
+        .then(function(s){ return { u:u, s:s }; }).catch(function(){ return { u:u, s:null }; });
+    }));
+    for (i=0;i<lg.length;i++){ var o=lg[i]; if(!o.s) continue;
+      o.s.forEach(function(d){ daTra[o.u+'|'+d.id]=1; }); }
+
+    var coVong={};
+    for (i=0;i<rows.length;i++) coVong[rows[i].uid+'|'+rows[i].ref]=1;
+
+    for (i=0;i<rows.length;i++){
+      var x2=rows[i];
+      x2.soNguoi = byRef[x2.ref]||0;
+      x2.daTra   = !!daTra[x2.ref+'|'+x2.uid];
+      x2.vong    = !!coVong[x2.ref+'|'+x2.uid];
+      x2.laAcc   = (mailAcc[x2.ref]!=null);
+      x2.co = [];
+      if (x2.vong)                       x2.co.push(['do','VÒNG TRÒN — 2 bên giới thiệu nhau']);
+      if (x2.cach!=null && x2.cach>7)    x2.co.push(['do','KHÁCH CŨ — gắn sau '+x2.cach+' ngày']);
+      if (!x2.laAcc)                     x2.co.push(['cam','Người giới thiệu không có trong danh sách tài khoản']);
+      if (x2.soNguoi>=5)                 x2.co.push(['cam','Người này đã giới thiệu '+x2.soNguoi+' khách']);
+      if (!x2.co.length)                 x2.co.push(['xanh','Bình thường']);
+    }
+    rows.sort(function(a,b){
+      var pa=(a.co[0][0]==='do'?0:(a.co[0][0]==='cam'?1:2));
+      var pb=(b.co[0][0]==='do'?0:(b.co[0][0]==='cam'?1:2));
+      return pa-pb || ((b.tRef?b.tRef.getTime():0)-(a.tRef?a.tRef.getTime():0));
+    });
+    return rows;
+  }catch(e){ return String((e&&(e.code||e.message))||e); }
+}
+
+/* ─────── GIAO DIỆN PHẦN 2 ─────── */
+function buildT(){
+  if (el('chqt-mask')) return;
+  css();
+  var w=document.createElement('div');
+  w.innerHTML='<div id="chqt-mask" class="chq-mask"><div class="chq-card" role="dialog" aria-modal="true">'
+    +'<div class="chq-top"><div><div class="chq-title">📡 Toàn hệ — bắn tin &amp; soi hoa hồng</div>'
+    +'<div class="chq-sub" id="chqt-sub"></div></div>'
+    +'<button type="button" class="chq-x" id="chqt-x">✕</button></div>'
+    +'<div id="chqt-body"></div></div></div>';
+  document.body.appendChild(w.firstChild);
+  el('chqt-x').onclick=dongT;
+  el('chqt-mask').addEventListener('click',function(e){ if(e.target===el('chqt-mask')) dongT(); });
+  el('chqt-mask').addEventListener('click',bamT,false);
+}
+function dongT(){ var m=el('chqt-mask'); if(m) m.classList.remove('on'); }
+async function moT(){
+  buildT();
+  el('chqt-mask').classList.add('on');
+  T.tab='tin'; T.dang=true; T.loi=''; T.tienDo=''; veT();
+  var r=await napToanHe();
+  T.dang=false;
+  if (typeof r==='string'){ T.loi=r; veT(); return; }
+  T.acc=r.acc; T.licCon=r.con; veT();
+}
+
+function veT(){
+  var b=el('chqt-body'); if(!b) return;
+  var sb=el('chqt-sub');
+  if (sb) sb.textContent = T.acc.length ? (T.acc.length+' tài khoản trong hệ thống') : '';
+  if (T.dang){ b.innerHTML='<div class="chq-empty">⏳ Đang đọc danh sách tài khoản…</div>'; return; }
+  if (T.loi){ b.innerHTML='<div class="chq-bad">Không đọc được: '+esc(T.loi)+'</div>'
+    +'<div class="chq-row"><button class="chq-b pri" data-chqt="lai">↻ Thử lại</button></div>'; return; }
+
+  var h='<div class="chq-tabs">'
+    +'<button type="button" class="chq-tab'+(T.tab==='tin'?' on':'')+'" data-chqt="tab" data-t="tin">📣 Bắn tin hàng loạt</button>'
+    +'<button type="button" class="chq-tab'+(T.tab==='gt'?' on':'')+'" data-chqt="tab" data-t="gt">🎁 Soi hoa hồng</button>'
+    +'</div>';
+
+  if (T.tab==='tin'){
+    var nhan=dsNhan();
+    var L=[['con','Còn hạn'],['het','Hết hạn'],['tat','Tất cả']];
+    h+='<div class="chq-sec"><div class="chq-h">Gửi cho ai</div><div class="chq-tabs">'
+      +L.map(function(x){ return '<button type="button" class="chq-tab'+(T.loc===x[0]?' on':'')
+          +'" data-chqt="loc" data-v="'+x[0]+'">'+x[1]+'</button>'; }).join('')
+      +'</div><div class="chq-note">Đang chọn: <b>'+nhan.length+'</b> tài khoản.</div></div>';
+
+    h+='<div class="chq-sec"><div class="chq-h">Nội dung thông báo</div>'
+      +'<textarea class="chq-ta" id="chqt-tin" maxlength="500" placeholder="VD: Từ 20/9 app có thêm Đơn QR tại bàn. Bấm Cài đặt → Đơn QR để mở dùng thử 14 ngày."></textarea>'
+      +'<div class="chq-tabs" style="margin-top:8px">'
+      +'<button type="button" class="chq-tab'+(T.muc==='info'?' on':'')+'" data-chqt="muc" data-v="info">Thanh xanh (nhẹ)</button>'
+      +'<button type="button" class="chq-tab'+(T.muc==='warn'?' on':'')+'" data-chqt="muc" data-v="warn">Hộp bật giữa màn (quan trọng)</button>'
+      +'</div>'
+      +'<div class="chq-row"><button class="chq-b ok" data-chqt="gui">📣 Gửi cho '+nhan.length+' khách</button>'
+      +'<button class="chq-b" data-chqt="go">Gỡ tin đang treo</button></div>'
+      +(T.tienDo?'<div class="chq-warn">'+esc(T.tienDo)+'</div>':'')
+      +'</div>';
+
+    h+='<div class="chq-sec"><div class="chq-h">Ép cập nhật bản mới</div>'
+      +'<div class="chq-row"><button class="chq-b warn" data-chqt="rl">✨ Bật thanh cập nhật</button>'
+      +'<button class="chq-b" data-chqt="tatrl">Tắt thanh cập nhật</button></div>'
+      +'<div class="chq-warn">Chỉ bấm <b>SAU KHI</b> bản mới đã lên GitHub Pages. Khách bấm 1 nút là nạp bản mới; '
+      +'giỏ hàng đang bán vẫn giữ nguyên vì app cố ý không tự tải lại.</div></div>';
+  }else{
+    if (!T.gtLoaded){
+      h+='<div class="chq-sec"><div class="chq-empty">Bảng này đọc referrals · signups · payments · reflog nên hơi nặng.</div>'
+        +'<div class="chq-row"><button class="chq-b pri" data-chqt="gtnap">📥 Đọc bảng hoa hồng</button></div></div>';
+    }else if (typeof T.gt==='string'){
+      h+='<div class="chq-bad">Không đọc được: '+esc(T.gt)+'</div>'
+        +'<div class="chq-row"><button class="chq-b pri" data-chqt="gtnap">↻ Thử lại</button></div>';
+    }else if (!T.gt.length){
+      h+='<div class="chq-sec"><div class="chq-empty">Chưa có ai gắn người giới thiệu.</div></div>';
+    }else{
+      var nDo=T.gt.filter(function(x){ return x.co[0][0]==='do'; }).length;
+      h+='<div class="chq-sec"><div class="chq-h">'+T.gt.length+' lượt giới thiệu'
+        +(nDo?' · <span style="color:#c0392b">'+nDo+' đáng ngờ</span>':'')+'</div>'
+        +T.gt.map(function(x){
+          return '<div class="chq-li"><div class="l">'
+            +x.co.map(function(t){ return '<span class="chq-tag '+t[0]+'">'+esc(t[1])+'</span> '; }).join('')
+            +'<div style="margin-top:4px">'+esc(x.email)+'</div>'
+            +'<em>người giới thiệu: '+esc(x.refMail)+(x.ma?' · mã '+esc(x.ma):'')
+            +(x.app?' · '+esc(x.app):'')+'</em>'
+            +'<em>đăng ký '+(x.tAcc?dstr(x.tAcc):'—')+' · gắn '+(x.tRef?dstr(x.tRef):'—')
+            +' · '+(x.tron?'ĐÃ trả gói ≥12 tháng':'chưa trả gói 12 tháng')
+            +' · '+(x.daTra?'<b style="color:#c0392b">ĐÃ cộng thưởng</b>':'chưa cộng thưởng')+'</em>'
+            +'</div></div>';
+        }).join('')
+        +'<div class="chq-warn">Đọc cột <b>“đăng ký / gắn”</b>: khách đăng ký từ lâu mà mãi sau mới gắn người giới thiệu là dấu hiệu '
+        +'<b>bắt tay nhau ăn thưởng</b>. Hệ thống đang TỰ CỘNG khi bạn duyệt gói 12 tháng, nên gặp dòng đỏ thì kiểm trước khi duyệt.</div>'
+        +'<div class="chq-row"><button class="chq-b" data-chqt="gtnap">↻ Đọc lại</button></div></div>';
+    }
+  }
+
+  h+='<div class="chq-row"><span style="flex:1"></span><button class="chq-b" data-chqt="x">Đóng</button></div>';
+  b.innerHTML=h;
+}
+
+async function bamT(ev){
+  var b=(ev.target&&ev.target.closest)?ev.target.closest('[data-chqt]'):null;
+  if (!b) return;
+  var a=b.getAttribute('data-chqt');
+  if (a==='x'){ dongT(); return; }
+  if (a==='lai'){ moT(); return; }
+  if (a==='tab'){ T.tab=b.getAttribute('data-t'); veT(); return; }
+  if (a==='loc'){ T.loc=b.getAttribute('data-v'); veT(); return; }
+  if (a==='muc'){ var t=el('chqt-tin'); var v=t?t.value:'';
+                  T.muc=b.getAttribute('data-v'); veT();
+                  var t2=el('chqt-tin'); if(t2) t2.value=v; return; }
+  if (a==='gui'){ banTin(); return; }
+  if (a==='go'){ goTinLoat(); return; }
+  if (a==='rl'){ epCapNhat(); return; }
+  if (a==='tatrl'){ tatCapNhatLoat(); return; }
+  if (a==='gtnap'){
+    T.gtLoaded=true; T.gt=[]; veT();
+    var bd=el('chqt-body'); if(bd) bd.innerHTML='<div class="chq-empty">⏳ Đang đọc bảng hoa hồng…</div>';
+    T.gt=await napHoaHong(); veT(); return;
+  }
+}
+
+/* ═══════════════════ GẮN VÀO GIAO DIỆN ═══════════════════ */
+function tiem(){
+  var t=el('hsTaiDL'); if (!t || t.__chq) return;
+  t.__chq=1;
+  var row=t.parentNode; if (!row) return;
+  var card=row.parentNode; if (!card) return;
+  var nb=document.createElement('button');
+  nb.type='button'; nb.className='btn'; nb.id='chq-open';
+  nb.textContent='🛠️ Cứu hộ shop (nhân viên · ca · link)';
+  nb.style.cssText='width:100%;margin-bottom:8px';
+  nb.onclick=function(){
+    var box=el('hsCn'); var uid=box?box.getAttribute('data-uid'):'';
+    var em=el('shT')?el('shT').textContent:'';
+    if (!uid){ toast('Chưa lấy được mã tài khoản — mở lại hồ sơ khách',1); return; }
+    mo(uid, em);
+  };
+  try{ card.insertBefore(nb, row); }catch(e){}
+}
+function fab(){
+  if (el('chq-fab')) return;
+  css();
+  var b=document.createElement('button');
+  b.id='chq-fab'; b.type='button'; b.className='chq-fab';
+  b.innerHTML='📡 Toàn hệ';
+  b.onclick=moT;
+  document.body.appendChild(b);
+}
+function boot(){
+  tiem();
+  var c=ctx();
+  if (c.user && !c.user.isAnonymous && c.user.email) fab();
+}
+setInterval(boot, 900);
+document.addEventListener('DOMContentLoaded', boot);
+setTimeout(boot, 800);
+
+window.moCuuHo   = mo;
+window.moToanHe  = moT;
+})();
+</script>
+<!-- ═══════════ HẾT G6 · CỨU HỘ & KIỂM SOÁT TOÀN HỆ ═══════════ -->
 </body>
 </html>
