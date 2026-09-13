@@ -3974,6 +3974,11 @@ var NGANH = [
   {k:'kg',  lic:'sono_cn_kg',  pf:'priceCnKg',  ic:'⚖️', n:'Vật liệu XD · Nông sản · Bán sỉ'}
 ];
 var CHUNG = {k:'', lic:'sono_cn', pf:'priceCn', ic:'🛒', n:'Bán hàng thường'};
+/* [v8] Email CHỦ PHẦN MỀM — phải TRÙNG y hệt isAdmin() trong Firestore Rules.
+   Rules cho tài khoản này đi qua HẾT (isAdmin() đứng đầu mọi điều kiện), nên
+   bảng này mà gắn cờ "Thiếu phép" cho chính mình là báo động giả: đếm sai huy
+   hiệu đỏ, lại làm mình tưởng máy chủ đang chặn tài khoản thử nghiệm của mình. */
+var MAIL_CHU = 'cuahangminhtri1@gmail.com';
 var SONG  = 6;                 /* số tài khoản quét song song — đừng để cao quá kẻo nghẽn */
 /* ═════════════════════════════════════════════════════════ */
 
@@ -4122,7 +4127,8 @@ async function nap(ve){
       soCn:(loi?-1:ids.length), them:themTong+maCu.length, qty:qtyTong,
       chiTiet:ct, maCu:maCu, cuChua:cuChua, cho:cho,
       thieuSo:thieuTong+cuChua.length,
-      lic:null, maLic:'', mienTru:acc.cnMienTru===true
+      lic:null, maLic:'', mienTru:acc.cnMienTru===true,
+      laChu:(String(acc.email||'').toLowerCase()===MAIL_CHU)
     });
     xong++; D.tienDo='Đang quét shop… '+xong+'/'+uids.length; if(ve && xong%SONG===0) ve();
   }
@@ -4131,9 +4137,9 @@ async function nap(ve){
   }
 
   rows.forEach(function(x){
-    x.thieu = !x.mienTru && x.thieuSo>0;                 /* có ngành vượt suất, hoặc còn cửa hàng mã cũ chưa duyệt */
+    x.thieu = !x.laChu && !x.mienTru && x.thieuSo>0;     /* có ngành vượt suất, hoặc còn cửa hàng mã cũ chưa duyệt */
     x.tra   = !x.mienTru && !x.thieu && x.them>0;        /* dùng chi nhánh thêm và đã trả đủ */
-    x.du    = x.mienTru || !x.thieu;
+    x.du    = x.laChu || x.mienTru || !x.thieu;
   });
   rows.sort(function(a,b){
     if (a.thieu!==b.thieu) return a.thieu?-1:1;
@@ -4266,7 +4272,8 @@ function ve(){
   }else{
     dungCn.forEach(function(r){
       var tag, cls='';
-      if (r.mienTru){ tag='<span class="cnq-tag mt">🛡️ Miễn trừ</span>'; cls=' mt'; }
+      if (r.laChu){ tag='<span class="cnq-tag mt">👑 Chủ phần mềm</span>'; cls=' mt'; }
+      else if (r.mienTru){ tag='<span class="cnq-tag mt">🛡️ Miễn trừ</span>'; cls=' mt'; }
       else if (r.thieu){ tag='<span class="cnq-tag bad">⛔ Thiếu phép</span>'; cls=' thieu'; }
       else tag='<span class="cnq-tag ok">✅ Đủ phép</span>';
 
@@ -4299,7 +4306,9 @@ function ve(){
          +   (r.cuChua && r.cuChua.length
                ? '<button type="button" class="cnq-b ok" data-cnq="duyetcu" data-uid="'+esc(r.uid)+'">✅ Duyệt '+r.cuChua.length+' cửa hàng mã cũ</button>'
                : '')
-         +   (r.mienTru
+         +   (r.laChu
+               ? '<span class="cnq-meta">Tài khoản quản trị — Firestore Rules cho đi qua hết (isAdmin), số suất bên trên chỉ là thống kê.</span>'
+               : r.mienTru
                ? '<button type="button" class="cnq-b dan" data-cnq="mt0" data-uid="'+esc(r.uid)+'">Bỏ miễn trừ</button>'
                : '<button type="button" class="cnq-b pri" data-cnq="mt1" data-uid="'+esc(r.uid)+'">🛡️ Miễn trừ khách này</button>')
          + '</div></div>';
@@ -4351,9 +4360,9 @@ async function duyetMaCu(uid){
     if (D.acc[uid]) D.acc[uid].cnCho=moi;
     r.cho=moi; r.cuChua=[];
     r.thieuSo=0; (r.chiTiet||[]).forEach(function(x){ if (x.them>x.qty) r.thieuSo+=(x.them-x.qty); });
-    r.thieu=!r.mienTru&&r.thieuSo>0;
+    r.thieu=!r.laChu&&!r.mienTru&&r.thieuSo>0;
     r.tra  =!r.mienTru&&!r.thieu&&r.them>0;
-    r.du   =r.mienTru||!r.thieu;
+    r.du   =r.laChu||r.mienTru||!r.thieu;
     noi('Đã duyệt '+moi.length+' cửa hàng mã cũ');
     return true;
   }catch(e){ noi('Lỗi: '+((e&&(e.code||e.message))||e),1); return false; }
