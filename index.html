@@ -1962,12 +1962,22 @@ function veCaiDat(){
   $("#congTac").innerHTML =
     sw("enforce","Bắt buộc giấy phép","Tắt là mở toang toàn bộ app cho mọi người.", CFGDB.enforce !== false)
   + sw("enforceCn","Thu phí CHI NHÁNH","Bật = chi nhánh THÊM phải có giấy phép còn hạn mới đọc/ghi được (chi nhánh chính luôn miễn phí). PHẢI quét miễn trừ khách cũ ở 🏪 Chi nhánh trước khi bật.", CFGDB.enforceCn === true)
-  + sw("enforceNganh","Thu phí GÓI NGÀNH (F&B)","Bật = hết hạn gói sono_fnb là máy chủ chối luôn sơ đồ bàn (kho pos_tables), không chỉ ẩn nút ở máy khách. Ba ngành kia cũng bị khoá THẬT theo mã cửa hàng (main_fs / main_rm / main_kg · cn_fs_* · cn_rm_* · cn_kg_*).", CFGDB.enforceNganh === true);
+  + sw("enforceNganh","Thu phí GÓI NGÀNH (cả 4 ngành)","Bật = hết hạn gói nào thì máy chủ chối luôn kho riêng của ngành đó — pos_tables (F&B) · pos_fs (Thời trang) · pos_rm (Phòng tính giờ) · pos_kg (Cân ký) — ở MỌI cửa hàng, không chỉ ẩn nút ở máy khách. Hàng hoá, tồn kho, đơn hàng và sổ nợ KHÔNG bị đụng tới, mua lại là dùng tiếp.", CFGDB.enforceNganh === true)
+  /* [MỚI] Bốn công tắc dưới đây đã có trong bộ Firestore Rules nhưng trước giờ
+     không có nút, muốn đổi phải vào Firebase Console gõ tay. Mặc định của chúng
+     GIỮ NGUYÊN hành vi hiện tại, bật/tắt lúc nào cũng được. */
+  + sw("cnChung","Gói chi nhánh CHUNG cho mọi ngành","ĐANG BẬT = một suất sono_cn xài được ở CẢ 5 ngành — mua 5 suất mở được 5 chi nhánh mỗi ngành (25 chỗ) mà chỉ trả tiền 5. TẮT = mỗi ngành phải mua đúng gói chi nhánh của ngành đó. Tắt rồi khách cũ đang xài lối tắt này sẽ bị chặn, nhớ quét 🏪 Chi nhánh trước.", CFGDB.cnChung !== false)
+  + sw("choThu","Cho DÙNG THỬ miễn phí 14 ngày","ĐANG BẬT = khách tự bấm mở dùng thử từng gói. TẮT khi gặp kẻ lập hàng loạt tài khoản ăn dùng thử — người đang thử dở KHÔNG bị ảnh hưởng, chỉ chặn người mới bấm.", CFGDB.choThu !== false)
+  + sw("choLog","Nhận nhật ký lỗi từ máy khách","ĐANG BẬT = app khách gửi lỗi về kho error_logs để mình soi. TẮT khi bị bơm rác cho tốn tiền Firestore — tắt chỉ mất log, app khách vẫn chạy y nguyên.", CFGDB.choLog !== false)
+  + sw("enforceRef","Khoá gắn người giới thiệu MUỘN","ĐANG TẮT = khách cũ vẫn gắn thêm người giới thiệu sau khi đã đăng ký (mở 10 tài khoản rồi gắn ngược về mình để ăn hoa hồng). BẬT = chỉ gắn được đúng lúc tạo tài khoản, sau đó không thêm vào được nữa.", CFGDB.enforceRef === true);
   $$("#congTac [data-sw]").forEach(el=>el.onclick=async()=>{
     const k = el.dataset.sw, moi = !el.classList.contains("on");
     if(k==="enforce" && !moi && !confirm("Tắt bắt buộc giấy phép = mọi khách dùng miễn phí. Chắc chưa?")) return;
     if(k==="enforceNganh" && moi && !confirm("BẬT thu phí GÓI NGÀNH.\n\nKhách hết hạn gói ngành (F&B / Thời trang / Karaoke-Spa / Cân ký) sẽ KHÔNG đọc/ghi được dữ liệu trong cửa hàng ngành đó nữa (sổ nợ và cửa hàng thường vẫn nguyên). Kiểm tra danh sách khách còn hạn trước khi bật. Chắc chưa?")) return;
     if(k==="enforceCn" && moi && !confirm("BẬT thu phí CHI NHÁNH.\n\nKhách đang có chi nhánh thêm mà CHƯA mua gói sẽ mất quyền đọc/ghi dữ liệu trong chi nhánh đó NGAY LẬP TỨC (chi nhánh chính không ảnh hưởng).\n\nĐã bấm 🏪 Chi nhánh → Quét lại → Miễn trừ khách cũ chưa?")) return;
+    if(k==="cnChung" && !moi && !confirm("TẮT lối tắt gói chi nhánh chung.\n\nKhách đang dùng một gói sono_cn cho nhiều ngành sẽ bị chặn ở các ngành chưa mua gói riêng — nhưng chỉ khi công tắc Thu phí CHI NHÁNH cũng đang BẬT.\n\nĐã bấm 🏪 Chi nhánh → Quét lại để xem ai bị ảnh hưởng chưa?")) return;
+    if(k==="choThu" && !moi && !confirm("TẮT dùng thử miễn phí.\n\nTừ giờ khách MỚI không tự mở thử được gói nào nữa, phải hỏi mua. Người đang thử dở vẫn dùng hết hạn bình thường.\n\nChắc chưa?")) return;
+    if(k==="enforceRef" && moi && !confirm("BẬT khoá gắn người giới thiệu muộn.\n\nKhách đã đăng ký rồi mà chưa có người giới thiệu sẽ KHÔNG gắn thêm được nữa — kể cả người giới thiệu thật. Chỉ gắn được ngay lúc tạo tài khoản.\n\nChắc chưa?")) return;
     try{
       await setDoc(doc(fdb,"billing","config"), {[k]:moi}, {merge:true});
       await ghiChung("cong_tac",{ghi:`${k}: ${!moi} → ${moi}`});
