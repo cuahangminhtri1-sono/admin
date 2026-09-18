@@ -467,8 +467,11 @@ const NHOM_APP = [
   { ten:"Gói ngành & Đơn QR", apps:["sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr"] },
   { ten:"App khác", apps:["cafe","tro","xe","hd"] }
 ];
-/* KHUYẾN MÃI: mua 12 tháng TẶNG 2 (thu tiền 10) — y hệt KM_GIA_HAN của app khách */
-const KM_GIA_HAN = { 12:2 };
+/* KHUYẾN MÃI mặc định: mua 12 tháng TẶNG 2 (thu tiền 10) — y hệt KM_GIA_HAN của app khách.
+   Có billing/info.kmGiaHan thì thay TRỌN bảng (app khách đọc cùng nguồn nên hai bên luôn khớp). */
+const KM_MAC_DINH = { 12:2 };
+const KM_GIA_HAN = { ...KM_MAC_DINH };
+const HOT_GOC = "0977823979";
 
 const fbApp = initializeApp(CFG.fb);
 const auth  = initializeAuth(fbApp, { persistence:[indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence] });
@@ -526,6 +529,19 @@ const laCN = a => String(a||"").indexOf("sono_cn") === 0;
 const tenApp = a => CFG.ten[a] || a || "?";
 function giaApp(a){ const o = CFG.oGia[a]; if(!o) return 0;
   return num(BILL[o[0]]) || num(BILL[o[1]]) || o[2]; }
+/* Giá THẬT của 1 khách: giá riêng (accounts/{uid}.giaRieng) nếu có, không thì giá chung — y như priceFor() app khách */
+function giaRieng(uid, a){ const g = (ACC[uid] || {}).giaRieng; const v = (g && typeof g === "object" && !Array.isArray(g)) ? num(g[a]) : 0; return v > 0 ? Math.round(v) : 0; }
+const giaCua = (uid, a) => giaRieng(uid, a) || giaApp(a);
+function apCauHinh(){
+  const B = BILL || {}, moi = {};
+  if(B.kmGiaHan && typeof B.kmGiaHan === "object" && !Array.isArray(B.kmGiaHan)){
+    for(const k in B.kmGiaHan){ const m = Math.floor(Number(k)), g = Math.floor(Number(B.kmGiaHan[k])); if(m >= 2 && m <= 24 && g >= 1 && g < m) moi[m] = g; }
+  } else Object.assign(moi, KM_MAC_DINH);
+  Object.keys(KM_GIA_HAN).forEach(x => delete KM_GIA_HAN[x]); Object.assign(KM_GIA_HAN, moi);
+}
+const ngayThu = () => { const n = Math.floor(num(BILL.ngayThu)); return n >= 1 && n <= 14 ? n : 14; };
+const hotline = () => { const h = String(BILL.hotline || "").replace(/[^0-9]/g,""); return /^0[0-9]{8,10}$/.test(h) ? h : HOT_GOC; };
+const hotTxt = () => { const h = hotline(); return h.length === 10 ? `${h.slice(0,4)} ${h.slice(4,7)} ${h.slice(7)}` : h; };
 /* Firestore chối mọi giá trị undefined — gọt sạch trước khi ghi */
 function sach(o){
   if(Array.isArray(o)) return o.map(sach);
@@ -697,6 +713,7 @@ async function napDuLieu(){
     REF = {}; (gf ? gf.docs : []).forEach(d => { REF[d.id] = d.data() || {}; });
     CFGDB = cf.exists() ? (cf.data()||{}) : {};
     BILL  = gg.exists() ? (gg.data()||{}) : {};
+    apCauHinh();
     donCu();
     DA_NAP = true; LUC_NAP = Date.now();
     datDongBo("ok");
@@ -714,7 +731,7 @@ function donCu(){
     if(REQ.some(r => r._uid === u && r._app === "sono_pos" && rCho(r))) return;
     REQ.push({ id:`${u}__sono_pos`, _cu:true, _uid:u, _app:"sono_pos", uid:u, app:"sono_pos",
       email: a.posReqEmail || a.email || "", months: num(a.posReqMonths) || 1,
-      amount: num(a.posReqAmount) || giaApp("sono_pos"), requestedAt: a.posRequestedAt || null,
+      amount: num(a.posReqAmount) || giaCua(u, "sono_pos"), requestedAt: a.posRequestedAt || null,
       status:"pending", noiDung: (a.posReqEmail || a.email || "") + " POS" });
   });
 }
@@ -806,14 +823,14 @@ function chiSo(){
   const homNay = PAY.filter(p => dToS(pNgay(p)) === hnay()).reduce((s,p) => s + pTien(p), 0);
   const tongThu = PAY.reduce((s,p) => s + pTien(p), 0);
   const licTra = LIC.filter(l => tt(l).ma === "tra");
-  const mrr = licTra.reduce((s,l) => s + giaApp(l.app) * suatCua(l), 0);
+  const mrr = licTra.reduce((s,l) => s + giaCua(l.uid, l.app) * suatCua(l), 0);
   const uidTra = new Set(licTra.map(l => l.uid));
   const uidTungTra = new Set(PAY.filter(p => pTien(p) > 0 && p.uid).map(p => p.uid));
   const conGiu = [...uidTungTra].filter(u => uidTra.has(u) || LIC.some(l => l.uid === u && tt(l).ma === "vv")).length;
   const giuChan = uidTungTra.size ? Math.round(conGiu / uidTungTra.size * 100) : 0;
   /* Dự báo 30 ngày: gói trả tiền sắp hết × giá × tỉ lệ giữ chân (ước tính) */
   const sap30 = licTra.filter(l => { const t = tt(l); return t.con != null && t.con <= 30; });
-  const duBao = Math.round(sap30.reduce((s,l) => s + giaApp(l.app) * suatCua(l), 0) * (giuChan/100));
+  const duBao = Math.round(sap30.reduce((s,l) => s + giaCua(l.uid, l.app) * suatCua(l), 0) * (giuChan/100));
   const moiThang = [...uidTungTra].filter(u => {
     const d = PAY.filter(p => p.uid === u && pTien(p) > 0).map(pNgay).filter(Boolean).sort((a,b) => a-b)[0];
     return d && thangCua(d) === th; }).length;
@@ -831,12 +848,12 @@ function donCho(){
     const m = num(r.months) || 1;
     const sl = laCN(app) ? Math.min(50, Math.max(1, Math.floor(num(r.qty)) || 1)) : 1;
     const khai = num(r.amount ?? r.soTien);
-    const donGia = biet ? giaApp(app) : 0;
+    const donGia = biet ? giaCua(uid, app) : 0;
     const chuan = giaGiaHan(donGia, m) * sl;
     const co = [];
     if(!biet) co.push({ lop:"xau", t:"Không rõ gói — chọn gói khi duyệt" });
     else if(donGia <= 0) co.push({ lop:"canh", t:"Gói này chưa đặt giá" });
-    else if(khai === chuan) co.push({ lop:"ok", t:"Khớp bảng giá" });
+    else if(khai === chuan) co.push({ lop:"ok", t: giaRieng(uid, app) ? "Khớp giá riêng của khách" : "Khớp bảng giá" });
     else if(khai < chuan) co.push({ lop:"canh", t:`Khai thiếu ${tienD(chuan - khai)}` });
     else co.push({ lop:"", t:`Khai dư ${tienD(khai - chuan)}` });
     const vua = PAY.filter(p => p.uid === uid && p.app === app && pTien(p) > 0 && pNgay(p) && (Date.now() - pNgay(p)) < 3*864e5)
@@ -1129,8 +1146,26 @@ async function luuBangGia(vals){
   const doi = [];
   CFG.apps.forEach(a => { const k = CFG.oGia[a][0], t = String(vals["g_"+a] ?? "").trim();
     if(t === ""){ m[k] = deleteField(); doi.push(`${a}:—`); } else { m[k] = soTienNhap(t); doi.push(`${a}:${soTienNhap(t)}`); } });
-  await setDoc(doc(fdb,"billing","info"), m, { merge:true });
+  /* ngày dùng thử & hotline: ô trống = về mặc định của app khách (14 ngày · 0977 823 979) */
+  m.ngayThu = vals.ngayThu ? vals.ngayThu : deleteField();
+  m.hotline = vals.hotline ? vals.hotline : deleteField();
+  doi.push(`thu:${vals.ngayThu || "mặc định"}`, `hotline:${vals.hotline || "mặc định"}`, `km:${JSON.stringify(vals.km)}`);
+  /* Bảng khuyến mãi phải THAY TRỌN (setDoc merge sẽ trộn bảng cũ với bảng mới) ⇒ update riêng trường này, cùng một lô */
+  const b = writeBatch(fdb), ref = doc(fdb,"billing","info");
+  b.set(ref, m, { merge:true });
+  b.update(ref, { kmGiaHan: vals.km });
+  await b.commit();
   await ghiChung("doi_gia", { ghi: doi.join(" ") });
+}
+async function luuGiaRieng(uid, vals){
+  const g = {}, doi = [];
+  CFG.apps.forEach(a => { const v = soTienNhap(vals[a]); if(v > 0){ g[a] = v; doi.push(`${tenApp(a)} ${tienD(v)}`); } });
+  /* thay TRỌN bảng giá riêng — không để sót giá cũ đã bỏ */
+  const b = writeBatch(fdb), ref = doc(fdb,"accounts",uid);
+  b.set(ref, { lichSu: arrayUnion(buoc("gia_rieng", { ghi: doi.join(" · ") || "bỏ hết giá riêng" })) }, { merge:true });
+  b.update(ref, { giaRieng: g });
+  await b.commit();
+  await ghiChung("gia_rieng", { ghi: doi.join(" · ") || "bỏ hết giá riêng" }, uid);
 }
 
 /* ─────────── GHI CHÚ NỘI BỘ (kho audit: khách không đọc được) ─────────── */
@@ -1656,7 +1691,7 @@ const CONG_TAC = [
   ["enforceCn","Thu phí chi nhánh thêm","Bật: cửa hàng thứ 2 trở đi phải có suất còn hạn mới đọc/ghi được. Quét chi nhánh & miễn trừ khách cũ trước khi bật.", v => v === true, true],
   ["enforceNganh","Thu phí gói ngành","Bật: hết hạn gói ngành là máy chủ chối két riêng của ngành đó (bàn, biến thể, phòng giờ, bậc giá). Hàng hoá, đơn, sổ nợ vẫn nguyên.", v => v === true, true],
   ["cnChung","Gói chi nhánh chung cho mọi ngành","Bật: 1 suất sono_cn dùng được ở cả 5 ngành. Tắt: mỗi ngành phải mua đúng gói chi nhánh của ngành đó.", v => v !== false, false],
-  ["choThu","Cho dùng thử miễn phí 14 ngày","Tắt khi có người lập nick hàng loạt ăn dùng thử. Người đang thử dở không bị ảnh hưởng.", v => v !== false, false],
+  ["choThu","Cho dùng thử miễn phí","Tắt khi có người lập nick hàng loạt ăn dùng thử. Người đang thử dở không bị ảnh hưởng. Số ngày thử đặt trong Bảng giá.", v => v !== false, false],
   ["choLog","Nhận nhật ký lỗi từ máy khách","Tắt khi bị bơm rác cho tốn tiền Firestore. Tắt chỉ mất log, app khách vẫn chạy.", v => v !== false, false],
   ["enforceRef","Khoá gắn người giới thiệu muộn","Bật: chỉ gắn người giới thiệu được lúc tạo tài khoản, chặn mở nick rồi gắn ngược để ăn hoa hồng.", v => v === true, true]
 ];
@@ -1665,11 +1700,11 @@ function veCaiDat(){
   $("#v-caidat").innerHTML = `
     ${mucHtml("Công tắc thu tiền")}
     <div class="nhom">${CONG_TAC.map(([k,t,d,doc_,anToan]) => { const on = doc_(CFGDB[k]);
-      return `<div class="cong"><div class="gi"><div class="t">${esc(t)}${anToan && !on ? " " + chip("đang hở","xau") : ""}</div><div class="d">${esc(d)}</div></div>
+      return `<div class="cong"><div class="gi"><div class="t">${esc(k === "choThu" ? `${t} ${ngayThu()} ngày` : t)}${anToan && !on ? " " + chip("đang hở","xau") : ""}</div><div class="d">${esc(d)}</div></div>
         <button class="gat ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(t)}" data-act="cong-tac" data-k="${k}"></button></div>`; }).join("")}</div>
     ${mucHtml("Bán hàng & chăm khách")}
     <div class="nhom">
-      ${dongHtml({ the:"button", act:"mo-bang-gia", ic:"tien", t:"Bảng giá & tài khoản nhận tiền", d: esc(bank || "Chưa cấu hình tài khoản nhận tiền") + ` · Sổ Nợ ${tienD(giaApp("sono"))}/tháng`, mui:true })}
+      ${dongHtml({ the:"button", act:"mo-bang-gia", ic:"tien", t:"Bảng giá · khuyến mãi · dùng thử · hotline", d: esc(bank || "Chưa cấu hình tài khoản nhận tiền") + ` · Sổ Nợ ${tienD(giaApp("sono"))}/tháng · thử ${ngayThu()} ngày · ${esc(Object.keys(KM_GIA_HAN).length ? Object.entries(KM_GIA_HAN).map(([m,g]) => `mua ${m} tặng ${g}`).join(", ") : "không khuyến mãi")} · ☎ ${esc(hotTxt())}`, mui:true })}
       ${dongHtml({ the:"button", act:"mo-ban-tin", ic:"tin", t:"Thông báo toàn hệ thống", d:"Gửi tin, bật thanh cập nhật cho cả nghìn máy khách trong một lần bấm", mui:true })}
     </div>
     ${mucHtml("Công cụ")}
@@ -1778,10 +1813,13 @@ async function napShopHoSo(t){
 }
 function hoGiayPhep(S, k){
   const coKhac = k.lic.some(l => ["cafe","tro","xe","hd"].includes(l.app));
-  return NHOM_APP.filter((g,i) => i < 3 || coKhac || S.hienKhac).map(g => `
+  const gr = CFG.apps.filter(a => giaRieng(S.uid, a));
+  return `<div class="nhom">` + dongHtml({ the:"button", act:"mo-gia-rieng", data:`data-uid="${esc(S.uid)}"`, ic:"tien", lop: gr.length ? "dong-c" : "",
+      t:"Giá riêng cho khách này", d: gr.length ? esc(gr.map(a => `${tenApp(a)} ${tienD(giaRieng(S.uid, a))}`).join(" · ")) : "Chưa đặt — đang dùng bảng giá chung", mui:true }) + `</div>`
+    + NHOM_APP.filter((g,i) => i < 3 || coKhac || S.hienKhac).map(g => `
     ${mucHtml(g.ten)}<div class="nhom">${g.apps.map(a => {
       const l = licCua(S.uid, a), x = tt(l);
-      const d = !l ? `Chưa cấp · ${tienD(giaApp(a))}/tháng`
+      const d = !l ? `Chưa cấp · ${tienD(giaCua(S.uid, a))}/tháng${giaRieng(S.uid, a) ? " (giá riêng)" : ""}`
         : x.ma === "vv" ? "Không thời hạn" + (x.lai ? " · còn ghi ngày " + ngayVN(l.paidUntil) : "")
         : x.han ? `Hạn ${ngayVN(x.han)}${l.trial ? " · dùng thử" : ""}` : (x.ma === "sai" ? `Hạn lưu sai kiểu: ${esc(String(l.paidUntil))}` : "Chưa có ngày hết hạn");
       return dongHtml({ the:"button", act:"cap", data:`data-uid="${esc(S.uid)}" data-app="${a}"`,
@@ -1958,7 +1996,7 @@ function tinhCapHan(S){
   const l = licCua(S.uid, S.app) || {};
   const hanCu = ngay(l.paidUntil);
   const goc = (hanCu && hanCu > new Date() && l.vinhVien !== true) ? hanCu : new Date();
-  const chuan = S.app ? giaGiaHan(giaApp(S.app), S.thang) * (laCN(S.app) ? S.qty : 1) : 0;
+  const chuan = S.app ? giaGiaHan(giaCua(S.uid, S.app), S.thang) * (laCN(S.app) ? S.qty : 1) : 0;
   if(S.tien == null || !S.tienTay) S.tien = chuan;
   if(!S.hanTay) S.han = dToS(themThang(goc, S.thang));
   return { l, hanCu, goc, chuan, noi: goc !== hanCu ? "tính từ hôm nay" : "cộng nối tiếp hạn cũ" };
@@ -1972,7 +2010,7 @@ function veCapHan(t){
     <div class="the">
       <div class="kv"><span>Khách</span><span>${esc((S.r && S.r.email) || emailCua(S.uid) || S.uid)}</span></div>
       <div class="kv"><span>Gói</span><span>${S.app ? esc(tenApp(S.app)) : `<b style="color:var(--do)">chưa chọn</b>`}</span></div>
-      ${S.app ? `<div class="kv"><span>Giá niêm yết</span><span class="so">${tienD(giaApp(S.app))}/tháng${laCN(S.app) ? " mỗi suất" : ""}</span></div>
+      ${S.app ? `<div class="kv"><span>${giaRieng(S.uid, S.app) ? "Giá riêng của khách" : "Giá niêm yết"}</span><span class="so">${tienD(giaCua(S.uid, S.app))}/tháng${laCN(S.app) ? " mỗi suất" : ""}${giaRieng(S.uid, S.app) ? ` <span class="nhat">(chung ${tienD(giaApp(S.app))})</span>` : ""}</span></div>
       <div class="kv"><span>Hiện tại</span><span>${chip(x.ten, x.lop)}${c.hanCu ? " · hạn " + ngayVN(c.hanCu) : ""}</span></div>` : ""}
       ${S.r && S.r.noiDung ? `<div class="kv"><span>Nội dung CK</span><span>${esc(S.r.noiDung)}</span></div>` : ""}
     </div>
@@ -2045,22 +2083,24 @@ function moLoi(g){
 }
 
 /* ══════════════════════════ NHẮC GIA HẠN / MỜI MUA / MỜI QUAY LẠI ══════════════════════════ */
-const MAU_NHAC = {
-  sap:"📅 {goi} của bạn hết hạn ngày {han} (còn {con} ngày). Gia hạn ngay trong app để không bị gián đoạn — chỉ {gia}/tháng, mua gói năm được tặng 2 tháng. Cần hỗ trợ gọi {hotline}.",
-  thu:"🎁 Bạn còn {con} ngày dùng thử {goi}. Mua ngay trong app để giữ nguyên toàn bộ dữ liệu — chỉ {gia}/tháng, gói năm tặng 2 tháng. Hỗ trợ: {hotline}.",
-  rot:"👋 {goi} của bạn đã hết hạn ngày {han}. Dữ liệu vẫn còn nguyên — gia hạn là dùng lại ngay, gói năm tặng 2 tháng. Hỗ trợ: {hotline}."
-};
+/* Mẫu tin dựng theo khuyến mãi ĐANG đặt — đổi KM trong Bảng giá là mẫu tin đổi theo, không hứa sai */
+function mauNhac(loai){
+  const g12 = thangTang(12), km = g12 ? `, mua gói năm được tặng ${g12} tháng` : "";
+  return { sap:`📅 {goi} của bạn hết hạn ngày {han} (còn {con} ngày). Gia hạn ngay trong app để không bị gián đoạn — chỉ {gia}/tháng${km}. Cần hỗ trợ gọi {hotline}.`,
+           thu:`🎁 Bạn còn {con} ngày dùng thử {goi}. Mua ngay trong app để giữ nguyên toàn bộ dữ liệu — chỉ {gia}/tháng${km}. Hỗ trợ: {hotline}.`,
+           rot:`👋 {goi} của bạn đã hết hạn ngày {han}. Dữ liệu vẫn còn nguyên — gia hạn là dùng lại ngay${km}. Hỗ trợ: {hotline}.` }[loai] || "";
+}
 const TIEU_DE_NHAC = { sap:"Nhắc khách sắp hết hạn", thu:"Mời khách dùng thử mua gói", rot:"Mời khách rớt hạn quay lại" };
 function dienMau(mau, x){
   const o = x.ds[0];
   const goi = [...new Set(x.ds.map(d => tenApp(d.l.app)))].join(", ");
   return String(mau).split("{goi}").join(goi).split("{han}").join(ngayVN(x.han)).split("{con}").join(String(Math.abs(num(x.con))))
-    .split("{gia}").join(tienD(giaApp(o.l.app) * suatCua(o.l))).split("{hotline}").join(CFG.hotline).slice(0,500);
+    .split("{gia}").join(tienD(giaCua(x.uid, o.l.app) * suatCua(o.l))).split("{hotline}").join(hotTxt()).slice(0,500);
 }
 function moNhac(loai){
   const ds = nhomCham(loai);
   const t = moTam({ tieuDe: TIEU_DE_NHAC[loai] || "Nhắc khách", lamMoi: () => veNhac(t) });
-  t.S = { loai, mau: MAU_NHAC[loai], muc:"info", chon: new Set(ds.filter(x => !x.nhac && x.nhan).map(x => x.uid)) };
+  t.S = { loai, mau: mauNhac(loai), muc:"info", chon: new Set(ds.filter(x => !x.nhac && x.nhan).map(x => x.uid)) };
   veNhac(t);
 }
 function veNhac(t){
@@ -2159,8 +2199,8 @@ function tinhLaiQuetCN(){
   const tat = q.goc.map(g => hangCN(g.uid, g.ids));
   let tienLau = 0;
   tat.forEach(r => {
-    r.lau.forEach(x => { if(!x.cnOk && x.maGoi) tienLau += giaApp(x.maGoi); });
-    new Set(r.L.filter(x => x.lau && x.licNg && !x.ngOk).map(x => x.licNg)).forEach(a => { tienLau += giaApp(a); });
+    r.lau.forEach(x => { if(!x.cnOk && x.maGoi) tienLau += giaCua(r.uid, x.maGoi); });
+    new Set(r.L.filter(x => x.lau && x.licNg && !x.ngOk).map(x => x.licNg)).forEach(a => { tienLau += giaCua(r.uid, a); });
   });
   q.rows = tat.filter(r => r.them || r.lau.length || r.chan.length || r.L.some(x => x.licNg))
               .sort((a,b) => (b.lau.length + b.chan.length) - (a.lau.length + a.chan.length));
@@ -2556,6 +2596,12 @@ function moBangGia(){
     <label class="o-nhap"><span>Số tài khoản</span><input data-g="account" inputmode="numeric" value="${v(BILL.account || BILL.acc)}"></label>
     <label class="o-nhap"><span>Chủ tài khoản (viết không dấu)</span><input data-g="accName" value="${v(BILL.accName)}"></label>
     <div id="qrThu"></div>
+    ${mucHtml("Dùng thử · khuyến mãi · hotline")}
+    <p class="nho" style="margin-top:0">Mọi app khách (Sổ Nợ, Bán hàng, chi nhánh, gói ngành, Đơn QR) đọc chung — đổi ở đây là đổi ở mọi máy lần mở kế tiếp.</p>
+    <div class="hai"><label class="o-nhap"><span>Ngày dùng thử (1–14)</span><input data-g="ngayThu" inputmode="numeric" value="${ngayThu()}"></label>
+      <label class="o-nhap"><span>Hotline hỗ trợ</span><input data-g="hotline" inputmode="tel" value="${v(hotTxt())}"></label></div>
+    <div class="hai" style="grid-template-columns:1fr 1fr 1fr">${[3,6,12].map(m => `<label class="o-nhap"><span>Mua ${m} tháng tặng</span><input data-g="km_${m}" inputmode="numeric" value="${thangTang(m) || ""}" placeholder="0"></label>`).join("")}</div>
+    <p class="nho" style="margin-top:0">Số tháng TẶNG thêm (0 hoặc để trống = không tặng). Ví dụ mua 12 tặng 2 = khách trả tiền 10 tháng, được dùng 12.</p>
     ${mucHtml("Giá mỗi tháng")}
     <label class="o-nhap"><span>Giá chung (dùng khi gói không có giá riêng)</span><input data-g="pricePerMonth" inputmode="numeric" value="${num(BILL.pricePerMonth) ? tien(BILL.pricePerMonth) : ""}"></label>
     ${NHOM_APP.map(g => `<p class="nho" style="margin:14px 2px 6px;font-weight:600">${esc(g.ten)}</p>` + g.apps.map(a => { const k = CFG.oGia[a][0];
@@ -2570,6 +2616,17 @@ function veQrThu(t){
   box.innerHTML = bin && acc ? `<div class="the" style="display:flex;gap:12px;align-items:center;margin-bottom:6px">
     <img alt="Mã QR thử" style="width:96px;height:96px;border-radius:10px;background:#fff;flex:none" src="https://img.vietqr.io/image/${encodeURIComponent(bin)}-${encodeURIComponent(acc)}-compact2.png?amount=${giaApp("sono")}&addInfo=${encodeURIComponent("thu ma QR")}&accountName=${encodeURIComponent(g("accName"))}" onerror="this.style.display='none'">
     <div class="nho">Mã QR thử với giá Sổ Nợ 1 tháng. Quét bằng app ngân hàng xem có ra đúng tên chủ tài khoản không trước khi lưu.</div></div>` : "";
+}
+
+/* ══════════════════════════ GIÁ RIÊNG TỪNG KHÁCH ══════════════════════════ */
+function moGiaRieng(uid){
+  const t = moTam({ tieuDe:"Giá riêng cho khách này" });
+  t.S = { uid };
+  t.than.innerHTML = `<div class="bao ngoc">Dùng cho khách quen, khách lấy nhiều chi nhánh, khách giới thiệu nhiều người… App của <b>đúng khách này</b> hiện giá riêng ở màn gia hạn / mua gói; khi duyệt đơn bảng này tự so với giá riêng. Để trống = giá chung.</div>
+    <p class="nho">${esc(emailCua(uid) || uid)}</p>`
+    + NHOM_APP.map(nh => `<p class="nho" style="margin:14px 2px 6px;font-weight:600">${esc(nh.ten)}</p>` + nh.apps.map(a =>
+      `<label class="o-nhap"><span>${esc(tenApp(a))}${laCN(a) ? " (mỗi suất)" : ""}</span><input data-gr="${a}" inputmode="numeric" value="${giaRieng(uid, a) ? tien(giaRieng(uid, a)) : ""}" placeholder="giá chung ${tien(giaApp(a))}"></label>`).join("")).join("");
+  t.chan.innerHTML = `<button class="nut" data-act="gr-xoa">Bỏ hết giá riêng</button><button class="nut chinh" data-act="gr-luu">Lưu giá riêng</button>`;
 }
 
 /* ══════════════════════════ ĐỔI MẬT KHẨU QUẢN TRỊ ══════════════════════════ */
@@ -2740,6 +2797,17 @@ const ACT = {
     await chay(b, async () => { const kq = await thuong(uid);
       bao(kq === "ok" ? "Đã cộng thưởng" : kq === "already" ? "Ca này đã thưởng từ trước — không cộng thêm" : "Chưa cộng được: " + kq, kq !== "ok" && kq !== "already");
       await taiLai(true); }); },
+  "mo-gia-rieng": b => moGiaRieng(b.dataset.uid),
+  "gr-luu": async b => { const t = tamCua(b), uid = t.S.uid, vals = {};
+    $$("[data-gr]", t.than).forEach(i => { vals[i.dataset.gr] = i.value; });
+    const co = CFG.apps.filter(a => soTienNhap(vals[a]) > 0);
+    const am = CFG.apps.filter(a => String(vals[a] || "").trim() && soTienNhap(vals[a]) <= 0);
+    if(am.length) return bao("Giá phải lớn hơn 0 (muốn miễn phí thì đặt vĩnh viễn): " + am.map(tenApp).join(", "), 1);
+    if(!(await hoi({ tieuDe:"Lưu giá riêng", noiDung: co.length ? `${emailCua(uid) || uid} sẽ thấy giá riêng:\n${co.map(a => `• ${tenApp(a)}: ${tienD(soTienNhap(vals[a]))}/tháng (chung ${tienD(giaApp(a))})`).join("\n")}\n\nCác gói khác giữ giá chung.` : "Không có ô nào có giá — sẽ bỏ hết giá riêng, khách về giá chung.", nutOk:"Lưu" }))) return;
+    await chay(b, async () => { await luuGiaRieng(uid, vals); dongTam(t); bao("Đã lưu giá riêng — app khách nhận ở lần mở kế tiếp"); await taiLai(true); }); },
+  "gr-xoa": async b => { const t = tamCua(b), uid = t.S.uid;
+    if(!(await hoi({ tieuDe:"Bỏ hết giá riêng", noiDung:`${emailCua(uid) || uid} sẽ về bảng giá chung ở mọi gói.`, nutOk:"Bỏ hết", nguy:true }))) return;
+    await chay(b, async () => { await luuGiaRieng(uid, {}); dongTam(t); bao("Đã bỏ giá riêng"); await taiLai(true); }); },
   "tai-du-lieu": b => taiDuLieuKhach(b.dataset.uid),
   "nap-du-lieu": b => chonFileNap(b.dataset.uid),
   "nap-ok": b => thucHienNap(tamCua(b), b),
@@ -2807,7 +2875,16 @@ const ACT = {
     if(vals.bin && !/^\d{6}$/.test(vals.bin)) return bao("Mã BIN phải đúng 6 chữ số (VietinBank: 970415)", 1);
     if(vals.account && !/^[0-9A-Za-z]{4,25}$/.test(vals.account)) return bao("Số tài khoản không hợp lệ", 1);
     CFG.apps.forEach(a => { vals["g_" + a] = g("g_" + a); });
-    if(!(await hoi({ tieuDe:"Lưu bảng giá", noiDung:"Mọi app khách đọc giá & tài khoản nhận tiền mới ngay lần mở kế tiếp.", nutOk:"Lưu" }))) return;
+    const nt = g("ngayThu").replace(/[^0-9]/g,""); vals.ngayThu = nt ? Number(nt) : 0;
+    if(nt && !(vals.ngayThu >= 1 && vals.ngayThu <= 14)) return bao("Số ngày dùng thử phải từ 1 đến 14 (máy chủ chặn trên 16 ngày)", 1);
+    const hl = g("hotline").replace(/[^0-9]/g,""); vals.hotline = hl;
+    if(hl && !/^0[0-9]{8,10}$/.test(hl)) return bao("Hotline phải là số điện thoại Việt Nam (bắt đầu bằng 0, 9–11 số)", 1);
+    vals.km = {};
+    for(const m of [3,6,12]){ const raw = g("km_" + m).replace(/[^0-9]/g,""), q = raw ? Number(raw) : 0;
+      if(q < 0 || q >= m) return bao(`Mua ${m} tháng chỉ tặng được tối đa ${m - 1} tháng`, 1);
+      if(q > 0) vals.km[String(m)] = q; }
+    const kmTxt = Object.keys(vals.km).length ? Object.entries(vals.km).map(([m,q]) => `mua ${m} tặng ${q}`).join(", ") : "KHÔNG khuyến mãi";
+    if(!(await hoi({ tieuDe:"Lưu bảng giá", noiDung:`Dùng thử: ${vals.ngayThu || 14} ngày\nKhuyến mãi: ${kmTxt}\nHotline: ${vals.hotline || HOT_GOC}\n\nMọi app khách đọc giá, khuyến mãi, tài khoản nhận tiền mới ngay lần mở kế tiếp.`, nutOk:"Lưu" }))) return;
     await chay(b, async () => { await luuBangGia(vals); dongTam(t); bao("Đã lưu bảng giá"); await taiLai(true); }); },
   "mk-admin-ok": async b => { const t = tamCua(b), g = k => String(($(`[data-in="${k}"]`, t.than) || {}).value || "");
     const cu = g("mkCu"), moi = g("mkMoi"), moi2 = g("mkMoi2");
