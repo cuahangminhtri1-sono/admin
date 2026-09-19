@@ -449,17 +449,20 @@ const CFG = {
   apps:["sono","sono_pos","sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg",
         "sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr","cafe","tro","xe","hd"],
   /* Tên ô giá và giá mặc định — chép đúng priceFor() của các app khách.
-     Sai tên ô là app khách đọc ra 0đ, khách quét QR ra số tiền 0. */
+     Sai tên ô là app khách đọc ra 0đ, khách quét QR ra số tiền 0.
+     [3.1] 4 gói ngành + Đơn QR: app khách CHỈ đọc đúng ô của gói, KHÔNG lùi về giá Sổ Nợ.
+     Ô trống = CHƯA BÁN (khách thấy "liên hệ giá", không có mã QR). Bản 3.0 ghi lùi về
+     priceSono/10.000 nên bảng quản trị tưởng đang bán 10.000 trong khi khách không mua được. */
   oGia:{ sono:["priceSono","pricePerMonth",10000], sono_pos:["pricePos","posPricePerMonth",0],
          sono_cn:["priceCn","priceCnPerMonth",10000], sono_cn_fnb:["priceCnFnb","priceCn",10000],
          sono_cn_fs:["priceCnFs","priceCn",10000], sono_cn_rm:["priceCnRm","priceCn",10000],
-         sono_cn_kg:["priceCnKg","priceCn",10000], sono_fnb:["priceFnb","priceSono",10000],
-         sono_fs:["priceFs","priceSono",10000], sono_rm:["priceRm","priceSono",10000],
-         sono_kg:["priceKg","priceSono",10000], sono_qr:["priceQr","priceSono",10000],
+         sono_cn_kg:["priceCnKg","priceCn",10000], sono_fnb:["priceFnb","",0],
+         sono_fs:["priceFs","",0], sono_rm:["priceRm","",0],
+         sono_kg:["priceKg","",0], sono_qr:["priceQr","",0],
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.0.0"
+  ver:"3.1.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -528,7 +531,7 @@ const giaGiaHan = (unit, m) => Math.round((Number(unit)||0) * thangTinhTien(m));
 const laCN = a => String(a||"").indexOf("sono_cn") === 0;
 const tenApp = a => CFG.ten[a] || a || "?";
 function giaApp(a){ const o = CFG.oGia[a]; if(!o) return 0;
-  return num(BILL[o[0]]) || num(BILL[o[1]]) || o[2]; }
+  return num(BILL[o[0]]) || (o[1] ? num(BILL[o[1]]) : 0) || o[2]; }
 /* Giá THẬT của 1 khách: giá riêng (accounts/{uid}.giaRieng) nếu có, không thì giá chung — y như priceFor() app khách */
 function giaRieng(uid, a){ const g = (ACC[uid] || {}).giaRieng; const v = (g && typeof g === "object" && !Array.isArray(g)) ? num(g[a]) : 0; return v > 0 ? Math.round(v) : 0; }
 const giaCua = (uid, a) => giaRieng(uid, a) || giaApp(a);
@@ -845,9 +848,12 @@ function donCho(){
   return REQ.filter(rCho).map(r => {
     const uid = r._uid, app = r._app;
     const biet = CFG.apps.includes(app);
-    const m = num(r.months) || 1;
-    const sl = laCN(app) ? Math.min(50, Math.max(1, Math.floor(num(r.qty)) || 1)) : 1;
-    const khai = num(r.amount ?? r.soTien);
+    /* [3.1] ck = lúc khách bấm "Tôi đã chuyển khoản" + đúng số tháng/suất/tiền đã chọn khi chuyển.
+       Đơn KHÔNG có ck chỉ nghĩa là khách đã MỞ màn thanh toán — chưa chắc đã trả tiền. */
+    const ck = (r.ck && typeof r.ck === "object") ? r.ck : null;
+    const m = num((ck && ck.thang) || r.months) || 1;
+    const sl = laCN(app) ? Math.min(50, Math.max(1, Math.floor(num((ck && ck.sl) || r.qty)) || 1)) : 1;
+    const khai = num(ck && ck.tien != null ? ck.tien : (r.amount ?? r.soTien));
     const donGia = biet ? giaCua(uid, app) : 0;
     const chuan = giaGiaHan(donGia, m) * sl;
     const co = [];
@@ -864,9 +870,11 @@ function donCho(){
     if(m >= 12 && rf && rf.referredByUid && rf.appJoined === app) co.push({ lop:"ngoc", t:"Duyệt xong tự thưởng 1 tháng cho người giới thiệu" });
     const d = rNgay(r), cho = d ? -soNgay(d) : null;
     if(cho != null && cho >= 2) co.push({ lop:"canh", t:`Đã chờ ${cho} ngày` });
+    if(ck) co.unshift({ lop:"ok", t:`💸 Khách báo ĐÃ chuyển khoản${ngay(ck.luc) ? " " + lauRoi(ck.luc) : ""}` });
+    else co.push({ lop:"", t:"Khách chưa bấm “Đã chuyển khoản” — soát sao kê trước khi duyệt" });
     return { r, uid, app, biet, m, sl, khai, chuan, co, d, lech: biet && donGia > 0 && khai !== chuan,
-             nguy: !!vua || !biet, email: r.email || emailCua(uid) };
-  }).sort((a,b) => (b.d || 0) - (a.d || 0));
+             nguy: !!vua || !biet, email: r.email || emailCua(uid), daBao: !!ck };
+  }).sort((a,b) => (b.daBao - a.daBao) || ((b.d || 0) - (a.d || 0)));
 }
 
 /* ─────────── NHÓM KHÁCH CẦN CHĂM ─────────── */
@@ -899,6 +907,12 @@ function radar(){
   if(sw("enforceCn") !== true) them("nang","enforceCn","Thu phí chi nhánh đang tắt","Cửa hàng thứ hai trở đi đang chạy miễn phí. Quét chi nhánh, miễn trừ khách cũ rồi bật.",[{t:"Công tắc enforceCn = tắt"}],"quet-cn");
   if(sw("enforceNganh") !== true) them("nang","enforceNganh","Thu phí gói ngành đang tắt","Bàn F&B, biến thể thời trang, phòng giờ, bậc giá đang dùng miễn phí khi hết hạn gói ngành.",[{t:"Công tắc enforceNganh = tắt"}],"quet-cn");
   if(sw("cnChung") !== false) them("vua","cnChung","Gói chi nhánh chung đang mở cho mọi ngành","1 suất sono_cn dùng được ở cả 5 ngành. Muốn thu đủ từng ngành thì tắt công tắc này (sau khi quét).",[{t:"Công tắc cnChung = bật"}],"cong-tac");
+
+  /* [3.1] Gói CHƯA ĐẶT GIÁ: app khách hiện "liên hệ giá" — không mã QR, không ghi đơn ⇒ mất doanh thu âm thầm */
+  const chuaBan = CFG.apps.filter(a => a.indexOf("sono") === 0 && giaApp(a) <= 0);
+  them(chuaBan.includes("sono_pos") ? "nang" : "vua", "chuaGia", "Gói chưa đặt giá — khách không mua được",
+    "App khách hiện “liên hệ giá”: không có mã QR, không ghi đơn ⇒ khách muốn trả tiền cũng không trả được. Đặt giá ở Cài đặt → Bảng giá (cố ý chưa bán gói nào thì bỏ qua gói đó).",
+    chuaBan.map(a => ({ t: tenApp(a), d: `ô ${CFG.oGia[a][0]} đang trống` })), "bang-gia");
 
   const tn = LIC.filter(l => ["trong","sai"].includes(tt(l).ma));
   them("nang","trongHan","Giấy phép thiếu hạn — khách đang bị chặn oan",
@@ -1044,27 +1058,55 @@ async function ghiChung(viec, ct, uid, app){
 const dongDonGhi = (b, r) => {
   if(!r) return;
   if(r._cu) b.set(doc(fdb,"accounts",r._uid), { posRequested:false }, { merge:true });
-  else b.set(doc(fdb,"renewalRequests",r.id), { status:"done", ngStatus:"done", handledAt:new Date() }, { merge:true });
+  else b.set(doc(fdb,"renewalRequests",r.id), { status:"done", ngStatus:"done", handledAt:new Date(), ck:deleteField() }, { merge:true });
 };
 
-/* ĐẶT HẠN & GHI SỔ — một lô ghi duy nhất: giấy phép + dòng thu + đóng đơn (cả 2 cờ) */
-async function capHan({ uid, app, thang, soTien, qty, hanMoi, ghiChu, r }){
+/* Dấu vân tay giấy phép (hạn · vĩnh viễn · khoá · số suất). Lúc ghi mà khác lúc mở màn duyệt
+   ⇒ có ai đó (bảng 👑 trong app khách, thưởng giới thiệu, máy khác) vừa sửa giấy phép này. */
+const vanTayLic = l => { l = l || {}; const h = hanRules(l.paidUntil);
+  return [h == null ? "" : h, l.vinhVien === true ? 1 : 0, l.active === false ? 0 : 1, Math.floor(num(l.qty))].join("|"); };
+/* Đoán số tháng từ số tiền (tiền về không kèm đơn): khớp đúng bảng giá + khuyến mãi của khách */
+function doanThang(uid, app, tien, qty){
+  const g = giaCua(uid, app), q = laCN(app) ? Math.max(1, Math.floor(num(qty)) || 1) : 1;
+  if(!(g > 0) || !(tien > 0)) return 0;
+  for(let m = 1; m <= 24; m++) if(giaGiaHan(g, m) * q === tien) return m;
+  return 0;
+}
+/* ĐẶT HẠN & GHI SỔ — [3.1] MỘT TRANSACTION: đọc lại đơn + giấy phép NGAY LÚC GHI.
+   • Đơn đã duyệt/ẩn ở nơi khác (bảng 👑 trong app khách, máy khác, bấm 2 lần) ⇒ DỪNG, không cộng hạn 2 lần.
+   • Giấy phép đổi sau lúc mở màn này ⇒ DỪNG, bắt tính lại (không lấy hạn cũ đã lỗi thời làm mốc).
+   • Khoản tiền lấy từ sao kê có vân tay ⇒ dòng thu mang mã payments/sk_<vân tay>: một khoản tiền
+     chỉ duyệt được ĐÚNG MỘT LẦN, kể cả khi mở 2 máy cùng lúc.                                     */
+async function capHan({ uid, app, thang, soTien, qty, hanMoi, ghiChu, r, vanTay, saoKe }){
   if(!uid || !CFG.apps.includes(app)) throw new Error("Chưa chọn đúng gói");
   if(!(hanMoi instanceof Date) || isNaN(hanMoi)) throw new Error("Ngày hết hạn không hợp lệ");
-  const l = licCua(uid, app) || {};
-  const hanCu = ngay(l.paidUntil) || null;
   const cn = laCN(app), q = cn ? Math.min(50, Math.max(1, Math.floor(num(qty)) || 1)) : 0;
-  const b = writeBatch(fdb);
-  b.set(doc(fdb,"accounts",uid,"lic",app), sach({ app, paidUntil:hanMoi, vinhVien:false, active:true, trial:false, trialUsed:true,
-      capNhat:new Date(), updatedAt:new Date(), ...(cn ? { qty:q } : {}),
-      lichSu: arrayUnion(buoc("gia_han", { tien:soTien, thang, hanCu, hanMoi, ghi:ghiChu||"", ...(cn ? { qty:q } : {}) })) }), { merge:true });
-  if(soTien !== 0){
-    b.set(doc(collection(fdb,"payments")), sach({ uid, app, months:thang, amount:soTien, at:new Date(), src: r ? "duyet" : "tay",
-      ...(cn ? { qty:q } : {}), email:(r && r.email) || emailCua(uid) || "", hanCu, hanMoi,
-      ghiChu: ghiChu || "", nguoiDuyet: toiLa() }));
-  }
-  dongDonGhi(b, r);
-  await b.commit();
+  const licRef = doc(fdb,"accounts",uid,"lic",app);
+  const reqRef = (r && !r._cu) ? doc(fdb,"renewalRequests",r.id) : null;
+  const ckMa = (saoKe && saoKe.ma) ? String(saoKe.ma) : "";
+  const payRef = soTien !== 0 ? ((ckMa && !saoKe.yeu) ? doc(fdb,"payments","sk_" + ckMa) : doc(collection(fdb,"payments"))) : null;
+  await runTransaction(fdb, async tx => {
+    const ls = await tx.get(licRef);
+    const rs = reqRef ? await tx.get(reqRef) : null;
+    const ps = (payRef && ckMa && !saoKe.yeu) ? await tx.get(payRef) : null;
+    if(ps && ps.exists()) throw new Error("Khoản tiền này ĐÃ dùng để duyệt rồi — không duyệt lần 2");
+    if(reqRef){
+      if(!rs.exists()) throw new Error("Đơn không còn trên máy chủ — tải lại số liệu");
+      if(!rCho(rs.data() || {})) throw new Error("Đơn này VỪA được duyệt hoặc ẩn ở nơi khác — không duyệt lần 2");
+    }
+    const L = ls.exists() ? (ls.data() || {}) : {};
+    if(vanTay != null && vanTayLic(L) !== vanTay)
+      throw new Error("Giấy phép của khách vừa thay đổi sau khi bạn mở màn này — đóng lại, bấm Tải lại rồi duyệt lại để tính đúng hạn");
+    const hanCu = ngay(L.paidUntil) || null;
+    tx.set(licRef, sach({ app, paidUntil:hanMoi, vinhVien:false, active:true, trial:false, trialUsed:true,
+        capNhat:new Date(), updatedAt:new Date(), ...(cn ? { qty:q } : {}),
+        lichSu: arrayUnion(buoc("gia_han", { tien:soTien, thang, hanCu, hanMoi, ghi:ghiChu||"", ...(cn ? { qty:q, qtyCu:Math.floor(num(L.qty)) } : {}) })) }), { merge:true });
+    if(payRef) tx.set(payRef, sach({ uid, app, months:thang, amount:soTien, at:new Date(), src: saoKe ? "sao_ke" : r ? "duyet" : "tay",
+        ...(cn ? { qty:q } : {}), email:(r && r.email) || emailCua(uid) || "", hanCu, hanMoi,
+        ghiChu: ghiChu || "", nguoiDuyet: toiLa(), ...(ckMa ? { ckMa, saoKe:String(saoKe.text || "").slice(0,300) } : {}) }));
+    if(reqRef) tx.set(reqRef, { status:"done", ngStatus:"done", handledAt:new Date(), ck:deleteField() }, { merge:true });
+    else if(r && r._cu) tx.set(doc(fdb,"accounts",r._uid), { posRequested:false }, { merge:true });
+  });
   if(thang >= GOI_TOI_THIEU) await thuongNeuDu(uid, app, thang);
 }
 async function datVinhVien(uid, app, r, qty){
@@ -1142,7 +1184,10 @@ async function doiCongTac(k, moi){
 }
 async function luuBangGia(vals){
   /* ô trống = xoá giá riêng (về giá chung/mặc định) · gõ 0 = miễn phí thật */
-  const m = { bin:vals.bin, bankName:vals.bankName, account:vals.account, accName:vals.accName, pricePerMonth: vals.pricePerMonth };
+  /* [3.1] Giá chung chỉ là giá DỰ PHÒNG cho app chưa có ô giá riêng. Bản cũ để trống là ghi 0 ⇒ app nào
+     đọc giá chung mà không chặn số 0 sẽ ra mã QR 0đ. Nay để trống / gõ 0 = XOÁ ô, mỗi app về giá mặc định. */
+  const m = { bin:vals.bin, bankName:vals.bankName, account:vals.account, accName:vals.accName,
+              pricePerMonth: vals.pricePerMonth > 0 ? vals.pricePerMonth : deleteField() };
   const doi = [];
   CFG.apps.forEach(a => { const k = CFG.oGia[a][0], t = String(vals["g_"+a] ?? "").trim();
     if(t === ""){ m[k] = deleteField(); doi.push(`${a}:—`); } else { m[k] = soTienNhap(t); doi.push(`${a}:${soTienNhap(t)}`); } });
@@ -1481,10 +1526,11 @@ const mucHtml = (t, dem, lk) => `<div class="muc"><h2>${esc(t)}</h2>${dem != nul
 /* ─────────── 1. HÔM NAY ─────────── */
 function viecCanLam(){
   const v = [], dc = donCho(), sap = nhomCham("sap"), thu = nhomCham("thu"), rot = nhomCham("rot");
-  if(dc.length){ const nguy = dc.filter(x => x.nguy).length, lech = dc.filter(x => x.lech).length;
+  if(dc.length){ const nguy = dc.filter(x => x.nguy).length, lech = dc.filter(x => x.lech).length, daBao = dc.filter(x => x.daBao).length;
     v.push({ ic:"don", lop: nguy ? "do-c" : "", t:`${dc.length} đơn chờ duyệt`,
-      d: nguy ? `${nguy} đơn cần soát kỹ (có thể duyệt trùng)` : lech ? `${lech} đơn khai lệch bảng giá` : "Khách đã chuyển khoản, chờ bạn mở hạn",
-      ph:`<button class="nut nho chinh" data-act="cuon" data-den="dsDon">Xem</button>` }); }
+      d: nguy ? `${nguy} đơn cần soát kỹ (có thể duyệt trùng)` : lech ? `${lech} đơn khai lệch bảng giá`
+        : `${daBao ? daBao + " khách đã báo chuyển khoản · " : ""}đối soát sao kê để chắc tiền đã về rồi mới mở hạn`,
+      ph:`<button class="nut nho chinh" data-act="cuon" data-den="dsDon">Xem</button><button class="nut nho" data-act="mo-doi-soat">Đối soát</button>` }); }
   if(sap.length){ const chua = sap.filter(x => !x.nhac).length;
     v.push({ ic:"lich", lop:"dong-c", t:`${sap.length} khách hết hạn trong 7 ngày`,
       d: chua ? `${chua} khách chưa được nhắc — gửi tin thẳng vào app khách` : "Đã nhắc hết trong 3 ngày qua",
@@ -1531,7 +1577,7 @@ function veHomNay(){
     </div>
     ${mucHtml("Việc cần làm", v.length ? `${v.length} việc` : "")}
     <div class="nhom">${v.length ? v.map(x => dongHtml(x)).join("") : trong("Hết việc rồi","Không có đơn chờ, không ai sắp hết hạn, radar sạch.")}</div>
-    <div id="dsDon">${mucHtml("Đơn chờ duyệt", dc.length ? `${dc.length} đơn` : "")}</div>
+    <div id="dsDon">${mucHtml("Đơn chờ duyệt", dc.length ? `${dc.length} đơn` : "", `<button class="lk" data-act="mo-doi-soat">Đối soát tiền về</button>`)}</div>
     ${dc.length ? dc.map(donHtml).join("") : `<div class="nhom">${trong("Không có đơn nào chờ","Khách mở màn gia hạn / mua gói là đơn hiện ở đây.")}</div>`}
     ${mucHtml("Sắp hết hạn", sap.length ? `${sap.length} khách` : "", sap.length ? `<button class="lk" data-act="mo-nhac" data-loai="sap">Nhắc tất cả</button>` : "")}
     <div class="nhom">${sap.length ? sap.slice(0,8).map(x => dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(x.uid)}"`,
@@ -1612,6 +1658,8 @@ function veTien(giuTim){
       <div class="o"><b class="so">${c.dungThu}</b><span>Gói đang dùng thử</span><small>nguồn khách sắp trả tiền</small></div>
       <div class="o"><b class="so">${tienGon(c.tongThu)}</b><span>Tổng thu từ trước tới nay</span></div>
     </div>
+    <div class="nhom" style="margin-top:12px">${dongHtml({ the:"button", act:"mo-doi-soat", ic:"tien", lop:"la-c", t:"Đối soát tiền về với sao kê ngân hàng",
+      d:"Dán lịch sử giao dịch hoặc chọn file sao kê — tự khớp đơn chờ, bắt tiền về không có đơn, chặn duyệt 2 lần một khoản", mui:true })}</div>
     ${mucHtml("Doanh thu 12 tháng")}
     <div class="nhom"><div class="bd">${mo.map((m,i) => `<button data-act="chon-thang" data-m="${m}" class="${m === THANG_XEM ? "on" : ""}" title="${m}: ${tienD(so[i])}" aria-label="Tháng ${m}: ${tienD(so[i])}">
       <span class="c" style="height:${Math.max(2, Math.round(so[i]/max*100))}%"></span><span class="x">${Number(m.slice(5))}</span></button>`).join("")}</div></div>
@@ -1854,8 +1902,8 @@ function hoCuaHang(S, k){
       <div class="cong"><div class="gi"><div class="t">Cửa hàng mã cũ được duyệt</div>
         <div class="d">${(acc.cnCho||[]).length ? (acc.cnCho||[]).map(c => `<span class="ma">${esc(c)}</span> <button class="nut nho" style="min-height:26px;padding:2px 8px" data-act="bo-duyet" data-uid="${esc(S.uid)}" data-ma="${esc(c)}">Bỏ</button>`).join(" ") : "Chưa duyệt mã nào"}</div>
         ${maCu.length ? `<button class="nut nho" style="margin-top:8px" data-act="duyet-ma-cu" data-uid="${esc(S.uid)}" data-ma="${esc(maCu.map(x => x.b).join(","))}">Duyệt ${maCu.length} mã cũ: ${esc(maCu.map(x => x.b).join(", "))}</button>` : ""}</div></div>
-      <div class="cong"><div class="gi"><div class="t">Suất biếu trong app khách</div>
-        <div class="d">App khách cho dùng 1 + max(biếu, suất mua) chi nhánh. Hiện: ${base === null ? "chưa chốt" : base + " suất"}. Đặt 0 để thu tiền đủ.</div></div>
+      <div class="cong"><div class="gi"><div class="t">Suất biếu trong app khách ${base ? chip(CFGDB.enforceCn === true ? "máy chủ không công nhận" : "chỉ có tác dụng trong app", "canh") : ""}</div>
+        <div class="d">Chỉ nới giới hạn TRONG APP (1 + max(biếu, suất mua)). Máy chủ KHÔNG đọc ô này: khi bật Thu phí chi nhánh, cửa hàng vượt suất vẫn bị chặn — và khách tự ghi được ô này. Muốn tặng thật: tab Giấy phép → gói Chi nhánh → đặt hạn 0đ, hoặc bật Miễn trừ. Hiện: ${base === null ? "chưa chốt" : base + " suất"}. Đặt 0 để thu tiền đủ.</div></div>
         <button class="nut nho" data-act="suat-bieu" data-uid="${esc(S.uid)}" data-v="${base === null ? "" : base}">Đặt</button></div>
     </div>
     ${mucHtml("Nhân viên bán hàng", `${sh.staff.length} người`)}
@@ -1979,27 +2027,50 @@ function nhatKy(){
 }
 
 /* ══════════════════════════ ĐẶT HẠN & GHI SỔ ══════════════════════════ */
-function moCapHan({ r = null, uid = "", app = "" } = {}){
+function moCapHan({ r = null, uid = "", app = "", saoKe = null } = {}){
   if(r && !rCho(r)) return bao("Đơn này đã xử lý rồi", 1);
   const u = r ? r._uid : uid, a = r ? r._app : app;
   const l = licCua(u, a) || {};
-  const thang0 = r ? Math.min(24, Math.max(1, Math.floor(num(r.months)) || 1)) : 1;
-  const qty0 = laCN(a) ? Math.min(50, Math.max(1, Math.floor(num(r && r.qty)) || Math.floor(num(l.qty)) || 1)) : 1;
-  const S = { r, uid:u, app: CFG.apps.includes(a) ? a : "", appGoc:a, thang:thang0, qty:qty0, tien:null, tienTay:!!r, han:"", hanTay:false, ghi:"" };
-  if(r) S.tien = num(r.amount ?? r.soTien);
+  const ck = (r && r.ck && typeof r.ck === "object") ? r.ck : null;
+  const thang0 = r ? Math.min(24, Math.max(1, Math.floor(num((ck && ck.thang) || r.months)) || 1)) : 1;
+  const qty0 = laCN(a) ? Math.min(50, Math.max(1, Math.floor(num((ck && ck.sl) || (r && r.qty))) || Math.floor(num(l.qty)) || 1)) : 1;
+  const S = { r, uid:u, app: CFG.apps.includes(a) ? a : "", appGoc:a, thang:thang0, qty:qty0, tien:null, tienTay:!!r, han:"", hanTay:false, ghi:"",
+              vanTay: vanTayLic(licCua(u, a)), saoKe: saoKe || null };
+  if(r) S.tien = num(ck && ck.tien != null ? ck.tien : (r.amount ?? r.soTien));
+  if(saoKe){
+    S.tien = num(saoKe.tien); S.tienTay = true;
+    S.ghi = ("Đối soát sao kê: " + String(saoKe.text || "")).slice(0,180);
+    if(!r && S.app){ const m = doanThang(u, S.app, S.tien, qty0); if(m) S.thang = m; }
+  }
   const t = moTam({ tieuDe: r ? "Duyệt đơn & ghi sổ" : "Đặt hạn & ghi sổ", lamMoi: null });
   t.S = S; t.loai = "cap";
   veCapHan(t);
   return t;
 }
+/* [3.1] CÔNG BẰNG THEO SUẤT (gói chi nhánh tính theo số suất, cả gói chung MỘT ngày hết hạn).
+   LỖ CŨ: khách còn 1 suất × 9 tháng, mua thêm lên 3 suất × 1 tháng (trả 3 suất-tháng) ⇒ bản cũ
+   cộng nối hạn cũ nên CẢ 3 suất tới 10 tháng — 2 suất mua thêm hưởng không 18 suất-tháng.
+   NAY: thời gian còn lại của số suất CŨ được chia đều cho số suất MỚI, rồi mới cộng số tháng vừa mua.
+   Bớt suất thì ngược lại: phần còn lại dồn cho ít suất hơn ⇒ khách không mất đồng nào đã trả.
+   Không đổi số suất (hoặc không phải gói chi nhánh) ⇒ y hệt bản cũ: cộng nối tiếp hạn cũ.      */
 function tinhCapHan(S){
   const l = licCua(S.uid, S.app) || {};
-  const hanCu = ngay(l.paidUntil);
-  const goc = (hanCu && hanCu > new Date() && l.vinhVien !== true) ? hanCu : new Date();
-  const chuan = S.app ? giaGiaHan(giaCua(S.uid, S.app), S.thang) * (laCN(S.app) ? S.qty : 1) : 0;
+  const hanCu = ngay(l.paidUntil), bay = new Date();
+  const conLai = (hanCu && hanCu > bay && l.vinhVien !== true) ? hanCu - bay : 0;
+  const cn = laCN(S.app), q0 = cn ? Math.max(0, Math.floor(num(l.qty))) : 1, Q = cn ? Math.max(1, Math.floor(num(S.qty)) || 1) : 1;
+  let goc = bay, noi = "tính từ hôm nay", chia = null;
+  if(conLai > 0){
+    if(cn && q0 !== Q){
+      const ms = q0 > 0 ? Math.floor(conLai * q0 / Q) : 0;
+      goc = new Date(bay.getTime() + ms);
+      chia = { q0, Q, ngayCu: Math.round(conLai / 864e5), ngayMoi: Math.round(ms / 864e5) };
+      noi = q0 > 0 ? `phần còn lại chia đều cho ${Q} suất` : "tính từ hôm nay — giấy phép cũ không có suất nào";
+    } else { goc = hanCu; noi = "cộng nối tiếp hạn cũ"; }
+  }
+  const chuan = S.app ? giaGiaHan(giaCua(S.uid, S.app), S.thang) * (cn ? Q : 1) : 0;
   if(S.tien == null || !S.tienTay) S.tien = chuan;
   if(!S.hanTay) S.han = dToS(themThang(goc, S.thang));
-  return { l, hanCu, goc, chuan, noi: goc !== hanCu ? "tính từ hôm nay" : "cộng nối tiếp hạn cũ" };
+  return { l, hanCu, goc, chuan, noi, chia };
 }
 function veCapHan(t){
   const S = t.S, c = tinhCapHan(S), x = S.app ? tt(licCua(S.uid, S.app)) : null;
@@ -2025,6 +2096,8 @@ function veCapHan(t){
     ${S.app && laCN(S.app) ? `<div class="o-nhap"><span>Số chi nhánh thêm (mỗi chi nhánh 1 suất)</span>
       <div class="buoc"><button data-act="cap-qty" data-d="-1" aria-label="Bớt">−</button><b class="so">${S.qty}</b><button data-act="cap-qty" data-d="1" aria-label="Thêm">+</button>
       <span class="nho">tối đa 50</span></div></div>` : ""}
+    ${c.chia && c.chia.q0 > 0 && !S.hanTay ? `<div class="bao ngoc"><b>Tính công bằng theo suất.</b> Khách đang có ${c.chia.q0} suất còn ${c.chia.ngayCu} ngày. Đổi thành ${c.chia.Q} suất ⇒ phần còn lại chia đều thành ${c.chia.ngayMoi} ngày mỗi suất, rồi cộng ${S.thang} tháng vừa mua.${c.chia.Q > c.chia.q0 ? ` Không chia thì ${c.chia.Q - c.chia.q0} suất mua thêm được hưởng không ${c.chia.ngayCu} ngày.` : " Khách bớt suất nên không mất ngày nào đã trả."}</div>` : ""}
+    ${S.saoKe ? `<div class="bao ${S.saoKe.yeu ? "canh" : "tot"}"><b>Tiền về theo sao kê: ${tienD(S.saoKe.tien)}</b><br>${esc(String(S.saoKe.text || "").slice(0,220))}${S.saoKe.yeu ? "<br>Dòng sao kê không có ngày giờ / mã giao dịch nên không chống được duyệt trùng tuyệt đối — kiểm lại một lần." : ""}</div>` : ""}
     <label class="o-nhap"><span>Số tiền thực nhận (đ) — bảng giá ${tienD(c.chuan)}</span>
       <input data-in="tien" inputmode="numeric" autocomplete="off" value="${tien(S.tien)}"></label>
     ${S.app && S.tien !== c.chuan ? `<div class="bao ${S.tien < c.chuan ? "canh" : ""}">${S.tien < c.chuan ? `Thu ít hơn bảng giá ${tienD(c.chuan - S.tien)}` : `Thu nhiều hơn bảng giá ${tienD(S.tien - c.chuan)}`} — đối chiếu sao kê trước khi duyệt.</div>` : ""}
@@ -2058,6 +2131,198 @@ function moThu(p){
     <label class="o-nhap"><span>Lý do</span><input data-in="dcLy" placeholder="ghi nhầm số tiền, khách chuyển thiếu…" autocomplete="off"></label>
     ${p.uid ? `<button class="nut rong" data-act="mo-khach" data-uid="${esc(p.uid)}">Mở hồ sơ khách</button>` : ""}`;
   t.chan.innerHTML = `<button class="nut nguy" data-act="dc-ok">Ghi dòng điều chỉnh</button>`;
+}
+
+/* ══════════════════════════ ĐỐI SOÁT TIỀN VỀ (SAO KÊ) ══════════════════════════
+   Tiền về tài khoản mới là SỰ THẬT. Đơn chờ chỉ có nghĩa "khách đã mở màn thanh toán".
+   Dán lịch sử giao dịch / tin nhắn biến động số dư (hoặc chọn file sao kê .xlsx .csv .txt) → tự khớp:
+   ① đơn chờ ↔ khoản tiền về (email trong nội dung CK + đúng số tiền)
+   ② tiền về của khách quen mà KHÔNG có đơn   ③ đơn chờ CHƯA thấy tiền   ④ dòng có tiền không nhận ra.
+   Khoản đã dùng để duyệt mang vân tay trong sổ thu (payments/sk_…) ⇒ không duyệt được lần 2.
+   Sao kê KHÔNG gửi lên máy chủ — chỉ nằm trong bộ nhớ máy này lúc đang soát.                     */
+let _skNho = "";
+const boDau = s => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D");
+const chuanND = s => boDau(s).toLowerCase().replace(/[^a-z0-9]/g,"");
+const RE_SO = /(^|[^\d.,])(\d{1,3}(?:[.,]\d{3})+|\d{4,9})(?:[.,]\d{2})?(?!\d)/g;
+function soTienDong(s){
+  const out = [], t = String(s || ""); let m; RE_SO.lastIndex = 0;
+  while((m = RE_SO.exec(t))){ const v = Number(m[2].replace(/[.,]/g,"")); if(v >= 1000 && v <= 500000000 && !out.includes(v)) out.push(v); }
+  return out;
+}
+const RE_NGAY = /(^|[^\d])\d{1,2}[\/\-.]\d{1,2}([\/\-.]\d{2,4})?([^\d]|$)/, RE_GIO = /(^|[^\d])\d{1,2}:\d{2}(:\d{2})?([^\d]|$)/,
+      RE_MA = /(^|[^a-z0-9])(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{8,}([^a-z0-9]|$)|(^|[^\d])\d{10,}([^\d]|$)/;
+function cyrb53(str){ let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for(let i = 0, ch; i < str.length; i++){ ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); }
+function tachDongSK(text){
+  return String(text || "").replace(/\r/g,"").split("\n").map(x => x.replace(/\s+/g," ").trim()).filter(Boolean).slice(0, 4000)
+    .map((raw, i) => { const rl = boDau(raw).toLowerCase();
+      return { i, raw: raw.slice(0, 500), rl, nd: chuanND(raw), so: soTienDong(raw), moc: RE_NGAY.test(rl) || RE_GIO.test(rl) || RE_MA.test(rl) }; });
+}
+function khoaMail(e){
+  const x = String(e || "").trim().toLowerCase(), at = x.indexOf("@");
+  const full = chuanND(x), local = at > 0 ? chuanND(x.slice(0, at)) : full;
+  return { full, local, re: local.length >= 4 ? new RegExp("(^|[^a-z0-9])" + local + "(?=[^a-z0-9]|gmail|yahoo|icloud|outlook|hotmail|$)") : null };
+}
+/* 3 = thấy trọn email · 2 = thấy phần tên email đứng riêng · 1 = phần tên dính chữ khác (chỉ tính khi khớp cả số tiền) */
+function mucKhop(d, k){
+  if(!k || k.local.length < 4 || !d.nd.includes(k.local)) return 0;
+  if(k.full.length >= 8 && d.nd.includes(k.full)) return 3;
+  if(k.re && k.re.test(d.rl)) return 2;
+  return k.local.length >= 6 ? 1 : 0;
+}
+/* Mã gói nằm NGAY SAU email trong nội dung CK (app khách điền sẵn: "email POS", "email CNFNB2", "email sono_fnb"…) */
+function goiTuND(sau){
+  const s = String(sau || "").slice(0, 18);
+  const bang = [["sonocnfnb","sono_cn_fnb"],["sonocnfs","sono_cn_fs"],["sonocnrm","sono_cn_rm"],["sonocnkg","sono_cn_kg"],
+    ["cnfnb","sono_cn_fnb"],["cnfs","sono_cn_fs"],["cnrm","sono_cn_rm"],["cnkg","sono_cn_kg"],
+    ["sonofnb","sono_fnb"],["sonofs","sono_fs"],["sonorm","sono_rm"],["sonokg","sono_kg"],["sonoqr","sono_qr"],["sonopos","sono_pos"],["pos","sono_pos"]];
+  for(const [k,a] of bang) if(s.indexOf(k) === 0) return a;
+  if(/^(sono)?cn\d/.test(s)) return "sono_cn";
+  return "";
+}
+function goiSauKhoa(nd, k){
+  let i = k.full.length >= 8 ? nd.indexOf(k.full) : -1, n = k.full.length;
+  if(i < 0){ i = nd.indexOf(k.local); n = k.local.length; }
+  return i < 0 ? "" : goiTuND(nd.slice(i + n));
+}
+function doanTien(raw, so){
+  const t = String(raw || "");
+  let m = /\+\s?(\d{1,3}(?:[.,]\d{3})+|\d{4,9})/.exec(t);
+  if(!m) m = /(\d{1,3}(?:[.,]\d{3})+|\d{4,9})(?:[.,]\d{2})?\s?(?:vnd|vnđ|đ)(?![a-z])/i.exec(t);
+  if(m){ const v = Number(m[1].replace(/[.,]/g,"")); if(v >= 1000 && v <= 500000000) return v; }
+  return so.length ? so[0] : 0;
+}
+/* Dòng mang số tiền: chính dòng có email, không có thì dòng kề (sao kê chép từ app hay tách nhiều dòng) */
+function dongCoTien(L, d, dsTien){
+  for(const o of [0, 1, -1, 2, -2]){ const x = L[d.i + o]; if(!x || !x.so.length) continue;
+    if(dsTien){ const v = dsTien.find(t => x.so.includes(t)); if(v) return { dong:x, tien:v }; }
+    else return { dong:x, tien: doanTien(x.raw, x.so) };
+  }
+  return null;
+}
+/* Một "khoản" = dòng email + dòng số tiền + dòng ngày giờ gần nhất. Vân tay = băm các dòng đó + số tiền.
+   Không có ngày / giờ / mã giao dịch ⇒ vân tay YẾU (2 lần trả cùng số tiền, cùng nội dung sẽ trùng nhau). */
+function taoKhoan(L, dMail, dTien, tien){
+  const ids = [dMail.i]; if(dTien && dTien.i !== dMail.i) ids.push(dTien.i);
+  let moc = ids.map(i => L[i]).find(x => x.moc) || null;
+  for(let r = 1; r <= 3 && !moc; r++) for(const j of [dMail.i - r, dMail.i + r]) if(!moc && L[j] && L[j].moc) moc = L[j];
+  if(moc && !ids.includes(moc.i)) ids.push(moc.i);
+  ids.sort((a,b) => a - b);
+  return { ma: cyrb53(ids.map(i => L[i].nd).join("|") + "|" + tien), yeu: !moc, tien: num(tien),
+           text: ids.map(i => L[i].raw).join(" ⏎ ").slice(0, 300) };
+}
+function doiSoat(text){
+  const L = tachDongSK(text);
+  const orders = donCho().map((x, oi) => ({ x, oi, k: khoaMail(x.email),
+    tien: [...new Set([x.khai, x.chuan, num(x.r.amount)].filter(v => v > 0))] }));
+  const cap = [];
+  L.forEach(d => orders.forEach(o => {
+    const lv = mucKhop(d, o.k); if(!lv) return;
+    const ct = dongCoTien(L, d, o.tien);
+    if(lv === 1 && !ct) return;
+    const hint = goiSauKhoa(d.nd, o.k);
+    cap.push({ o, d, ct, lv, hint, diem: lv * 10 + (ct ? 6 : 0) + (hint ? (hint === o.x.app ? 3 : -4) : 0) });
+  }));
+  cap.sort((a,b) => b.diem - a.diem);
+  const dungDong = new Set(), dungDon = new Set(), khop = [];
+  cap.forEach(c => {
+    if(dungDong.has(c.d.i) || dungDon.has(c.o.oi)) return;
+    if(c.ct && c.ct.dong.i !== c.d.i && dungDong.has(c.ct.dong.i)) return;
+    dungDong.add(c.d.i); if(c.ct) dungDong.add(c.ct.dong.i); dungDon.add(c.o.oi);
+    const g = c.ct || dongCoTien(L, c.d, null);
+    const khoan = taoKhoan(L, c.d, g ? g.dong : null, g ? g.tien : 0);
+    khop.push({ ...c, tienOk: !!c.ct, khoan, daDung: PAY.find(p => p.ckMa && p.ckMa === khoan.ma) || null, idx: khop.length });
+  });
+  /* Tiền về của khách quen mà không có đơn chờ (khách trả rồi mà không mở màn thanh toán, hoặc đơn đã bị ẩn) */
+  const bd = banDoEmail();
+  const ks = Object.keys(bd).filter(e => e.includes("@") && e !== CFG.admin).map(e => ({ e, uid: bd[e], k: khoaMail(e) })).filter(x => x.k.local.length >= 4);
+  const ngoai = [];
+  L.forEach(d => {
+    if(dungDong.has(d.i)) return;
+    let best = null;
+    ks.forEach(x => { const lv = mucKhop(d, x.k);
+      if(lv >= 2 && (!best || lv > best.lv || (lv === best.lv && x.k.full.length > best.x.k.full.length))) best = { x, lv }; });
+    if(!best) return;
+    const g = dongCoTien(L, d, null); if(!g || !(g.tien > 0)) return;
+    if(g.dong.i !== d.i && dungDong.has(g.dong.i)) return;
+    dungDong.add(d.i); dungDong.add(g.dong.i);
+    const hint = goiSauKhoa(d.nd, best.x.k), khoan = taoKhoan(L, d, g.dong, g.tien);
+    ngoai.push({ uid: best.x.uid, email: best.x.e, app: hint || "sono", hint, khoan, lv: best.lv,
+                 daDung: PAY.find(p => p.ckMa && p.ckMa === khoan.ma) || null, idx: ngoai.length });
+  });
+  const chuaTien = orders.filter(o => !dungDon.has(o.oi)).map(o => o.x);
+  const la = L.filter(d => !dungDong.has(d.i) && d.so.length
+    && (/\+\s?\d/.test(d.raw) || /(^|[^a-z])(ct den|chuyen den|nhan tien|tien vao|ghi co|credit)([^a-z]|$)/.test(d.rl))).slice(0, 40);
+  return { soDong: L.length, khop, ngoai, chuaTien, la, luc: Date.now() };
+}
+let _xlsxP = null;
+function napXLSX(){
+  if(window.XLSX) return Promise.resolve(window.XLSX);
+  return _xlsxP = _xlsxP || new Promise((ok, hong) => {
+    const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload = () => window.XLSX ? ok(window.XLSX) : hong(new Error("Không nạp được thư viện đọc Excel"));
+    s.onerror = () => { _xlsxP = null; hong(new Error("Không tải được thư viện đọc Excel — kiểm tra mạng")); };
+    document.head.appendChild(s);
+  });
+}
+async function docFileSaoKe(f){
+  if(/\.(xlsx|xls)$/i.test(String(f.name || ""))){
+    const X = await napXLSX(), wb = X.read(await f.arrayBuffer(), { type:"array" });
+    return wb.SheetNames.map(n => X.utils.sheet_to_csv(wb.Sheets[n], { FS:" | ", blankrows:false })).join("\n");
+  }
+  return await f.text();
+}
+function moDoiSoat(){
+  const t = moTam({ tieuDe:"Đối soát tiền về", lamMoi: () => { if(t.S.kq) t.S.kq = doiSoat(t.S.text); veDoiSoat(t); } });
+  t.S = { text: _skNho, kq: _skNho ? doiSoat(_skNho) : null };
+  veDoiSoat(t);
+  return t;
+}
+function dongKhopSK(x){
+  const d = x.o.x, da = x.daDung;
+  return `<div class="don-the ${da ? "" : x.tienOk ? "" : "nguy"}">
+    <div class="don-dau"><div class="gi"><div class="t">${esc(d.email || d.uid)}</div>
+      <div class="d">${esc(tenApp(d.app))} · ${d.m} tháng${laCN(d.app) ? ` · ${d.sl} suất` : ""} · đơn ghi ${tienD(d.khai)}</div></div>
+      <div class="ti so">${tienD(x.khoan.tien)}</div></div>
+    <div class="chips">${da ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(da))}`, "xau") : x.tienOk ? chip("Đúng số tiền của đơn", "ok") : chip("Thấy tên khách nhưng số tiền khác đơn", "canh")}${x.lv >= 3 ? chip("Khớp trọn email", "ngoc") : chip("Khớp phần tên email", "")}${d.daBao ? chip("Khách đã báo chuyển", "ok") : ""}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}</div>
+    <div class="nd-ck">${esc(x.khoan.text)}</div>
+    ${da ? "" : `<div class="hang-nut" style="margin-top:10px"><button class="nut chinh" data-act="ds-duyet" data-i="${x.idx}">${ic("xong")}Duyệt theo tiền về</button><button class="nut" data-act="mo-khach" data-uid="${esc(d.uid)}">Hồ sơ</button></div>`}
+  </div>`;
+}
+function dongNgoaiSK(x){
+  return `<div class="don-the ${x.daDung ? "" : "nguy"}">
+    <div class="don-dau"><div class="gi"><div class="t">${esc(x.email)}</div>
+      <div class="d">${x.hint ? "Nội dung CK ghi gói " + esc(tenApp(x.hint)) : "Nội dung CK không ghi gói — mặc định Sổ Nợ, đổi khi đặt hạn"}</div></div>
+      <div class="ti so">${tienD(x.khoan.tien)}</div></div>
+    <div class="chips">${x.daDung ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(x.daDung))}`, "xau") : chip("Có tiền về nhưng KHÔNG có đơn chờ", "canh")}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}</div>
+    <div class="nd-ck">${esc(x.khoan.text)}</div>
+    ${x.daDung ? "" : `<div class="hang-nut" style="margin-top:10px"><button class="nut chinh" data-act="ds-cap" data-i="${x.idx}">${ic("xong")}Đặt hạn theo tiền về</button><button class="nut" data-act="mo-khach" data-uid="${esc(x.uid)}">Hồ sơ</button></div>`}
+  </div>`;
+}
+function veKetQuaSK(k){
+  const ok = k.khop.filter(x => !x.daDung && x.tienOk);
+  return `<div class="luoi" style="margin:14px 0 4px">
+      <div class="o tot"><b class="so">${ok.length}</b><span>Đơn khớp đúng tiền về</span><small>${tienD(ok.reduce((s,x) => s + x.khoan.tien, 0))}</small></div>
+      <div class="o ${k.chuaTien.length ? "canh" : ""}"><b class="so">${k.chuaTien.length}</b><span>Đơn chờ chưa thấy tiền</span><small>soát ${k.soDong} dòng đã dán</small></div></div>
+    ${mucHtml("Khớp đơn chờ", k.khop.length ? `${k.khop.length} khoản` : "")}
+    ${k.khop.length ? k.khop.map(dongKhopSK).join("") : `<div class="nhom">${trong("Chưa khớp được đơn nào", "Nội dung chuyển khoản phải còn email của khách (app khách điền sẵn).")}</div>`}
+    ${k.ngoai.length ? mucHtml("Tiền về chưa có đơn", `${k.ngoai.length} khoản`) + k.ngoai.map(dongNgoaiSK).join("") : ""}
+    ${k.chuaTien.length ? mucHtml("Đơn chờ chưa thấy tiền", `${k.chuaTien.length} đơn`) + `<div class="nhom">${k.chuaTien.map(x => dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(x.uid)}"`,
+        ic:"don", lop: x.daBao ? "dong-c" : "", t: esc(x.email || x.uid),
+        d: `${esc(tenApp(x.app))} · ${x.m} tháng · ${tienD(x.khai)} · ${x.daBao ? "khách BÁO đã chuyển mà chưa thấy tiền — xem lại sao kê" : "khách chưa báo chuyển — đừng duyệt"}`, mui:true })).join("")}</div>` : ""}
+    ${k.la.length ? mucHtml("Dòng có tiền nhưng không nhận ra khách", String(k.la.length)) + `<div class="nhatky">${esc(k.la.map(d => d.raw).join("\n"))}</div>` : ""}`;
+}
+function veDoiSoat(t){
+  const S = t.S;
+  t.than.innerHTML = `
+    <div class="bao ngoc">Mở app ngân hàng → <b>Lịch sử giao dịch</b> (hoặc tin nhắn, email biến động số dư) → chép các khoản tiền VÀO rồi dán vào ô dưới. Có thể chọn thẳng file sao kê <b>.xlsx / .csv</b> tải từ ngân hàng điện tử. Sao kê chỉ nằm trong máy này, không gửi lên máy chủ.</div>
+    <label class="o-nhap"><span>Sao kê / lịch sử giao dịch</span><textarea data-in="skText" style="min-height:130px" placeholder="VD: 19/09/2026 14:20 +100,000VND ND: CT DEN cuahang gmail com POS">${esc(S.text)}</textarea></label>
+    <div class="hang-nut"><button class="nut" data-act="ds-file">${ic("nap")}Chọn file sao kê</button><button class="nut chinh" data-act="ds-soat">${ic("tim")}Soát ngay</button></div>
+    ${S.kq ? veKetQuaSK(S.kq) : ""}`;
+  t.chan.innerHTML = "";
 }
 
 /* ══════════════════════════ NHÓM LỖI ══════════════════════════ */
@@ -2170,7 +2435,8 @@ function veMucRadar(t){
     ${x.items.length > 200 ? `<p class="nho">…và ${x.items.length - 200} mục nữa</p>` : ""}`;
   const nut = { "cong-tac":`<button class="nut chinh" data-act="nav" data-v="caidat">Mở công tắc thu tiền</button>`,
     "quet-cn":`<button class="nut chinh" data-act="quet-cn">Quét chi nhánh & gói ngành</button>`,
-    "sua-vv":`<button class="nut chinh" data-act="sua-vv">Sửa hàng loạt thành vĩnh viễn</button>` }[x.hanhDong] || "";
+    "sua-vv":`<button class="nut chinh" data-act="sua-vv">Sửa hàng loạt thành vĩnh viễn</button>`,
+    "bang-gia":`<button class="nut chinh" data-act="mo-bang-gia">Mở bảng giá</button>` }[x.hanhDong] || "";
   t.chan.innerHTML = x.ma === "lai" ? `<button class="nut" data-act="lai-loat" data-giu="ngay">Giữ ngày hết hạn (tất cả)</button><button class="nut chinh" data-act="lai-loat" data-giu="vv">Giữ vĩnh viễn (tất cả)</button>` : nut;
 }
 
@@ -2452,7 +2718,12 @@ async function thucHienChuyen(t){
       if(l.vinhVien === true && !hCu){ nd.vinhVien = true; nd.paidUntil = null; }
       else if(!hCu && vvTrong){ nd.vinhVien = true; nd.paidUntil = null; }
       else if(dichDaTra && co.vinhVien === true && !hCo){ nd.vinhVien = true; nd.paidUntil = null; }
-      else if(dichDaTra){ nd.paidUntil = (hCu && hCo) ? (hCu > hCo ? hCu : hCo) : (hCu || hCo || null); nd.vinhVien = false; }
+      else if(dichDaTra){ nd.paidUntil = (hCu && hCo) ? (hCu > hCo ? hCu : hCo) : (hCu || hCo || null); nd.vinhVien = false;
+        /* [3.1] Gói chi nhánh: bản cũ lấy max số suất × max hạn ⇒ 5 suất sắp hết + 1 suất còn 12 tháng
+           thành 5 suất × 12 tháng (biếu không). Nay giữ đúng tổng suất-ngày đã trả của cả hai bên. */
+        if(laCN(app) && hCu && hCo){ const bay = Date.now(), r1 = Math.max(0, hCu - bay), r2 = Math.max(0, hCo - bay);
+          const q1 = Math.max(0, Math.floor(num(l.qty))), q2 = Math.max(0, Math.floor(num(co.qty))), Q = Math.max(q1, q2, 1);
+          if(r1 > 0 && r2 > 0 && q1 + q2 > 0) nd.paidUntil = new Date(bay + Math.floor((q1 * r1 + q2 * r2) / Q)); } }
       else { nd.paidUntil = hCu; nd.vinhVien = false; }
       nd.trial = (l.trial === true) && !dichDaTra;
       nd.active = dichDaTra ? true : (l.active !== false);
@@ -2603,10 +2874,11 @@ function moBangGia(){
     <div class="hai" style="grid-template-columns:1fr 1fr 1fr">${[3,6,12].map(m => `<label class="o-nhap"><span>Mua ${m} tháng tặng</span><input data-g="km_${m}" inputmode="numeric" value="${thangTang(m) || ""}" placeholder="0"></label>`).join("")}</div>
     <p class="nho" style="margin-top:0">Số tháng TẶNG thêm (0 hoặc để trống = không tặng). Ví dụ mua 12 tặng 2 = khách trả tiền 10 tháng, được dùng 12.</p>
     ${mucHtml("Giá mỗi tháng")}
-    <label class="o-nhap"><span>Giá chung (dùng khi gói không có giá riêng)</span><input data-g="pricePerMonth" inputmode="numeric" value="${num(BILL.pricePerMonth) ? tien(BILL.pricePerMonth) : ""}"></label>
-    ${NHOM_APP.map(g => `<p class="nho" style="margin:14px 2px 6px;font-weight:600">${esc(g.ten)}</p>` + g.apps.map(a => { const k = CFG.oGia[a][0];
-      return `<label class="o-nhap"><span>${esc(tenApp(a))}${laCN(a) ? " (mỗi suất)" : ""}</span><input data-g="g_${a}" inputmode="numeric" value="${BILL[k] != null && BILL[k] !== "" ? tien(BILL[k]) : ""}" placeholder="để trống = ${tien(giaApp(a))}"></label>`; }).join("")).join("")}
-    <p class="nho">Ô trống = xoá giá riêng (về giá chung/mặc định). Gõ 0 = miễn phí thật. Gõ 50.000 hay 50000 đều được.</p>`;
+    <label class="o-nhap"><span>Giá chung dự phòng (để trống = mỗi app dùng giá mặc định của nó)</span><input data-g="pricePerMonth" inputmode="numeric" value="${num(BILL.pricePerMonth) ? tien(BILL.pricePerMonth) : ""}"></label>
+    ${NHOM_APP.map(g => `<p class="nho" style="margin:14px 2px 6px;font-weight:600">${esc(g.ten)}</p>` + g.apps.map(a => { const o = CFG.oGia[a], k = o[0];
+      const du = (o[1] ? num(BILL[o[1]]) : 0) || o[2];
+      return `<label class="o-nhap"><span>${esc(tenApp(a))}${laCN(a) ? " (mỗi suất)" : ""}</span><input data-g="g_${a}" inputmode="numeric" value="${BILL[k] != null && BILL[k] !== "" ? tien(BILL[k]) : ""}" placeholder="${du > 0 ? "để trống = " + tien(du) : "để trống = CHƯA BÁN (khách không mua được)"}"></label>`; }).join("")).join("")}
+    <p class="nho">Ô trống = xoá giá riêng (về giá dự phòng/mặc định). Gói ngành, Đơn QR và Bán hàng (POS) không có giá dự phòng: để trống là CHƯA BÁN. Gõ 50.000 hay 50000 đều được.</p>`;
   t.chan.innerHTML = `<button class="nut chinh" data-act="luu-gia">Lưu bảng giá</button>`;
   veQrThu(t);
 }
@@ -2679,6 +2951,21 @@ const ACT = {
   "mo-thu": b => moThu(PAY.find(p => p.id === b.dataset.id)),
   "mo-loi": b => moLoi(_loiNhom.find(g => g.key === b.dataset.k)),
   "mo-bang-gia": () => moBangGia(),
+  "mo-doi-soat": () => moDoiSoat(),
+  "ds-soat": b => { const t = tamCua(b); if(!String(t.S.text || "").trim()) return bao("Chưa dán sao kê", 1);
+    _skNho = t.S.text; t.S.kq = doiSoat(t.S.text); veDoiSoat(t);
+    const k = t.S.kq; bao(`Soát ${k.soDong} dòng · khớp ${k.khop.length} đơn · ${k.ngoai.length} khoản không đơn`); },
+  "ds-file": b => { const t = tamCua(b), inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".xlsx,.xls,.csv,.txt,text/csv,text/plain"; inp.style.display = "none";
+    inp.onchange = async () => { const f = inp.files && inp.files[0]; inp.remove(); if(!f) return;
+      try{ bao("Đang đọc " + f.name + "…"); t.S.text = String(await docFileSaoKe(f) || "").slice(0, 400000); _skNho = t.S.text;
+           t.S.kq = doiSoat(t.S.text); if(TAM.includes(t)) veDoiSoat(t); bao("Đã đọc " + f.name); }
+      catch(e){ bao("Không đọc được file: " + maLoi(e), 1); } };
+    document.body.appendChild(inp); inp.click(); },
+  "ds-duyet": b => { const t = tamCua(b), x = t && t.S.kq ? t.S.kq.khop[Number(b.dataset.i)] : null; if(!x) return;
+    moCapHan({ r: x.o.x.r, saoKe: x.khoan }); },
+  "ds-cap": b => { const t = tamCua(b), x = t && t.S.kq ? t.S.kq.ngoai[Number(b.dataset.i)] : null; if(!x) return;
+    moCapHan({ uid: x.uid, app: x.app, saoKe: x.khoan }); },
   "mo-ban-tin": () => moBanTin(),
   "mo-chuyen": b => moChuyen(b.dataset.tu || ""),
   "mo-nhat-ky": () => moNhatKy(),
@@ -2696,12 +2983,12 @@ const ACT = {
   "an-don": async b => { const r = reqTheoId(b.dataset.id); if(!r) return;
     if(!(await hoi({ tieuDe:"Ẩn đơn", noiDung:`Ẩn đơn ${tenApp(r._app)} ${tienD(r.amount)} của ${r.email || emailCua(r._uid) || r._uid}?\n\nKhông cấp hạn, không ghi tiền. Dùng cho đơn khách mở màn giá rồi bỏ.`, nutOk:"Ẩn đơn" }))) return;
     await chay(b, async () => { await anDon(r); bao("Đã ẩn đơn"); await taiLai(true); }); },
-  "cap-thang": b => { const t = tamCua(b); t.S.thang = Number(b.dataset.m); t.S.tienTay = false; t.S.hanTay = false; veCapHan(t); },
+  "cap-thang": b => { const t = tamCua(b); t.S.thang = Number(b.dataset.m); t.S.tienTay = !!t.S.saoKe; t.S.hanTay = false; veCapHan(t); },
   "cap-thang-khac": async b => { const t = tamCua(b);
     const v = await nhap({ tieuDe:"Số tháng cấp", noiDung:"Từ 1 đến 24 tháng.", macDinh:String(t.S.thang), kieu:"number", nutOk:"Chọn" });
     if(v == null) return; const n = Math.floor(num(v)); if(!(n >= 1 && n <= 24)) return bao("Số tháng phải từ 1 đến 24", 1);
-    t.S.thang = n; t.S.tienTay = false; t.S.hanTay = false; veCapHan(t); },
-  "cap-qty": b => { const t = tamCua(b); t.S.qty = Math.min(50, Math.max(1, t.S.qty + Number(b.dataset.d))); t.S.tienTay = false; veCapHan(t); },
+    t.S.thang = n; t.S.tienTay = !!t.S.saoKe; t.S.hanTay = false; veCapHan(t); },
+  "cap-qty": b => { const t = tamCua(b); t.S.qty = Math.min(50, Math.max(1, t.S.qty + Number(b.dataset.d))); t.S.tienTay = !!t.S.saoKe; veCapHan(t); },
   "cap-ok": b => capOk(tamCua(b), b),
   "cap-vv": async b => { const t = tamCua(b), S = t.S;
     if(!(await hoi({ tieuDe:"Đặt vĩnh viễn", noiDung:`${tenApp(S.app)} của ${emailCua(S.uid) || S.uid} sẽ dùng không thời hạn.\n\nKHÔNG ghi dòng doanh thu. Bán trọn đời có thu tiền thì hãy đặt hạn & ghi sổ trước.`, nutOk:"Đặt vĩnh viễn" }))) return;
@@ -2884,7 +3171,11 @@ const ACT = {
       if(q < 0 || q >= m) return bao(`Mua ${m} tháng chỉ tặng được tối đa ${m - 1} tháng`, 1);
       if(q > 0) vals.km[String(m)] = q; }
     const kmTxt = Object.keys(vals.km).length ? Object.entries(vals.km).map(([m,q]) => `mua ${m} tặng ${q}`).join(", ") : "KHÔNG khuyến mãi";
-    if(!(await hoi({ tieuDe:"Lưu bảng giá", noiDung:`Dùng thử: ${vals.ngayThu || 14} ngày\nKhuyến mãi: ${kmTxt}\nHotline: ${vals.hotline || HOT_GOC}\n\nMọi app khách đọc giá, khuyến mãi, tài khoản nhận tiền mới ngay lần mở kế tiếp.`, nutOk:"Lưu" }))) return;
+    const binCu = String(BILL.bin || BILL.bankBin || ""), tkCu = String(BILL.account || BILL.acc || "");
+    const canhBank = (!vals.bin || !vals.account) ? "⛔ Tài khoản nhận tiền đang TRỐNG: mọi app khách mất mã QR, khách KHÔNG trả tiền được.\n\n"
+      : (vals.bin !== binCu || vals.account !== tkCu) ? `⚠️ ĐỔI tài khoản nhận tiền:\n${binCu || "—"} · ${tkCu || "—"}\n→ ${vals.bin} · ${vals.account} (${vals.accName || "chưa ghi tên"})\nMọi mã QR của khách sẽ chuyển tiền vào tài khoản MỚI này.\n\n` : "";
+    const chuaBan = CFG.apps.filter(a => { const o = CFG.oGia[a]; return !(soTienNhap(vals["g_" + a]) > 0) && !((o[1] ? num(BILL[o[1]]) : 0) || o[2]); }).map(tenApp);
+    if(!(await hoi({ tieuDe:"Lưu bảng giá", noiDung:`${canhBank}Dùng thử: ${vals.ngayThu || 14} ngày\nKhuyến mãi: ${kmTxt}\nHotline: ${vals.hotline || HOT_GOC}${chuaBan.length ? `\nCHƯA BÁN (khách không mua được): ${chuaBan.join(", ")}` : ""}\n\nMọi app khách đọc giá, khuyến mãi, tài khoản nhận tiền mới ngay lần mở kế tiếp.`, nutOk:"Lưu", nguy: !!canhBank }))) return;
     await chay(b, async () => { await luuBangGia(vals); dongTam(t); bao("Đã lưu bảng giá"); await taiLai(true); }); },
   "mk-admin-ok": async b => { const t = tamCua(b), g = k => String(($(`[data-in="${k}"]`, t.than) || {}).value || "");
     const cu = g("mkCu"), moi = g("mkMoi"), moi2 = g("mkMoi2");
@@ -2937,11 +3228,18 @@ async function capOk(t, btn){
   if(vua) hoiLai.push(`Gói này VỪA thu ${tienD(pTien(vua))} ${lauRoi(pNgay(vua))}. Chắc đây là khoản chuyển mới, không phải duyệt trùng?`);
   if(S.tien === 0) hoiLai.push("Số tiền 0đ: chỉ cấp hạn, KHÔNG ghi dòng doanh thu.");
   else if(S.tien < c.chuan) hoiLai.push(`Thu ${tienD(S.tien)}, ít hơn bảng giá ${tienD(c.chuan - S.tien)}.`);
+  if(S.saoKe && S.saoKe.ma){
+    const da = PAY.find(p => p.ckMa === S.saoKe.ma);
+    if(da && !S.saoKe.yeu) return bao(`Khoản tiền này đã dùng để duyệt lúc ${gioVN(pNgay(da))} (${emailCua(da.uid) || da.uid}) — không duyệt lần 2`, 1);
+    if(da) hoiLai.push(`Có vẻ khoản tiền này đã dùng để duyệt lúc ${gioVN(pNgay(da))} cho ${emailCua(da.uid) || da.uid}.`);
+  }
+  if(S.r && S.tien > 0 && !(S.r.ck && typeof S.r.ck === "object") && !S.saoKe)
+    hoiLai.push("Khách CHƯA bấm “Đã chuyển khoản” và bạn chưa đối soát sao kê. Chỉ duyệt khi ĐÃ THẤY TIỀN VỀ tài khoản.");
   const tom = `${tenApp(S.app)} · ${S.thang} tháng${laCN(S.app) ? ` · ${S.qty} suất` : ""}\nHạn mới: ${ngayVN(hanMoi)}\nGhi sổ: ${tienD(S.tien)}`;
   if(!(await hoi({ tieuDe: S.r ? "Duyệt đơn" : "Đặt hạn", noiDung: (hoiLai.length ? "⚠️ " + hoiLai.join("\n⚠️ ") + "\n\n" : "") + tom, nutOk: S.r ? "Duyệt" : "Đặt hạn", nguy: hoiLai.length > 0 }))) return;
   let xong = false;
   await chay(btn, async () => {
-    await capHan({ uid:S.uid, app:S.app, thang:S.thang, soTien:S.tien, qty:S.qty, hanMoi, ghiChu:S.ghi, r:S.r });
+    await capHan({ uid:S.uid, app:S.app, thang:S.thang, soTien:S.tien, qty:S.qty, hanMoi, ghiChu:S.ghi, r:S.r, vanTay:S.vanTay, saoKe:S.saoKe });
     xong = true;
   }, "Đang ghi…");
   if(!xong) return;
@@ -2974,11 +3272,15 @@ document.addEventListener("input", e => {
   else if(k === "btText") S.text = el.value;
   else if(k === "cu" || k === "moi"){ S[k] = el.value; if(S.san){ S.san = null; veChuyen(t); const i = $(`[data-in="${k}"]`, t.than); if(i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } } }
   else if(k === "nkTim"){ S.tim = el.value; veNhatKyTam(t); }
+  else if(k === "skText"){ S.text = el.value; _skNho = el.value; }
 });
 document.addEventListener("change", e => {
   const el = e.target, t = tamCua(el); if(!t || !t.S) return;
   const k = el.dataset.in, S = t.S;
-  if(k === "app"){ S.app = el.value; S.tienTay = false; S.hanTay = false; S.qty = laCN(S.app) ? Math.max(1, S.qty || 1) : 1; veCapHan(t); }
+  if(k === "app"){ S.app = el.value; S.tienTay = !!S.saoKe; S.hanTay = false; S.qty = laCN(S.app) ? Math.max(1, S.qty || 1) : 1;
+    S.vanTay = vanTayLic(licCua(S.uid, S.app));
+    if(S.saoKe){ S.tien = num(S.saoKe.tien); if(!S.r){ const m = doanThang(S.uid, S.app, S.tien, S.qty); if(m) S.thang = m; } }
+    veCapHan(t); }
   else if(k === "tien"){ S.tien = soTienNhap(el.value); S.tienTay = true; veCapHan(t); }
   else if(k === "han"){ S.han = el.value; S.hanTay = !!el.value; if(!el.value) S.hanTay = false; veCapHan(t); }
   else if(k === "mau"){ S.mau = el.value; veNhac(t); }
@@ -3059,7 +3361,7 @@ onAuthStateChanged(auth, async u => {
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "3.0.0";
+const APP_ID = "admin", APP_VERSION = "3.1.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
