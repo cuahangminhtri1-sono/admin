@@ -462,7 +462,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.1.0"
+  ver:"3.1.1"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -871,9 +871,15 @@ function donCho(){
     const d = rNgay(r), cho = d ? -soNgay(d) : null;
     if(cho != null && cho >= 2) co.push({ lop:"canh", t:`Đã chờ ${cho} ngày` });
     if(ck) co.unshift({ lop:"ok", t:`💸 Khách báo ĐÃ chuyển khoản${ngay(ck.luc) ? " " + lauRoi(ck.luc) : ""}` });
+    /* [3.1.1] MẠO DANH: tài khoản A ghi đơn mang email của khách B ⇒ tiền B chuyển bị duyệt nhầm cho A.
+       Email trên đơn phải trùng email của chính tài khoản đó (hồ sơ / đăng ký). */
+    const mTk = String((ACC[uid] || {}).email || (SGN[uid] || {}).email || "").trim().toLowerCase();
+    const mDon = String(r.email || "").trim().toLowerCase();
+    const giaMao = !!(mDon && mTk && mDon !== mTk);
+    if(giaMao) co.unshift({ lop:"xau", t:`Email trên đơn (${mDon}) KHÁC email tài khoản (${mTk}) — coi chừng mạo danh` });
     else co.push({ lop:"", t:"Khách chưa bấm “Đã chuyển khoản” — soát sao kê trước khi duyệt" });
     return { r, uid, app, biet, m, sl, khai, chuan, co, d, lech: biet && donGia > 0 && khai !== chuan,
-             nguy: !!vua || !biet, email: r.email || emailCua(uid), daBao: !!ck };
+             nguy: !!vua || !biet || giaMao, email: r.email || emailCua(uid), daBao: !!ck };
   }).sort((a,b) => (b.daBao - a.daBao) || ((b.d || 0) - (a.d || 0)));
 }
 
@@ -2216,6 +2222,12 @@ function taoKhoan(L, dMail, dTien, tien){
 }
 function doiSoat(text){
   const L = tachDongSK(text);
+  /* [3.1.1] Một email mà gắn với nhiều tài khoản ⇒ không tự gán tiền, bắt kiểm tay (chống mạo danh) */
+  const nhieu = {};
+  const gom = (u, mail) => { const e = String(mail || "").trim().toLowerCase(); if(e && u) (nhieu[e] = nhieu[e] || new Set()).add(u); };
+  Object.keys(ACC).forEach(u => gom(u, (ACC[u] || {}).email)); Object.keys(SGN).forEach(u => gom(u, (SGN[u] || {}).email));
+  LIC.forEach(l => gom(l.uid, l.email)); PAY.forEach(p => gom(p.uid, p.email)); REQ.forEach(r => gom(r._uid, r.email));
+  const soTk = e => (nhieu[String(e || "").trim().toLowerCase()] || new Set()).size;
   const orders = donCho().map((x, oi) => ({ x, oi, k: khoaMail(x.email),
     tien: [...new Set([x.khai, x.chuan, num(x.r.amount)].filter(v => v > 0))] }));
   const cap = [];
@@ -2234,7 +2246,7 @@ function doiSoat(text){
     dungDong.add(c.d.i); if(c.ct) dungDong.add(c.ct.dong.i); dungDon.add(c.o.oi);
     const g = c.ct || dongCoTien(L, c.d, null);
     const khoan = taoKhoan(L, c.d, g ? g.dong : null, g ? g.tien : 0);
-    khop.push({ ...c, tienOk: !!c.ct, khoan, daDung: PAY.find(p => p.ckMa && p.ckMa === khoan.ma) || null, idx: khop.length });
+    khop.push({ ...c, tienOk: !!c.ct, khoan, daDung: PAY.find(p => p.ckMa && p.ckMa === khoan.ma) || null, idx: khop.length, trung: soTk(c.o.x.email) });
   });
   /* Tiền về của khách quen mà không có đơn chờ (khách trả rồi mà không mở màn thanh toán, hoặc đơn đã bị ẩn) */
   const bd = banDoEmail();
@@ -2250,7 +2262,7 @@ function doiSoat(text){
     if(g.dong.i !== d.i && dungDong.has(g.dong.i)) return;
     dungDong.add(d.i); dungDong.add(g.dong.i);
     const hint = goiSauKhoa(d.nd, best.x.k), khoan = taoKhoan(L, d, g.dong, g.tien);
-    ngoai.push({ uid: best.x.uid, email: best.x.e, app: hint || "sono", hint, khoan, lv: best.lv,
+    ngoai.push({ uid: best.x.uid, email: best.x.e, app: hint || "sono", hint, khoan, lv: best.lv, trung: soTk(best.x.e),
                  daDung: PAY.find(p => p.ckMa && p.ckMa === khoan.ma) || null, idx: ngoai.length });
   });
   const chuaTien = orders.filter(o => !dungDon.has(o.oi)).map(o => o.x);
@@ -2287,7 +2299,7 @@ function dongKhopSK(x){
     <div class="don-dau"><div class="gi"><div class="t">${esc(d.email || d.uid)}</div>
       <div class="d">${esc(tenApp(d.app))} · ${d.m} tháng${laCN(d.app) ? ` · ${d.sl} suất` : ""} · đơn ghi ${tienD(d.khai)}</div></div>
       <div class="ti so">${tienD(x.khoan.tien)}</div></div>
-    <div class="chips">${da ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(da))}`, "xau") : x.tienOk ? chip("Đúng số tiền của đơn", "ok") : chip("Thấy tên khách nhưng số tiền khác đơn", "canh")}${x.lv >= 3 ? chip("Khớp trọn email", "ngoc") : chip("Khớp phần tên email", "")}${d.daBao ? chip("Khách đã báo chuyển", "ok") : ""}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}</div>
+    <div class="chips">${da ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(da))}`, "xau") : x.tienOk ? chip("Đúng số tiền của đơn", "ok") : chip("Thấy tên khách nhưng số tiền khác đơn", "canh")}${x.lv >= 3 ? chip("Khớp trọn email", "ngoc") : chip("Khớp phần tên email", "")}${d.daBao ? chip("Khách đã báo chuyển", "ok") : ""}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}${x.trung > 1 ? chip(`Email gắn với ${x.trung} tài khoản — mở hồ sơ kiểm tay`, "xau") : ""}${d.nguy ? chip("Đơn có dấu hiệu cần soát (xem chip đỏ ở đơn)", "xau") : ""}</div>
     <div class="nd-ck">${esc(x.khoan.text)}</div>
     ${da ? "" : `<div class="hang-nut" style="margin-top:10px"><button class="nut chinh" data-act="ds-duyet" data-i="${x.idx}">${ic("xong")}Duyệt theo tiền về</button><button class="nut" data-act="mo-khach" data-uid="${esc(d.uid)}">Hồ sơ</button></div>`}
   </div>`;
@@ -2297,9 +2309,9 @@ function dongNgoaiSK(x){
     <div class="don-dau"><div class="gi"><div class="t">${esc(x.email)}</div>
       <div class="d">${x.hint ? "Nội dung CK ghi gói " + esc(tenApp(x.hint)) : "Nội dung CK không ghi gói — mặc định Sổ Nợ, đổi khi đặt hạn"}</div></div>
       <div class="ti so">${tienD(x.khoan.tien)}</div></div>
-    <div class="chips">${x.daDung ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(x.daDung))}`, "xau") : chip("Có tiền về nhưng KHÔNG có đơn chờ", "canh")}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}</div>
+    <div class="chips">${x.daDung ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(x.daDung))}`, "xau") : chip("Có tiền về nhưng KHÔNG có đơn chờ", "canh")}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}${x.trung > 1 ? chip(`Email gắn với ${x.trung} tài khoản — không tự gán, mở hồ sơ kiểm tay`, "xau") : ""}</div>
     <div class="nd-ck">${esc(x.khoan.text)}</div>
-    ${x.daDung ? "" : `<div class="hang-nut" style="margin-top:10px"><button class="nut chinh" data-act="ds-cap" data-i="${x.idx}">${ic("xong")}Đặt hạn theo tiền về</button><button class="nut" data-act="mo-khach" data-uid="${esc(x.uid)}">Hồ sơ</button></div>`}
+    ${x.daDung ? "" : x.trung > 1 ? `<div class="hang-nut" style="margin-top:10px"><button class="nut" data-act="mo-khach" data-uid="${esc(x.uid)}">Hồ sơ</button></div>` : `<div class="hang-nut" style="margin-top:10px"><button class="nut chinh" data-act="ds-cap" data-i="${x.idx}">${ic("xong")}Đặt hạn theo tiền về</button><button class="nut" data-act="mo-khach" data-uid="${esc(x.uid)}">Hồ sơ</button></div>`}
   </div>`;
 }
 function veKetQuaSK(k){
@@ -3361,7 +3373,7 @@ onAuthStateChanged(auth, async u => {
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "3.1.0";
+const APP_ID = "admin", APP_VERSION = "3.1.1";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
