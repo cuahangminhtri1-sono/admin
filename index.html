@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.4.0"
+  ver:"3.5.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -537,6 +537,11 @@ function giaApp(a){ const o = CFG.oGia[a]; if(!o) return 0;
 /* Giá THẬT của 1 khách: giá riêng (accounts/{uid}.giaRieng) nếu có, không thì giá chung — y như priceFor() app khách */
 function giaRieng(uid, a){ const g = (ACC[uid] || {}).giaRieng; const v = (g && typeof g === "object" && !Array.isArray(g)) ? num(g[a]) : 0; return v > 0 ? Math.round(v) : 0; }
 const giaCua = (uid, a) => giaRieng(uid, a) || giaApp(a);
+/* [3.5] CÔNG TẮC THU PHÍ THEO ĐÚNG LUẬT MÁY CHỦ (Rules VÁ LỖ Z2): THIẾU Ô = THU TIỀN.
+   enforceCn · enforceNganh: thiếu ô = BẬT. cnChung: thiếu ô = TẮT. Chỉ ghi rõ false / true mới nới ra. */
+const batCnMC = c => (c || {}).enforceCn !== false;
+const batNgMC = c => (c || {}).enforceNganh !== false;
+const cnChungMC = c => (c || {}).cnChung === true;
 function apCauHinh(){
   const B = BILL || {}, moi = {};
   if(B.kmGiaHan && typeof B.kmGiaHan === "object" && !Array.isArray(B.kmGiaHan)){
@@ -680,7 +685,20 @@ async function chay(btn, fn, chuDang="Đang làm…"){
 }
 
 /* ══════════════════════════ DỮ LIỆU ══════════════════════════ */
-let LIC = [], ACC = {}, REQ = [], PAY = [], AUD = [], CFGDB = {}, BILL = {}, ERR = [], SGN = {}, REF = {};
+let LIC = [], ACC = {}, REQ = [], PAY = [], AUD = [], CFGDB = {}, BILL = {}, ERR = [], SGN = {}, REF = {}, EMAIL_LA = [];
+/* [3.5] VÁ LỖ Z — CHỈ TIN EMAIL DẠNG CHUỖI. Email dạng danh sách / số / map là mánh mạo danh: app đổi
+   danh sách thành chữ nên hiện y email NGƯỜI KHÁC, qua mặt cả ô so "email đơn khác email tài khoản".
+   Gặp là bỏ trắng (không hiện, không dùng để khớp sao kê) + ghi vào EMAIL_LA cho Radar báo đỏ. */
+function locEmailLa(o, uid, nguon, id){
+  if(!o || o.email == null || typeof o.email === "string") return;
+  let v = ""; try{ v = JSON.stringify(o.email); }catch(e){ v = String(o.email); }
+  EMAIL_LA.push({ uid: String(uid || ""), nguon, id: String(id || uid || ""), v: String(v || "").slice(0, 120) });
+  o.email = "";
+}
+function locEmailDon(){
+  EMAIL_LA = EMAIL_LA.filter(x => x.nguon !== "đơn gia hạn");
+  REQ.forEach(r => locEmailLa(r, r._uid, "đơn gia hạn", r.id));
+}
 let DA_NAP = false, _dangNap = null, LUC_NAP = 0;
 const toiLa = () => (auth.currentUser && auth.currentUser.email) || "";
 
@@ -716,6 +734,13 @@ async function napDuLieu(){
     ERR = (ge ? ge.docs : []).map(d => ({ ...(d.data()||{}), id: d.id }));
     SGN = {}; (gs ? gs.docs : []).forEach(d => { SGN[d.id] = d.data() || {}; });
     REF = {}; (gf ? gf.docs : []).forEach(d => { REF[d.id] = d.data() || {}; });
+    EMAIL_LA = [];                                                        /* [3.5] VÁ LỖ Z */
+    Object.keys(ACC).forEach(u => locEmailLa(ACC[u], u, "hồ sơ"));
+    Object.keys(SGN).forEach(u => locEmailLa(SGN[u], u, "đăng ký"));
+    Object.keys(REF).forEach(u => locEmailLa(REF[u], u, "giới thiệu"));
+    PAY.forEach(p => locEmailLa(p, p.uid, "sổ thu", p.id));
+    LIC.forEach(l => locEmailLa(l, l.uid, "giấy phép", l.app));
+    locEmailDon();
     CFGDB = cf.exists() ? (cf.data()||{}) : {};
     BILL  = gg.exists() ? (gg.data()||{}) : {};
     apCauHinh();
@@ -878,11 +903,14 @@ function donCho(){
     const mTk = String((ACC[uid] || {}).email || (SGN[uid] || {}).email || "").trim().toLowerCase();
     const mDon = String(r.email || "").trim().toLowerCase();
     const giaMao = !!(mDon && mTk && mDon !== mTk);
+    /* [3.5] VÁ LỖ Z: tài khoản từng ghi email dạng lạ ⇒ coi như mạo danh, duyệt phải gõ DUYET */
+    const emLa = EMAIL_LA.some(x => x.uid === uid);
+    if(emLa) co.unshift({ lop:"xau", t:"Tài khoản này ghi email dạng lạ (danh sách / số) — mánh giả email người khác. Chỉ duyệt khi sao kê đúng người trả" });
     if(giaMao) co.unshift({ lop:"xau", t:`Email trên đơn (${mDon}) KHÁC email tài khoản (${mTk}) — coi chừng mạo danh` });
     /* [3.3] SỬA LỖI: bản cũ dùng "else" ⇒ đơn khách ĐÃ bấm “Đã chuyển khoản” vẫn hiện thêm chip “chưa bấm” (tự mâu thuẫn) */
     if(!ck) co.push({ lop:"", t:"Khách chưa bấm “Đã chuyển khoản” — soát sao kê trước khi duyệt" });
-    return { r, uid, app, biet, m, sl, khai, chuan, co, d, lech: biet && donGia > 0 && khai !== chuan, giaMao,
-             nguy: !!vua || !biet || giaMao, email: r.email || emailCua(uid), daBao: !!ck };
+    return { r, uid, app, biet, m, sl, khai, chuan, co, d, lech: biet && donGia > 0 && khai !== chuan, giaMao, emLa,
+             nguy: !!vua || !biet || giaMao || emLa, email: r.email || emailCua(uid), daBao: !!ck };
   }).sort((a,b) => (b.daBao - a.daBao) || ((b.d || 0) - (a.d || 0)));
 }
 
@@ -913,9 +941,9 @@ function radar(){
   const them = (muc, ma, ten, mota, items, hanhDong) => R.push({ muc, ma, ten, mota, items: items || [], hanhDong });
   const sw = k => CFGDB[k];
   if(sw("enforce") === false) them("nang","enforce","Bắt buộc giấy phép đang TẮT","Mọi khách dùng miễn phí toàn bộ app. Bật lại ngay nếu không cố ý.",[{t:"Công tắc enforce = tắt"}],"cong-tac");
-  if(sw("enforceCn") !== true) them("nang","enforceCn","Thu phí chi nhánh đang tắt","Cửa hàng thứ hai trở đi đang chạy miễn phí. Bật ở Cài đặt: app tự quét, shop đang dùng được ÂN HẠN có hạn chót (kèm tin nhắn) — không ai bị chặn đột ngột.",[{t:"Công tắc enforceCn = tắt"}],"cong-tac");
-  if(sw("enforceNganh") !== true) them("nang","enforceNganh","Thu phí gói ngành đang tắt","Bàn F&B, biến thể thời trang, phòng giờ, bậc giá đang dùng miễn phí khi hết hạn gói ngành. Bật ở Cài đặt: app tự quét và cho ân hạn có hạn chót.",[{t:"Công tắc enforceNganh = tắt"}],"cong-tac");
-  if(sw("cnChung") !== false) them("vua","cnChung","Gói chi nhánh chung đang mở cho mọi ngành","1 suất sono_cn dùng được ở cả 5 ngành. Muốn thu đủ từng ngành thì tắt công tắc này ở Cài đặt (app tự quét và cho ân hạn).",[{t:"Công tắc cnChung = bật"}],"cong-tac");
+  if(!batCnMC(CFGDB)) them("nang","enforceCn","Thu phí chi nhánh đang tắt","Cửa hàng thứ hai trở đi đang chạy miễn phí. Bật ở Cài đặt: app tự quét, shop đang dùng được ÂN HẠN có hạn chót (kèm tin nhắn) — không ai bị chặn đột ngột.",[{t:"Công tắc enforceCn = tắt"}],"cong-tac");
+  if(!batNgMC(CFGDB)) them("nang","enforceNganh","Thu phí gói ngành đang tắt","Bàn F&B, biến thể thời trang, phòng giờ, bậc giá đang dùng miễn phí khi hết hạn gói ngành. Bật ở Cài đặt: app tự quét và cho ân hạn có hạn chót.",[{t:"Công tắc enforceNganh = tắt"}],"cong-tac");
+  if(cnChungMC(CFGDB)) them("vua","cnChung","Gói chi nhánh chung đang mở cho mọi ngành","1 suất sono_cn dùng được ở cả 5 ngành. Muốn thu đủ từng ngành thì tắt công tắc này ở Cài đặt (app tự quét và cho ân hạn).",[{t:"Công tắc cnChung = bật"}],"cong-tac");
 
   /* [3.1] Gói CHƯA ĐẶT GIÁ: app khách hiện "liên hệ giá" — không mã QR, không ghi đơn ⇒ mất doanh thu âm thầm */
   const chuaBan = CFG.apps.filter(a => a.indexOf("sono") === 0 && giaApp(a) <= 0);
@@ -940,6 +968,9 @@ function radar(){
   /* [3.3] MẠO DANH: đơn mang email của NGƯỜI KHÁC ⇒ tiền khách B dễ bị duyệt nhầm cho tài khoản A */
   them("nang","maoDanh","Đơn mang email của người khác","Email ghi trên đơn KHÁC email của chính tài khoản gửi đơn — dấu hiệu mạo danh để hưởng tiền người khác chuyển. Duyệt đơn này bắt buộc gõ xác nhận.",
     donCho().filter(x => x.giaMao).map(x => ({ uid:x.uid, t:emailCua(x.uid) || x.uid, d:`${tenApp(x.app)} · đơn ghi email ${x.r.email || "?"}` })));
+  /* [3.5] VÁ LỖ Z — email dạng danh sách / số: mánh mạo danh (Rules QT8 chặn ghi mới, app này bỏ trắng khi hiện) */
+  them("nang","emailLa","Email dạng lạ — mánh mạo danh","Tài khoản ghi email dạng danh sách / số thay vì chữ: app đổi ra chữ là hiện y email NGƯỜI KHÁC để lừa duyệt nhầm tiền. Rules mới đã chặn ghi thêm; app này đã bỏ trắng các email đó. Duyệt đơn của các tài khoản này bắt buộc gõ xác nhận.",
+    EMAIL_LA.map(x => ({ uid:x.uid, t:emailCua(x.uid) || x.uid, d:`${x.nguon} ghi ${x.v}` })));
   /* [3.3] ÂN HẠN THU PHÍ (VÁ LỖ S) — ai đang chạy miễn phí có hạn chót, ai sắp hết */
   const ahDs = Object.keys(ACC).map(u => ({ u, cn: anHanCua(ACC[u], "cn"), ng: anHanCua(ACC[u], "ng") })).filter(x => x.cn || x.ng);
   const ahMoTa = x => [x.cn ? `chi nhánh tới ${ngayVN(new Date(x.cn))}` : "", x.ng ? `gói ngành tới ${ngayVN(new Date(x.ng))}` : ""].filter(Boolean).join(" · ");
@@ -1801,9 +1832,9 @@ function veRadar(){
 /* ─────────── 5. CÀI ĐẶT ─────────── */
 const CONG_TAC = [
   ["enforce","Bắt buộc giấy phép","Tắt là mở toang mọi app cho mọi người dùng miễn phí.", v => v !== false, true],
-  ["enforceCn","Thu phí chi nhánh thêm","Bật: cửa hàng thứ 2 trở đi phải có suất còn hạn mới đọc/ghi được. Quét chi nhánh & miễn trừ khách cũ trước khi bật.", v => v === true, true],
-  ["enforceNganh","Thu phí gói ngành","Bật: hết hạn gói ngành là máy chủ chối két riêng của ngành đó (bàn, biến thể, phòng giờ, bậc giá). Hàng hoá, đơn, sổ nợ vẫn nguyên.", v => v === true, true],
-  ["cnChung","Gói chi nhánh chung cho mọi ngành","Bật: 1 suất sono_cn dùng được ở cả 5 ngành. Tắt: mỗi ngành phải mua đúng gói chi nhánh của ngành đó.", v => v !== false, false],
+  ["enforceCn","Thu phí chi nhánh thêm","Bật: cửa hàng thứ 2 trở đi phải có suất còn hạn mới đọc/ghi được. Quét chi nhánh & miễn trừ khách cũ trước khi bật.", v => v !== false, true],
+  ["enforceNganh","Thu phí gói ngành","Bật: hết hạn gói ngành là máy chủ chối két riêng của ngành đó (bàn, biến thể, phòng giờ, bậc giá). Hàng hoá, đơn, sổ nợ vẫn nguyên.", v => v !== false, true],
+  ["cnChung","Gói chi nhánh chung cho mọi ngành","Bật: 1 suất sono_cn dùng được ở cả 5 ngành. Tắt: mỗi ngành phải mua đúng gói chi nhánh của ngành đó.", v => v === true, false],
   ["choThu","Cho dùng thử miễn phí","Tắt khi có người lập nick hàng loạt ăn dùng thử. Người đang thử dở không bị ảnh hưởng. Số ngày thử đặt trong Bảng giá.", v => v !== false, false],
   ["choLog","Nhận nhật ký lỗi từ máy khách","Tắt khi bị bơm rác cho tốn tiền Firestore. Tắt chỉ mất log, app khách vẫn chạy.", v => v !== false, false],
   ["enforceRef","Khoá gắn người giới thiệu muộn","Bật: chỉ gắn người giới thiệu được lúc tạo tài khoản, chặn mở nick rồi gắn ngược để ăn hoa hồng.", v => v === true, true],
@@ -1820,7 +1851,7 @@ function veCaiDat(){
         <button class="gat ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(t)}" data-act="cong-tac" data-k="${k}"></button></div>`; }).join("")}
       <div class="cong"><div class="gi"><div class="t">Chặn nạp file sao lưu đời cũ</div><div class="d">Bật: file sao lưu bản cũ (không ghi tài khoản chủ) KHÔNG nạp được nữa vì không xác minh được file của ai. Khách giữ file cũ thì đăng nhập tài khoản cũ, xuất lại file mới là xong.</div></div>
         <button class="gat ${BILL.chanFileCu === true ? "on" : ""}" role="switch" aria-checked="${BILL.chanFileCu === true}" aria-label="Chặn nạp file sao lưu đời cũ" data-act="chan-file-cu"></button></div></div>
-    <p class="nho" style="margin:8px 2px 0">Bật thu phí chi nhánh / gói ngành, hoặc tắt gói chi nhánh chung: app tự quét trước; shop nào sẽ bị chặn thì được <b>ân hạn có hạn chót</b> (kèm tin nhắn vào app) thay vì chặn ngay hay miễn trừ mãi.</p>
+    <p class="nho" style="margin:8px 2px 0">Bật thu phí chi nhánh / gói ngành, hoặc tắt gói chi nhánh chung: app tự quét trước; shop nào sẽ bị chặn thì được <b>ân hạn có hạn chót</b> (kèm tin nhắn vào app) thay vì chặn ngay hay miễn trừ mãi. Máy chủ coi <b>ô trống là đang thu tiền</b> — chỉ khi bạn tắt hẳn mới chạy miễn phí.</p>
     ${mucHtml("Bán hàng & chăm khách")}
     <div class="nhom">
       ${dongHtml({ the:"button", act:"mo-bang-gia", ic:"tien", t:"Bảng giá · khuyến mãi · dùng thử · hotline", d: esc(bank || "Chưa cấu hình tài khoản nhận tiền") + ` · Sổ Nợ ${tienD(giaApp("sono"))}/tháng · thử ${ngayThu()} ngày · ${esc(Object.keys(KM_GIA_HAN).length ? Object.entries(KM_GIA_HAN).map(([m,g]) => `mua ${m} tặng ${g}`).join(", ") : "không khuyến mãi")} · ☎ ${esc(hotTxt())}`, mui:true })}
@@ -1880,9 +1911,9 @@ function luatCuaHang(uid, b, gia){
   const acc = ACC[uid] || {}, G = gia || {};
   const laChinh = /^main(_(fnb|fs|rm|kg))?$/.test(b);
   const ng = nganhTheoMa(b);
-  const batCn = ("enforceCn" in G) ? G.enforceCn === true : CFGDB.enforceCn === true,
-        batNg = ("enforceNganh" in G) ? G.enforceNganh === true : CFGDB.enforceNganh === true,
-        cnChung = ("cnChung" in G) ? G.cnChung !== false : CFGDB.cnChung !== false;
+  const batCn = ("enforceCn" in G) ? G.enforceCn === true : batCnMC(CFGDB),
+        batNg = ("enforceNganh" in G) ? G.enforceNganh === true : batNgMC(CFGDB),
+        cnChung = ("cnChung" in G) ? G.cnChung !== false : cnChungMC(CFGDB);
   const ahCn = anHanCua(acc, "cn"), ahNg = anHanCua(acc, "ng");
   let cnOk = true, cnLy = "Cửa hàng chính — miễn phí", maGoi = "", can = 0, cnAH = false;
   if(!laChinh){
@@ -1988,7 +2019,7 @@ function hoCuaHang(S, k){
       <div class="cong"><div class="gi"><div class="t">Cửa hàng mã cũ được duyệt</div>
         <div class="d">${(acc.cnCho||[]).length ? (acc.cnCho||[]).map(c => `<span class="ma">${esc(c)}</span> <button class="nut nho" style="min-height:26px;padding:2px 8px" data-act="bo-duyet" data-uid="${esc(S.uid)}" data-ma="${esc(c)}">Bỏ</button>`).join(" ") : "Chưa duyệt mã nào"}</div>
         ${maCu.length ? `<button class="nut nho" style="margin-top:8px" data-act="duyet-ma-cu" data-uid="${esc(S.uid)}" data-ma="${esc(maCu.map(x => x.b).join(","))}">Duyệt ${maCu.length} mã cũ: ${esc(maCu.map(x => x.b).join(", "))}</button>` : ""}</div></div>
-      <div class="cong"><div class="gi"><div class="t">Suất biếu trong app khách ${base ? chip(CFGDB.enforceCn === true ? "máy chủ không công nhận" : "chỉ có tác dụng trong app", "canh") : ""}</div>
+      <div class="cong"><div class="gi"><div class="t">Suất biếu trong app khách ${base ? chip(batCnMC(CFGDB) ? "máy chủ không công nhận" : "chỉ có tác dụng trong app", "canh") : ""}</div>
         <div class="d">Chỉ nới giới hạn TRONG APP (1 + max(biếu, suất mua)). Máy chủ KHÔNG đọc ô này: khi bật Thu phí chi nhánh, cửa hàng vượt suất vẫn bị chặn — và khách tự ghi được ô này. Muốn tặng thật: tab Giấy phép → gói Chi nhánh → đặt hạn 0đ, hoặc bật Miễn trừ. Hiện: ${base === null ? "chưa chốt" : base + " suất"}. Đặt 0 để thu tiền đủ.</div></div>
         <button class="nut nho" data-act="suat-bieu" data-uid="${esc(S.uid)}" data-v="${base === null ? "" : base}">Đặt</button></div>
     </div>
@@ -2558,7 +2589,7 @@ const KHO_NG_GOC = { pos_tables:"sono_fnb", pos_fnb:"sono_fnb", pos_fs:"sono_fs"
 function khoGocCoGoi(uid, c){ return conHan(licCua(uid, KHO_NG_GOC[c])) || (c === "pos_tables" && conHan(licCua(uid, "sono_qr"))); }
 function hangCN(uid, ids, gia, gocKho){
   const L = ids.map(b => luatCuaHang(uid, b, gia)), cho = (ACC[uid] || {}).cnCho, G = gia || {};
-  const batNg = ("enforceNganh" in G) ? G.enforceNganh === true : CFGDB.enforceNganh === true;
+  const batNg = ("enforceNganh" in G) ? G.enforceNganh === true : batNgMC(CFGDB);
   const ahNg = anHanCua(ACC[uid] || {}, "ng");
   const gocNg = (gocKho || []).filter(c => KHO_NG_GOC[c] && !khoGocCoGoi(uid, c));
   return { uid, ids, gocKho: gocKho || [], gocNg, gocLau: (!batNg && !ahNg) ? gocNg : [], gocChan: (batNg && !ahNg) ? gocNg : [], gocAH: ahNg ? gocNg : [],
@@ -2608,7 +2639,7 @@ async function chayQuetCN(t){
   t.S.dang = false; if(TAM.includes(t)) veQuetCN(t); if(VIEW === "radar") veRadar();
 }
 function veQuetCN(t){
-  const q = tinhLaiQuetCN(), bCn = CFGDB.enforceCn === true, bNg = CFGDB.enforceNganh === true;
+  const q = tinhLaiQuetCN(), bCn = batCnMC(CFGDB), bNg = batNgMC(CFGDB);
   if(t.S.dang || !q){ t.than.innerHTML = trong(t.S.td || "Đang quét…", "Mỗi shop đọc danh sách cửa hàng một lần"); t.chan.innerHTML = ""; return; }
   t.than.innerHTML = `
     <div class="luoi" style="margin-bottom:10px">
@@ -3290,7 +3321,7 @@ const ACT = {
     if(vals.account && !/^[0-9A-Za-z]{4,25}$/.test(vals.account)) return bao("Số tài khoản không hợp lệ", 1);
     CFG.apps.forEach(a => { vals["g_" + a] = g("g_" + a); });
     const nt = g("ngayThu").replace(/[^0-9]/g,""); vals.ngayThu = nt ? Number(nt) : 0;
-    if(nt && !(vals.ngayThu >= 1 && vals.ngayThu <= 14)) return bao("Số ngày dùng thử phải từ 1 đến 14 (máy chủ chặn trên 16 ngày)", 1);
+    if(nt && !(vals.ngayThu >= 1 && vals.ngayThu <= 14)) return bao("Số ngày dùng thử phải từ 1 đến 14 (máy chủ giữ đúng số ngày này)", 1);
     const hl = g("hotline").replace(/[^0-9]/g,""); vals.hotline = hl;
     if(hl && !/^0[0-9]{8,10}$/.test(hl)) return bao("Hotline phải là số điện thoại Việt Nam (bắt đầu bằng 0, 9–11 số)", 1);
     vals.km = {};
@@ -3335,7 +3366,7 @@ async function doiCongTacUI(b){
     const ds = aiBiChan(gia2);
     if(ds.length) return moBatAnToan(k, ds);
     nd = `Đã quét ${QUET.cn.soShop} shop: ${moi ? "bật" : "tắt"} công tắc này KHÔNG chặn cửa hàng nào. ${moi ? "Bật" : "Tắt"} ngay?`;
-    if(k === "cnChung" && CFGDB.enforceCn !== true) nd += "\n\nThu phí chi nhánh đang TẮT nên chưa ai bị chặn. Khi bật, mỗi ngành phải có gói chi nhánh riêng — lúc đó app quét lại và cho ân hạn.";
+    if(k === "cnChung" && !batCnMC(CFGDB)) nd += "\n\nThu phí chi nhánh đang TẮT nên chưa ai bị chặn. Khi bật, mỗi ngành phải có gói chi nhánh riêng — lúc đó app quét lại và cho ân hạn.";
   }
   if(k === "choThu" && !moi) nd += "\n\nKhách MỚI sẽ không tự mở dùng thử được nữa.";
   if(!(await hoi({ tieuDe:"Đổi công tắc", noiDung:nd, nutOk: moi ? "Bật" : "Tắt", nguy }))) return;
@@ -3366,7 +3397,8 @@ async function capOk(t, btn){
   const tom = `${tenApp(S.app)} · ${S.thang} tháng${laCN(S.app) ? ` · ${S.qty} suất` : ""}\nHạn mới: ${ngayVN(hanMoi)}\nGhi sổ: ${tienD(S.tien)}`;
   /* [3.3] Đơn mang email người khác / email sao kê gắn nhiều tài khoản ⇒ KHÔNG duyệt 1 chạm: phải gõ DUYET */
   const dcx = S.r ? donCho().find(d => d.r.id === S.r.id) : null;
-  const canGo = !!(S.canGo || (dcx && dcx.giaMao));
+  const canGo = !!(S.canGo || (dcx && (dcx.giaMao || dcx.emLa)));
+  if(dcx && dcx.emLa) hoiLai.unshift("MẠO DANH? Tài khoản này ghi email dạng danh sách / số — mánh giả email người khác. Chỉ duyệt khi sao kê ghi đúng người trả.");   /* [3.5] VÁ LỖ Z */
   if(dcx && dcx.giaMao) hoiLai.unshift(`MẠO DANH? Email trên đơn (${S.r.email || "?"}) KHÁC email tài khoản (${emailCua(S.uid) || "?"}). Chỉ duyệt khi chắc chắn tiền là của CHÍNH tài khoản này.`);
   else if(S.canGo) hoiLai.unshift("Email trong sao kê gắn với NHIỀU tài khoản — mở hồ sơ kiểm tay cho chắc tiền về đúng người.");
   if(!(await hoi({ tieuDe: S.r ? "Duyệt đơn" : "Đặt hạn", noiDung: (hoiLai.length ? "⚠️ " + hoiLai.join("\n⚠️ ") + "\n\n" : "") + tom, nutOk: S.r ? "Duyệt" : "Đặt hạn", nguy: hoiLai.length > 0, go: canGo ? "DUYET" : null }))){
@@ -3854,7 +3886,7 @@ function ngheDon(){
       moiDs.forEach(r => { if(!rCho(r)) return; const o = cu.get(r.id);
         if(!o || !rCho(o)) (coCK(r) ? ck : moi).push(r);
         else if(coCK(r) && !coCK(o)) ck.push(r); });
-      REQ = moiDs; donCu();
+      REQ = moiDs; locEmailDon(); donCu();
       if(!DA_NAP) return;
       _donDaThay = new Set(REQ.filter(rCho).map(r => r.id));
       veHuyHieu();
