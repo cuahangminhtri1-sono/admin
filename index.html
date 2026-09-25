@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.5.0"
+  ver:"3.6.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -700,6 +700,10 @@ function locEmailDon(){
   REQ.forEach(r => locEmailLa(r, r._uid, "đơn gia hạn", r.id));
 }
 let DA_NAP = false, _dangNap = null, LUC_NAP = 0;
+/* [3.6] Dấu “Đã đối chiếu” của radar Hai lần thu cùng gói — ghi ở kho audit (chỉ tạo, không sửa xoá được).
+   DC_LOG: đọc riêng mỗi lần tải số liệu (không bị giới hạn 3000 dòng nhật ký) · DC_MOI: dòng vừa ghi ở phiên này. */
+const DC_VIEC = ["doi_chieu_thu", "bo_doi_chieu_thu"];
+let DC_LOG = [], DC_MOI = [];
 const toiLa = () => (auth.currentUser && auth.currentUser.email) || "";
 
 function datDongBo(tt){ const d = $("#dongBo"); if(d) d.className = "dongbo " + (tt||""); }
@@ -710,7 +714,7 @@ async function napDuLieu(){
     /* Cố ý KHÔNG dùng bộ đệm ngoại tuyến: tiền và hạn phải là số thật trên máy chủ. */
     if(!navigator.onLine) throw new Error("Không có mạng");
     datDongBo("dang");
-    const [gl, ga, gr, gp, cf, gg, gd, ge, gs, gf] = await Promise.all([
+    const [gl, ga, gr, gp, cf, gg, gd, ge, gs, gf, gdc] = await Promise.all([
       getDocs(collectionGroup(fdb,"lic")),
       getDocs(collection(fdb,"accounts")),
       getDocs(collection(fdb,"renewalRequests")),
@@ -720,7 +724,8 @@ async function napDuLieu(){
       getDocs(query(collection(fdb,"audit"), orderBy("at","desc"), limit(3000))).catch(() => getDocs(collection(fdb,"audit")).catch(()=>null)),
       getDocs(query(collection(fdb,"error_logs"), orderBy("tsClient","desc"), limit(1500))).catch(()=>null),
       getDocs(collection(fdb,"signups")).catch(()=>null),
-      getDocs(collection(fdb,"referrals")).catch(()=>null)
+      getDocs(collection(fdb,"referrals")).catch(()=>null),
+      getDocs(query(collection(fdb,"audit"), where("viec","in",DC_VIEC))).catch(()=>null)   /* [3.6] */
     ]);
     if([gl,ga,gr,gp].some(x => x && x.metadata && x.metadata.fromCache))
       throw new Error("Mạng chập chờn — chưa lấy được số thật, hãy tải lại");
@@ -731,6 +736,7 @@ async function napDuLieu(){
       return { ...x, id: d.id, _uid: x.uid || p[0], _app: x.app || p[1] || "" }; });
     PAY = gp.docs.map(d => ({ ...(d.data()||{}), id: d.id }));
     AUD = (gd ? gd.docs : []).map(d => ({ ...(d.data()||{}), id: d.id }));
+    DC_LOG = gdc ? gdc.docs.map(d => ({ ...(d.data()||{}), id: d.id })) : AUD.filter(x => DC_VIEC.includes(x.viec));   /* [3.6] */
     ERR = (ge ? ge.docs : []).map(d => ({ ...(d.data()||{}), id: d.id }));
     SGN = {}; (gs ? gs.docs : []).forEach(d => { SGN[d.id] = d.data() || {}; });
     REF = {}; (gf ? gf.docs : []).forEach(d => { REF[d.id] = d.data() || {}; });
@@ -981,10 +987,12 @@ function radar(){
 
   const trung = [];
   const tp = PAY.filter(p => pTien(p) > 0 && p.uid && p.app && !p.dieuChinh && pNgay(p)).sort((a,b) => pNgay(a) - pNgay(b));
+  const daDC = dcDaDoiChieu();   /* [3.6] cặp đã bấm “Đã đối chiếu” thôi tính — soát xong là số giảm */
   for(let i = 1; i < tp.length; i++){
     for(let j = i-1; j >= 0 && (pNgay(tp[i]) - pNgay(tp[j])) < 3*864e5; j--){
       if(tp[j].uid === tp[i].uid && tp[j].app === tp[i].app){
-        trung.push({ uid:tp[i].uid, t:tp[i].email||emailCua(tp[i].uid)||tp[i].uid,
+        const k = dcKhoaCap(tp[i], tp[j]);
+        if(!daDC.has(k)) trung.push({ uid:tp[i].uid, t:tp[i].email||emailCua(tp[i].uid)||tp[i].uid, k, app:tp[i].app,
           d:`${tenApp(tp[i].app)} · thu ${tienD(pTien(tp[j]))} lúc ${gioVN(pNgay(tp[j]))} rồi ${tienD(pTien(tp[i]))} lúc ${gioVN(pNgay(tp[i]))}` });
         break;
       }
@@ -2553,6 +2561,7 @@ function moRadar(ma){
   veMucRadar(t);
 }
 function veMucRadar(t){
+  if(t.S && t.S.ma === "thuTrung") return veThuTrung(t);   /* [3.6] mục này có nút Đã đối chiếu */
   const x = radar().find(y => y.ma === t.S.ma);
   if(!x || !x.items.length){ t.datTieuDe("Radar"); t.than.innerHTML = trong("Đã sạch","Mục này không còn gì cần xử lý."); t.chan.innerHTML = ""; return; }
   t.datTieuDe(x.ten);
@@ -4038,6 +4047,89 @@ Object.assign(ACT, {
       await ghiChung("chan_file_cu", { ghi: moi ? "bật" : "tắt" });
       bao(moi ? "Đã chặn file sao lưu đời cũ" : "Đã mở lại file sao lưu đời cũ"); await taiLai(true); });
   }
+});
+
+/* ══════════════════════════ [3.6] RADAR “HAI LẦN THU CÙNG GÓI” — NÚT ĐÃ ĐỐI CHIẾU ══════════════════════════
+   Soát sao kê xong (đủ 2 khoản tiền về, hoặc đã ghi dòng điều chỉnh + đặt lại hạn) → bấm “Đã đối chiếu”:
+   cặp đó thôi tính vào radar. Dấu ghi vào kho audit (chỉ tạo, không sửa xoá được) nên mọi máy đều thấy và
+   luôn còn dấu vết ai đối chiếu, lúc nào. Bấm nhầm → “Mở lại” (ghi thêm 1 dòng, không xoá dòng cũ).
+   Khoá 1 cặp = mã dòng thu SAU ~ mã dòng thu TRƯỚC, nằm cuối ô ghi: "<mô tả> · #<khoá>".                    */
+function dcKhoaCap(sau, truoc){ return String(sau.id) + "~" + String(truoc.id); }
+function dcKhoaGhi(ghi){ const m = /#([^\s#~]+~[^\s#~]+)$/.exec(String(ghi || "")); return m ? m[1] : ""; }
+function dcMoTaGhi(ghi){ return String(ghi || "").replace(/ · #[^\s#~]+~[^\s#~]+$/, ""); }
+/* khoá → dòng nhật ký MỚI NHẤT của cặp đó (đối chiếu hay mở lại) */
+function dcTrangThai(){
+  const m = new Map();
+  try{
+    const co = new Set(DC_LOG.map(x => x && x.id));
+    DC_LOG.concat(DC_MOI.filter(x => !co.has(x.id)))
+      .filter(x => x && DC_VIEC.includes(x.viec))
+      .map((x, i) => ({ x, i, t: +(ngay(x.at) || 0) }))
+      .sort((a, b) => (a.t - b.t) || (a.i - b.i))
+      .forEach(({ x }) => { const k = dcKhoaGhi(x.ghi); if(k) m.set(k, x); });
+  }catch(e){ console.warn("đối chiếu thu trùng:", e); }
+  return m;
+}
+function dcDaDoiChieu(){
+  const s = new Set();
+  dcTrangThai().forEach((x, k) => { if(x.viec === "doi_chieu_thu") s.add(k); });
+  return s;
+}
+async function ghiDoiChieu(viec, k, uid, app, moTa){
+  if(!navigator.onLine) throw new Error("Không có mạng — chưa ghi được");
+  const e = sach({ ...buoc(viec, { ghi: `${String(moTa || "").slice(0, 200)} · #${k}` }), uid: uid || "", app: app || "" });
+  const ref = await addDoc(collection(fdb,"audit"), e);
+  const x = { ...e, id: ref.id };
+  DC_MOI.push(x); AUD.unshift(x);
+  return x;
+}
+function veThuTrung(t){
+  const x = radar().find(y => y.ma === "thuTrung") || { ten:"Hai lần thu cùng gói trong 3 ngày", mota:"", items:[] };
+  const cho = x.items.filter(i => i.k);
+  const coPay = new Set(PAY.map(p => p.id));
+  const da = [...dcTrangThai().entries()].filter(([k, e]) => e.viec === "doi_chieu_thu" && coPay.has(k.split("~")[0]))
+    .sort((a, b) => (ngay(b[1].at) || 0) - (ngay(a[1].at) || 0));
+  const dong = (tieu, d1, d2, uid, nut) => `<div class="dong" style="flex-wrap:wrap">
+      <span class="gi"><span class="t" style="display:block">${esc(tieu)}</span>${d1 ? `<span class="d" style="display:block">${esc(d1)}</span>` : ""}${d2 ? `<span class="d" style="display:block">${esc(d2)}</span>` : ""}</span>
+      <span class="hang-nut" style="width:100%;margin-top:8px">${uid ? `<button class="nut nho" data-act="mo-khach" data-uid="${esc(uid)}">Hồ sơ</button>` : ""}${nut}</span></div>`;
+  t.datTieuDe(x.ten);
+  t.than.innerHTML = (cho.length
+      ? `<div class="bao canh">${esc(x.mota)}<br>Soát xong — sao kê có đủ 2 khoản tiền về, hoặc đã sửa (dòng điều chỉnh + đặt lại hạn) — thì bấm <b>Đã đối chiếu</b>: cặp đó thôi tính vào radar.</div>
+    <div class="nhom">${cho.slice(0, 200).map(i => dong(i.t, i.d, "", i.uid,
+        `<button class="nut nho chinh" data-act="doi-chieu-thu" data-k="${esc(i.k)}">Đã đối chiếu</button>`)).join("")}</div>
+    ${cho.length > 200 ? `<p class="nho">…và ${cho.length - 200} cặp nữa</p>` : ""}`
+      : trong("Đã sạch", "Mọi cặp thu trùng đều đã đối chiếu."))
+    + (da.length ? mucHtml("Đã đối chiếu", `${da.length} cặp`, `<button class="lk" data-act="xem-doi-chieu">${t.S.xemDC ? "Ẩn" : "Xem"}</button>`)
+      + (t.S.xemDC ? `<div class="nhom">${da.slice(0, 200).map(([k, e]) => dong(emailCua(e.uid) || e.uid || "—", dcMoTaGhi(e.ghi),
+          `Đối chiếu ${gioVN(e.at)}${e.boi ? " · " + e.boi : ""}`, e.uid,
+          `<button class="nut nho" data-act="mo-lai-thu" data-k="${esc(k)}">Mở lại</button>`)).join("")}</div>
+    ${da.length > 200 ? `<p class="nho">…và ${da.length - 200} cặp cũ hơn</p>` : ""}` : "") : "");
+  t.chan.innerHTML = "";
+}
+Object.assign(TEN_VIEC, { doi_chieu_thu:"Đã đối chiếu thu trùng", bo_doi_chieu_thu:"Mở lại thu trùng" });
+Object.assign(ACT, {
+  "doi-chieu-thu": async b => {
+    const t = tamCua(b), k = String(b.dataset.k || "");
+    const x = radar().find(y => y.ma === "thuTrung"), it = x ? x.items.find(i => i.k === k) : null;
+    if(!it){ if(t) veMucRadar(t); return bao("Cặp này không còn trong danh sách chờ"); }
+    await chay(b, async () => {
+      await ghiDoiChieu("doi_chieu_thu", k, it.uid, it.app, it.d);
+      if(t && TAM.includes(t)) veMucRadar(t);
+      veRadar(); veHuyHieu();
+      bao("Đã đối chiếu: " + it.t);
+    }, "Đang ghi…");
+  },
+  "mo-lai-thu": async b => {
+    const t = tamCua(b), k = String(b.dataset.k || ""), e = dcTrangThai().get(k);
+    if(!e || e.viec !== "doi_chieu_thu"){ if(t) veMucRadar(t); return; }
+    await chay(b, async () => {
+      await ghiDoiChieu("bo_doi_chieu_thu", k, e.uid, e.app, dcMoTaGhi(e.ghi));
+      if(t && TAM.includes(t)) veMucRadar(t);
+      veRadar(); veHuyHieu();
+      bao("Đã mở lại — cặp này tính lại vào radar");
+    }, "Đang ghi…");
+  },
+  "xem-doi-chieu": b => { const t = tamCua(b); if(!t || !t.S) return; t.S.xemDC = !t.S.xemDC; veMucRadar(t); }
 });
 
 /* ══════════════════════════ [3.4] KIỂM SOÁT 100% SỔ NỢ + CHẶN NICK DÙNG THỬ ══════════════════════════
