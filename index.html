@@ -342,6 +342,8 @@ button.dong:active{background:var(--mat2)}
 
 /* ── hộp hỏi & thông báo nhỏ ── */
 .hop-nen{position:fixed;inset:0;z-index:90;background:rgba(6,20,18,.55);display:flex;align-items:center;justify-content:center;padding:20px}
+/* [3.3] Thanh mời cài app (z-index tối đa) đè lên nút cuối tấm / hộp xác nhận khi mở bằng trình duyệt ⇒ ẩn tạm lúc đang mở */
+body:has(.tam.on) #caiBar,body:has(.hop-nen) #caiBar,#man.on~#caiBar{display:none!important}
 .hop{background:var(--mat);border-radius:var(--r3);max-width:420px;width:100%;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.35);max-height:88vh;overflow:auto}
 .hop h4{margin:0 0 8px;font-size:16.5px;font-weight:700}
 .hop .nd{font-size:14px;line-height:1.6;color:var(--muc);white-space:pre-line;word-break:break-word}
@@ -431,7 +433,7 @@ import { initializeAuth, indexedDBLocalPersistence, browserLocalPersistence, bro
          EmailAuthProvider, reauthenticateWithCredential, updatePassword }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
 import { getFirestore, collection, collectionGroup, doc, getDoc, getDocs, setDoc, addDoc, deleteDoc,
-         writeBatch, runTransaction, query, where, orderBy, limit, arrayUnion, arrayRemove, deleteField }
+         writeBatch, runTransaction, query, where, orderBy, limit, arrayUnion, arrayRemove, deleteField, onSnapshot }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-functions.js";
@@ -445,7 +447,7 @@ const CFG = {
   ten:{ sono:"Sổ Nợ", sono_pos:"Bán hàng (POS)", sono_cn:"Chi nhánh thêm", sono_cn_fnb:"Chi nhánh · F&B",
         sono_cn_fs:"Chi nhánh · Thời trang", sono_cn_rm:"Chi nhánh · Karaoke/Spa", sono_cn_kg:"Chi nhánh · Cân ký",
         sono_fnb:"Gói F&B", sono_fs:"Gói Thời trang", sono_rm:"Gói Karaoke/Spa", sono_kg:"Gói Cân ký",
-        sono_qr:"Gói Đơn QR tại bàn", cafe:"Quản Lý Cafe", tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng" },
+        sono_qr:"Gói Bán online", cafe:"Quản Lý Cafe", tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng" },
   apps:["sono","sono_pos","sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg",
         "sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr","cafe","tro","xe","hd"],
   /* Tên ô giá và giá mặc định — chép đúng priceFor() của các app khách.
@@ -462,12 +464,12 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.2.0"
+  ver:"3.3.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
   { ten:"Chi nhánh thêm (bán theo suất)", apps:["sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg"] },
-  { ten:"Gói ngành & Đơn QR", apps:["sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr"] },
+  { ten:"Gói ngành & Bán online", apps:["sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr"] },
   { ten:"App khác", apps:["cafe","tro","xe","hd"] }
 ];
 /* KHUYẾN MÃI mặc định: mua 12 tháng TẶNG 2 (thu tiền 10) — y hệt KM_GIA_HAN của app khách.
@@ -877,8 +879,9 @@ function donCho(){
     const mDon = String(r.email || "").trim().toLowerCase();
     const giaMao = !!(mDon && mTk && mDon !== mTk);
     if(giaMao) co.unshift({ lop:"xau", t:`Email trên đơn (${mDon}) KHÁC email tài khoản (${mTk}) — coi chừng mạo danh` });
-    else co.push({ lop:"", t:"Khách chưa bấm “Đã chuyển khoản” — soát sao kê trước khi duyệt" });
-    return { r, uid, app, biet, m, sl, khai, chuan, co, d, lech: biet && donGia > 0 && khai !== chuan,
+    /* [3.3] SỬA LỖI: bản cũ dùng "else" ⇒ đơn khách ĐÃ bấm “Đã chuyển khoản” vẫn hiện thêm chip “chưa bấm” (tự mâu thuẫn) */
+    if(!ck) co.push({ lop:"", t:"Khách chưa bấm “Đã chuyển khoản” — soát sao kê trước khi duyệt" });
+    return { r, uid, app, biet, m, sl, khai, chuan, co, d, lech: biet && donGia > 0 && khai !== chuan, giaMao,
              nguy: !!vua || !biet || giaMao, email: r.email || emailCua(uid), daBao: !!ck };
   }).sort((a,b) => (b.daBao - a.daBao) || ((b.d || 0) - (a.d || 0)));
 }
@@ -910,9 +913,9 @@ function radar(){
   const them = (muc, ma, ten, mota, items, hanhDong) => R.push({ muc, ma, ten, mota, items: items || [], hanhDong });
   const sw = k => CFGDB[k];
   if(sw("enforce") === false) them("nang","enforce","Bắt buộc giấy phép đang TẮT","Mọi khách dùng miễn phí toàn bộ app. Bật lại ngay nếu không cố ý.",[{t:"Công tắc enforce = tắt"}],"cong-tac");
-  if(sw("enforceCn") !== true) them("nang","enforceCn","Thu phí chi nhánh đang tắt","Cửa hàng thứ hai trở đi đang chạy miễn phí. Quét chi nhánh, miễn trừ khách cũ rồi bật.",[{t:"Công tắc enforceCn = tắt"}],"quet-cn");
-  if(sw("enforceNganh") !== true) them("nang","enforceNganh","Thu phí gói ngành đang tắt","Bàn F&B, biến thể thời trang, phòng giờ, bậc giá đang dùng miễn phí khi hết hạn gói ngành.",[{t:"Công tắc enforceNganh = tắt"}],"quet-cn");
-  if(sw("cnChung") !== false) them("vua","cnChung","Gói chi nhánh chung đang mở cho mọi ngành","1 suất sono_cn dùng được ở cả 5 ngành. Muốn thu đủ từng ngành thì tắt công tắc này (sau khi quét).",[{t:"Công tắc cnChung = bật"}],"cong-tac");
+  if(sw("enforceCn") !== true) them("nang","enforceCn","Thu phí chi nhánh đang tắt","Cửa hàng thứ hai trở đi đang chạy miễn phí. Bật ở Cài đặt: app tự quét, shop đang dùng được ÂN HẠN có hạn chót (kèm tin nhắn) — không ai bị chặn đột ngột.",[{t:"Công tắc enforceCn = tắt"}],"cong-tac");
+  if(sw("enforceNganh") !== true) them("nang","enforceNganh","Thu phí gói ngành đang tắt","Bàn F&B, biến thể thời trang, phòng giờ, bậc giá đang dùng miễn phí khi hết hạn gói ngành. Bật ở Cài đặt: app tự quét và cho ân hạn có hạn chót.",[{t:"Công tắc enforceNganh = tắt"}],"cong-tac");
+  if(sw("cnChung") !== false) them("vua","cnChung","Gói chi nhánh chung đang mở cho mọi ngành","1 suất sono_cn dùng được ở cả 5 ngành. Muốn thu đủ từng ngành thì tắt công tắc này ở Cài đặt (app tự quét và cho ân hạn).",[{t:"Công tắc cnChung = bật"}],"cong-tac");
 
   /* [3.1] Gói CHƯA ĐẶT GIÁ: app khách hiện "liên hệ giá" — không mã QR, không ghi đơn ⇒ mất doanh thu âm thầm */
   const chuaBan = CFG.apps.filter(a => a.indexOf("sono") === 0 && giaApp(a) <= 0);
@@ -925,9 +928,25 @@ function radar(){
     "Không có ngày hết hạn và không đánh dấu vĩnh viễn: app khách tưởng còn dùng được nhưng máy chủ chặn. Đặt hạn hoặc sửa hàng loạt thành vĩnh viễn.",
     tn.map(l => ({ uid:l.uid, t:emailCua(l.uid)||l.uid, d:`${tenApp(l.app)} · ${tt(l).ten}` })), "sua-vv");
 
+  /* [3.3] Chỉ đơn khách ĐÃ BÁO chuyển khoản mới là "nặng". Bản cũ đếm cả đơn chỉ mở màn thanh toán rồi bỏ
+     ⇒ radar báo động giả, huy hiệu đỏ hoài, dễ lờn mắt mà bỏ sót đơn đã trả tiền thật. */
   const cham = REQ.filter(r => rCho(r) && rNgay(r) && -soNgay(rNgay(r)) >= 2);
-  them("nang","choLau","Đơn chờ quá 2 ngày","Khách đã chuyển khoản mà chưa được mở — để lâu là mất khách.",
-    cham.map(r => ({ uid:r._uid, t:r.email||emailCua(r._uid)||r._uid, d:`${tenApp(r._app)} · ${tienD(r.amount)} · chờ ${-soNgay(rNgay(r))} ngày` })));
+  const coCK = r => !!(r.ck && typeof r.ck === "object");
+  const dongCho = r => ({ uid:r._uid, t:r.email||emailCua(r._uid)||r._uid, d:`${tenApp(r._app)} · ${tienD(coCK(r) && r.ck.tien != null ? r.ck.tien : r.amount)} · chờ ${-soNgay(rNgay(r))} ngày` });
+  them("nang","choLau","Khách báo đã chuyển khoản mà chờ quá 2 ngày","Khách đã bấm “Đã chuyển khoản” mà chưa được mở — đối soát sao kê và duyệt ngay, để lâu là mất khách.",
+    cham.filter(coCK).map(dongCho));
+  them("nhe","choBo","Đơn mở màn thanh toán rồi bỏ (quá 2 ngày)","Khách chưa báo chuyển khoản — thường chỉ mở xem giá. Soát sao kê; không thấy tiền thì Ẩn cho gọn.",
+    cham.filter(r => !coCK(r)).map(dongCho));
+  /* [3.3] MẠO DANH: đơn mang email của NGƯỜI KHÁC ⇒ tiền khách B dễ bị duyệt nhầm cho tài khoản A */
+  them("nang","maoDanh","Đơn mang email của người khác","Email ghi trên đơn KHÁC email của chính tài khoản gửi đơn — dấu hiệu mạo danh để hưởng tiền người khác chuyển. Duyệt đơn này bắt buộc gõ xác nhận.",
+    donCho().filter(x => x.giaMao).map(x => ({ uid:x.uid, t:emailCua(x.uid) || x.uid, d:`${tenApp(x.app)} · đơn ghi email ${x.r.email || "?"}` })));
+  /* [3.3] ÂN HẠN THU PHÍ (VÁ LỖ S) — ai đang chạy miễn phí có hạn chót, ai sắp hết */
+  const ahDs = Object.keys(ACC).map(u => ({ u, cn: anHanCua(ACC[u], "cn"), ng: anHanCua(ACC[u], "ng") })).filter(x => x.cn || x.ng);
+  const ahMoTa = x => [x.cn ? `chi nhánh tới ${ngayVN(new Date(x.cn))}` : "", x.ng ? `gói ngành tới ${ngayVN(new Date(x.ng))}` : ""].filter(Boolean).join(" · ");
+  them("vua","anHanSapHet","Ân hạn thu phí sắp hết (≤ 3 ngày)","Shop đang chạy chi nhánh / gói ngành miễn phí có hạn chót. Nhắc mua ngay — qua hạn chót là máy chủ chặn thật.",
+    ahDs.filter(x => Math.min(...[x.cn, x.ng].filter(Boolean)) - Date.now() <= 3*864e5).map(x => ({ uid:x.u, t:emailCua(x.u) || x.u, d:ahMoTa(x) })), "nhac-an-han");
+  them("nhe","anHan","Shop đang được ân hạn thu phí","Đang chạy miễn phí tới hạn chót đã cấp lúc bật thu phí. Qua hạn chót chưa mua là máy chủ tự chặn.",
+    ahDs.map(x => ({ uid:x.u, t:emailCua(x.u) || x.u, d:ahMoTa(x) })));
 
   const trung = [];
   const tp = PAY.filter(p => pTien(p) > 0 && p.uid && p.app && !p.dieuChinh && pNgay(p)).sort((a,b) => pNgay(a) - pNgay(b));
@@ -1120,7 +1139,8 @@ async function capHan({ uid, app, thang, soTien, qty, hanMoi, ghiChu, r, vanTay,
     if(reqRef) tx.set(reqRef, { status:"done", ngStatus:"done", handledAt:new Date(), ck:deleteField() }, { merge:true });
     else if(r && r._cu) tx.set(doc(fdb,"accounts",r._uid), { posRequested:false }, { merge:true });
   });
-  if(thang >= GOI_TOI_THIEU) await thuongNeuDu(uid, app, thang);
+  /* [3.3] Chỉ thưởng người giới thiệu khi CÓ thu tiền: cấp 12 tháng 0đ (tặng / đền bù) không phải bạn bè trả gói năm */
+  if(thang >= GOI_TOI_THIEU && soTien > 0) await thuongNeuDu(uid, app, thang);
 }
 async function datVinhVien(uid, app, r, qty){
   const cn = laCN(app);
@@ -1157,9 +1177,16 @@ async function ghiDieuChinh(p, soTien, ly){
     at:new Date(), src:"dieu_chinh", dieuChinh:true, ghiChu:`Điều chỉnh dòng ${p.id}: ${ly}`, nguoiDuyet:toiLa() }));
   if(p.uid && p.app) await ghiLic(p.uid, p.app, "dieu_chinh", { tien:soTien, ghi:ly });
 }
+/* [3.3] Giấy phép "thiếu hạn" chỉ đáng gắn VĨNH VIỄN khi khách ĐÃ từng trả tiền cho đúng gói đó (có dòng thu,
+   hoặc lịch sử gia hạn / đặt vĩnh viễn). Bản cũ gắn cho TẤT CẢ ⇒ ai lọt giấy phép trống (không trả đồng nào)
+   thành dùng MIỄN PHÍ TRỌN ĐỜI. Số còn lại bỏ qua — mở hồ sơ từng người để đặt hạn cho đúng. */
+function daTraGoi(l){
+  return PAY.some(p => p.uid === l.uid && p.app === l.app && pTien(p) > 0)
+      || (Array.isArray(l.lichSu) && l.lichSu.some(x => x && ["gia_han","dat_vinh_vien"].includes(x.viec)));
+}
 async function suaVinhVienLoat(){
   /* Giấy phép đang KHOÁ thì bỏ qua: gắn vĩnh viễn cho chúng là gài mìn — mở khoá ra là miễn phí trọn đời */
-  const ds = LIC.filter(l => tt(l).ma === "trong");
+  const ds = LIC.filter(l => tt(l).ma === "trong" && daTraGoi(l));
   let xong = 0;
   for(let i = 0; i < ds.length; i += 200){
     const b = writeBatch(fdb);
@@ -1255,7 +1282,7 @@ async function epChotCa(uid, br, caId){
   await ghiChung("ep_chot_ca", { ghi:`${br}/${caId}` }, uid);
 }
 const KHO_LINK = { sono:"shares", qr:"shares_qr", hd:"shares_hd", xe:"shares_xe" };
-const TEN_LINK = { sono:"Link nhắc nợ / hoá đơn", qr:"Link thực đơn QR", hd:"Link tra cứu tài xế", xe:"Link định vị xe" };
+const TEN_LINK = { sono:"Link nhắc nợ / hoá đơn", qr:"Link thực đơn QR / cửa hàng online", hd:"Link tra cứu tài xế", xe:"Link định vị xe" };
 async function thuHoiLink(uid, loai, tok){ await deleteDoc(doc(fdb, KHO_LINK[loai], tok)); await ghiChung("thu_hoi_link", { ghi:`${loai}/${tok}` }, uid); }
 async function goMayNV(uid, nvUid){
   await deleteDoc(doc(fdb,"users",uid,"pos_nv",nvUid));
@@ -1559,6 +1586,13 @@ function viecCanLam(){
   const loi24 = ERR.filter(e => e.resolved !== true && ngay(e.ts || e.tsClient) && (Date.now() - ngay(e.ts || e.tsClient)) < 864e5).length;
   if(loi24) v.push({ ic:"loi", lop:"dong-c", t:`${loi24} lỗi app mới trong 24 giờ`, d:"Xem lỗi nào đang nổ nhiều nhất và ở bản nào",
       ph:`<button class="nut nho" data-act="nav" data-v="radar">Xem</button>` });
+  /* [3.3] Khách ĐANG TRẢ TIỀN mà lâu không mở app = sắp bỏ; ân hạn thu phí sắp hết = sắp có đơn (hoặc sắp bị chặn) */
+  const im = QUET.ban && QUET.ban.im ? QUET.ban.im : [];
+  if(im.length) v.push({ ic:"chuong", lop:"dong-c", t:`${im.length} khách trả tiền mà ${DN_IM}+ ngày không mở app`, d:"Sắp bỏ app — hỏi thăm, hướng dẫn lại trước khi họ rớt hạn",
+      ph:`<button class="nut nho" data-act="quet-ban">Xem</button>` });
+  const ahSap = (radar().find(x => x.ma === "anHanSapHet") || { items:[] }).items;
+  if(ahSap.length) v.push({ ic:"lich", lop:"dong-c", t:`${ahSap.length} shop sắp hết ân hạn thu phí`, d:"Nhắc mua ngay — qua hạn chót là máy chủ chặn thật",
+      ph:`<button class="nut nho" data-act="nhac-an-han">Nhắc</button>` });
   return v;
 }
 function donHtml(x){
@@ -1762,7 +1796,10 @@ function veCaiDat(){
     ${mucHtml("Công tắc thu tiền")}
     <div class="nhom">${CONG_TAC.map(([k,t,d,doc_,anToan]) => { const on = doc_(CFGDB[k]);
       return `<div class="cong"><div class="gi"><div class="t">${esc(k === "choThu" ? `${t} ${ngayThu()} ngày` : t)}${anToan && !on ? " " + chip("đang hở","xau") : ""}</div><div class="d">${esc(d)}</div></div>
-        <button class="gat ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(t)}" data-act="cong-tac" data-k="${k}"></button></div>`; }).join("")}</div>
+        <button class="gat ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(t)}" data-act="cong-tac" data-k="${k}"></button></div>`; }).join("")}
+      <div class="cong"><div class="gi"><div class="t">Chặn nạp file sao lưu đời cũ</div><div class="d">Bật: file sao lưu bản cũ (không ghi tài khoản chủ) KHÔNG nạp được nữa vì không xác minh được file của ai. Khách giữ file cũ thì đăng nhập tài khoản cũ, xuất lại file mới là xong.</div></div>
+        <button class="gat ${BILL.chanFileCu === true ? "on" : ""}" role="switch" aria-checked="${BILL.chanFileCu === true}" aria-label="Chặn nạp file sao lưu đời cũ" data-act="chan-file-cu"></button></div></div>
+    <p class="nho" style="margin:8px 2px 0">Bật thu phí chi nhánh / gói ngành, hoặc tắt gói chi nhánh chung: app tự quét trước; shop nào sẽ bị chặn thì được <b>ân hạn có hạn chót</b> (kèm tin nhắn vào app) thay vì chặn ngay hay miễn trừ mãi.</p>
     ${mucHtml("Bán hàng & chăm khách")}
     <div class="nhom">
       ${dongHtml({ the:"button", act:"mo-bang-gia", ic:"tien", t:"Bảng giá · khuyến mãi · dùng thử · hotline", d: esc(bank || "Chưa cấu hình tài khoản nhận tiền") + ` · Sổ Nợ ${tienD(giaApp("sono"))}/tháng · thử ${ngayThu()} ngày · ${esc(Object.keys(KM_GIA_HAN).length ? Object.entries(KM_GIA_HAN).map(([m,g]) => `mua ${m} tặng ${g}`).join(", ") : "không khuyến mãi")} · ☎ ${esc(hotTxt())}`, mui:true })}
@@ -1790,6 +1827,7 @@ function veHuyHieu(){
   const dat = (v, n) => { const b = $(`.nav button[data-v="${v}"]`); if(!b) return; b.querySelector(".hh")?.remove();
     if(n) b.insertAdjacentHTML("beforeend", `<span class="hh">${n > 99 ? "99+" : n}</span>`); };
   dat("homnay", dc); dat("radar", nang);
+  try{ document.title = (dc ? `(${dc > 99 ? "99+" : dc}) ` : "") + "Sổ doanh thu · Quản trị"; }catch(e){}   /* [3.3] */
 }
 function veTatCa(){
   veView(VIEW); veHuyHieu();
@@ -1814,12 +1852,18 @@ function nganhTheoMa(id){
 }
 const TEN_NGANH = { "":"Bán hàng đa năng", fnb:"F&B", fs:"Thời trang", rm:"Karaoke/Spa", kg:"Cân ký/Bán sỉ" };
 /* Tính ĐÚNG như Firestore Rules: duocMoCn() + duocMoNganh() cho 1 cửa hàng */
-function luatCuaHang(uid, b){
-  const acc = ACC[uid] || {};
+/* [3.3] ÂN HẠN có hạn chót (accounts/{uid}.cnAnHanDen / ngAnHanDen — VÁ LỖ S ở Rules): trả mốc ms nếu còn hiệu lực, không thì 0 */
+function anHanCua(acc, loai){ const h = hanRules(acc && acc[loai === "ng" ? "ngAnHanDen" : "cnAnHanDen"]); return (h != null && h > Date.now()) ? h : 0; }
+/* [3.3] gia = công tắc GIẢ ĐỊNH {enforceCn, enforceNganh, cnChung} để biết TRƯỚC ai bị chặn khi đổi công tắc */
+function luatCuaHang(uid, b, gia){
+  const acc = ACC[uid] || {}, G = gia || {};
   const laChinh = /^main(_(fnb|fs|rm|kg))?$/.test(b);
   const ng = nganhTheoMa(b);
-  const batCn = CFGDB.enforceCn === true, batNg = CFGDB.enforceNganh === true, cnChung = CFGDB.cnChung !== false;
-  let cnOk = true, cnLy = "Cửa hàng chính — miễn phí", maGoi = "", can = 0;
+  const batCn = ("enforceCn" in G) ? G.enforceCn === true : CFGDB.enforceCn === true,
+        batNg = ("enforceNganh" in G) ? G.enforceNganh === true : CFGDB.enforceNganh === true,
+        cnChung = ("cnChung" in G) ? G.cnChung !== false : CFGDB.cnChung !== false;
+  const ahCn = anHanCua(acc, "cn"), ahNg = anHanCua(acc, "ng");
+  let cnOk = true, cnLy = "Cửa hàng chính — miễn phí", maGoi = "", can = 0, cnAH = false;
   if(!laChinh){
     const m = /^cn_(?:(fnb|fs|rm|kg)_)?([0-9]+)$/.exec(b);
     maGoi = m && m[1] ? "sono_cn_" + m[1] : "sono_cn";
@@ -1828,13 +1872,15 @@ function luatCuaHang(uid, b){
     const nS = m ? m[2] : null, n = nS != null ? Number(nS) : 0;
     const trongSuat = !!m && String(n) === nS && n >= 1 && n <= 20 && q >= n;
     const mt = acc.cnMienTru === true, cho = Array.isArray(acc.cnCho) && acc.cnCho.includes(b);
-    cnOk = trongSuat || mt || cho; can = m ? n : 0;
+    cnOk = trongSuat || mt || cho || !!ahCn; can = m ? n : 0; cnAH = !trongSuat && !mt && !cho && !!ahCn;
     cnLy = trongSuat ? `Trong suất đã mua (${q} suất)` : mt ? "Tài khoản được miễn trừ" : cho ? "Mã cũ đã duyệt"
+         : ahCn ? `Đang ân hạn tới ${ngayVN(new Date(ahCn))}`
          : m ? (n > 20 ? "Số thứ tự trên 20 — phải duyệt riêng" : `Cần ${n} suất ${tenApp(maGoi)}, đang có ${q}`) : "Mã cũ chưa duyệt";
   }
   const licNg = ng ? "sono_" + ng : "";
-  const ngOk = !licNg || conHan(licCua(uid, licNg));
-  return { b, laChinh, ng, maGoi, can, cnOk, cnLy, licNg, ngOk,
+  const ngLic = !licNg || conHan(licCua(uid, licNg));
+  const ngOk = ngLic || !!ahNg, ngAH = !ngLic && !!ahNg;
+  return { b, laChinh, ng, maGoi, can, cnOk, cnLy, licNg, ngOk, cnAH, ngAH, ahCn, ahNg,
     chan: (batCn && !cnOk) || (batNg && !ngOk), lau: (!batCn && !cnOk) || (!batNg && !ngOk) };
 }
 
@@ -1907,12 +1953,15 @@ function hoCuaHang(S, k){
     ${mucHtml("Cửa hàng & chi nhánh", `${L.length} cửa hàng`)}
     <div class="nhom">${L.map(x => dongHtml({ ic:"cua", lop: x.chan ? "do-c" : x.lau ? "dong-c" : "la-c",
       t: esc(x.ten) + ` <span class="ma">${esc(x.b)}</span>`,
-      d: esc(x.ng === null ? "Mã cũ" : TEN_NGANH[x.ng]) + " · " + esc(x.cnLy) + (x.licNg && !x.ngOk ? ` · thiếu ${esc(tenApp(x.licNg))}` : ""),
-      ph: chip(x.chan ? "Đang bị chặn" : x.lau ? "Đang dùng chùa" : "Hợp lệ", x.chan ? "xau" : x.lau ? "canh" : "ok") })).join("")}</div>
+      d: esc(x.ng === null ? "Mã cũ" : TEN_NGANH[x.ng]) + " · " + esc(x.cnLy) + (x.licNg && !x.ngOk ? ` · thiếu ${esc(tenApp(x.licNg))}` : "") + (x.ngAH ? ` · ${esc(tenApp(x.licNg))} đang ân hạn` : ""),
+      ph: chip(x.chan ? "Đang bị chặn" : x.lau ? "Đang dùng chùa" : (x.cnAH || x.ngAH) ? "Ân hạn" : "Hợp lệ", x.chan ? "xau" : (x.lau || x.cnAH || x.ngAH) ? "canh" : "ok") })).join("")}</div>
     ${L.some(x => x.lau) ? `<div class="bao canh">Có cửa hàng đang chạy mà chưa trả tiền vì công tắc thu phí đang tắt. Cấp suất / gói ngành, hoặc miễn trừ nếu là khách cũ, rồi bật công tắc.</div>` : ""}
     <div class="nhom" style="margin-top:10px">
       <div class="cong"><div class="gi"><div class="t">Miễn trừ thu phí chi nhánh</div><div class="d">Cả tài khoản không bị đòi suất chi nhánh (dành cho khách cũ). Chỉ admin bật được.</div></div>
         <button class="gat nguy ${acc.cnMienTru === true ? "on" : ""}" role="switch" aria-checked="${acc.cnMienTru === true}" data-act="mien-tru" data-uid="${esc(S.uid)}"></button></div>
+      <div class="cong"><div class="gi"><div class="t">Ân hạn thu phí (có hạn chót)</div>
+        <div class="d">Chi nhánh thêm: <b>${anHanCua(acc, "cn") ? "tới " + ngayVN(new Date(anHanCua(acc, "cn"))) : "không"}</b> · Gói ngành: <b>${anHanCua(acc, "ng") ? "tới " + ngayVN(new Date(anHanCua(acc, "ng"))) : "không"}</b>. Trong ân hạn máy chủ cho chạy miễn phí; qua hạn chót chưa mua là chặn thật.</div>
+        <div class="hang-nut" style="margin-top:8px"><button class="nut nho" data-act="an-han" data-uid="${esc(S.uid)}" data-loai="cn">Đặt · chi nhánh</button><button class="nut nho" data-act="an-han" data-uid="${esc(S.uid)}" data-loai="ng">Đặt · gói ngành</button></div></div></div>
       <div class="cong"><div class="gi"><div class="t">Cửa hàng mã cũ được duyệt</div>
         <div class="d">${(acc.cnCho||[]).length ? (acc.cnCho||[]).map(c => `<span class="ma">${esc(c)}</span> <button class="nut nho" style="min-height:26px;padding:2px 8px" data-act="bo-duyet" data-uid="${esc(S.uid)}" data-ma="${esc(c)}">Bỏ</button>`).join(" ") : "Chưa duyệt mã nào"}</div>
         ${maCu.length ? `<button class="nut nho" style="margin-top:8px" data-act="duyet-ma-cu" data-uid="${esc(S.uid)}" data-ma="${esc(maCu.map(x => x.b).join(","))}">Duyệt ${maCu.length} mã cũ: ${esc(maCu.map(x => x.b).join(", "))}</button>` : ""}</div></div>
@@ -2307,7 +2356,7 @@ function dongKhopSK(x){
     <div class="don-dau"><div class="gi"><div class="t">${esc(d.email || d.uid)}</div>
       <div class="d">${esc(tenApp(d.app))} · ${d.m} tháng${laCN(d.app) ? ` · ${d.sl} suất` : ""} · đơn ghi ${tienD(d.khai)}</div></div>
       <div class="ti so">${tienD(x.khoan.tien)}</div></div>
-    <div class="chips">${da ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(da))}`, "xau") : x.tienOk ? chip("Đúng số tiền của đơn", "ok") : chip("Thấy tên khách nhưng số tiền khác đơn", "canh")}${x.lv >= 3 ? chip("Khớp trọn email", "ngoc") : chip("Khớp phần tên email", "")}${d.daBao ? chip("Khách đã báo chuyển", "ok") : ""}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}${x.trung > 1 ? chip(`Email gắn với ${x.trung} tài khoản — mở hồ sơ kiểm tay`, "xau") : ""}${d.nguy ? chip("Đơn có dấu hiệu cần soát (xem chip đỏ ở đơn)", "xau") : ""}</div>
+    <div class="chips">${da ? chip(`Khoản này đã dùng để duyệt ${lauRoi(pNgay(da))}`, "xau") : x.tienOk ? chip("Đúng số tiền của đơn", "ok") : chip("Thấy tên khách nhưng số tiền khác đơn", "canh")}${x.lv >= 3 ? chip("Khớp trọn email", "ngoc") : chip("Khớp phần tên email", "")}${d.daBao ? chip("Khách đã báo chuyển", "ok") : ""}${x.khoan.yeu ? chip("Sao kê thiếu ngày giờ", "canh") : ""}${x.trung > 1 ? chip(`Email gắn với ${x.trung} tài khoản — mở hồ sơ kiểm tay`, "xau") : ""}${d.nguy ? chip("Đơn có dấu hiệu cần soát (xem chip đỏ ở đơn)", "xau") : ""}${(x.trung > 1 || d.giaMao) ? chip("Duyệt phải gõ xác nhận", "xau") : ""}</div>
     <div class="nd-ck">${esc(x.khoan.text)}</div>
     ${da ? "" : `<div class="hang-nut" style="margin-top:10px"><button class="nut chinh" data-act="ds-duyet" data-i="${x.idx}">${ic("xong")}Duyệt theo tiền về</button><button class="nut" data-act="mo-khach" data-uid="${esc(d.uid)}">Hồ sơ</button></div>`}
   </div>`;
@@ -2457,7 +2506,8 @@ function veMucRadar(t){
     "quet-cn":`<button class="nut chinh" data-act="quet-cn">Quét chi nhánh & gói ngành</button>`,
     "sua-vv":`<button class="nut chinh" data-act="sua-vv">Sửa hàng loạt thành vĩnh viễn</button>`,
     "don-nghi":`<button class="nut chinh" data-act="mo-don-nghi">Mở bảng Dọn shop đã nghỉ</button>`,
-    "bang-gia":`<button class="nut chinh" data-act="mo-bang-gia">Mở bảng giá</button>` }[x.hanhDong] || "";
+    "bang-gia":`<button class="nut chinh" data-act="mo-bang-gia">Mở bảng giá</button>`,
+    "nhac-an-han":`<button class="nut chinh" data-act="nhac-an-han">Nhắn nhắc mua cho các shop này</button>` }[x.hanhDong] || "";
   t.chan.innerHTML = x.ma === "lai" ? `<button class="nut" data-act="lai-loat" data-giu="ngay">Giữ ngày hết hạn (tất cả)</button><button class="nut chinh" data-act="lai-loat" data-giu="vv">Giữ vĩnh viễn (tất cả)</button>` : nut;
 }
 
@@ -2474,33 +2524,45 @@ async function theoLo(ds, song, fn, tienDo){
 }
 
 /* ── 1. CHI NHÁNH & GÓI NGÀNH: đúng từng điều kiện của Firestore Rules ── */
-function hangCN(uid, ids){
-  const L = ids.map(b => luatCuaHang(uid, b)), cho = (ACC[uid] || {}).cnCho;
-  return { uid, ids, email: emailCua(uid) || uid, L, them: L.filter(x => !x.laChinh).length,
+/* [3.3] Két ngành ở GỐC (cửa hàng 'main' chạy module ngành đời cũ) — máy chủ khoá theo TÊN KHO (VÁ LỖ E).
+   Bản cũ không quét chỗ này ⇒ bật thu phí gói ngành là shop dùng két ở cửa hàng chính bị chặn mà không ai báo trước. */
+const KHO_NG_GOC = { pos_tables:"sono_fnb", pos_fnb:"sono_fnb", pos_fs:"sono_fs", pos_rm:"sono_rm", pos_kg:"sono_kg" };
+function khoGocCoGoi(uid, c){ return conHan(licCua(uid, KHO_NG_GOC[c])) || (c === "pos_tables" && conHan(licCua(uid, "sono_qr"))); }
+function hangCN(uid, ids, gia, gocKho){
+  const L = ids.map(b => luatCuaHang(uid, b, gia)), cho = (ACC[uid] || {}).cnCho, G = gia || {};
+  const batNg = ("enforceNganh" in G) ? G.enforceNganh === true : CFGDB.enforceNganh === true;
+  const ahNg = anHanCua(ACC[uid] || {}, "ng");
+  const gocNg = (gocKho || []).filter(c => KHO_NG_GOC[c] && !khoGocCoGoi(uid, c));
+  return { uid, ids, gocKho: gocKho || [], gocNg, gocLau: (!batNg && !ahNg) ? gocNg : [], gocChan: (batNg && !ahNg) ? gocNg : [], gocAH: ahNg ? gocNg : [],
+           email: emailCua(uid) || uid, L, them: L.filter(x => !x.laChinh).length,
            lau: L.filter(x => x.lau), chan: L.filter(x => x.chan),
            maCu: L.filter(x => x.ng === null && !(Array.isArray(cho) && cho.includes(x.b))) };
 }
 /* Tính lại theo công tắc / miễn trừ / giấy phép MỚI NHẤT — không đọc lại máy chủ */
 function tinhLaiQuetCN(){
   const q = QUET.cn; if(!q) return null;
-  const tat = q.goc.map(g => hangCN(g.uid, g.ids));
+  const tat = q.goc.map(g => hangCN(g.uid, g.ids, null, g.gocKho));
   let tienLau = 0;
   tat.forEach(r => {
     r.lau.forEach(x => { if(!x.cnOk && x.maGoi) tienLau += giaCua(r.uid, x.maGoi); });
-    new Set(r.L.filter(x => x.lau && x.licNg && !x.ngOk).map(x => x.licNg)).forEach(a => { tienLau += giaCua(r.uid, a); });
+    new Set([...r.L.filter(x => x.lau && x.licNg && !x.ngOk).map(x => x.licNg), ...r.gocLau.map(c => KHO_NG_GOC[c])]).forEach(a => { tienLau += giaCua(r.uid, a); });
   });
-  q.rows = tat.filter(r => r.them || r.lau.length || r.chan.length || r.L.some(x => x.licNg))
-              .sort((a,b) => (b.lau.length + b.chan.length) - (a.lau.length + a.chan.length));
+  q.rows = tat.filter(r => r.them || r.lau.length || r.chan.length || r.L.some(x => x.licNg) || r.gocNg.length)
+              .sort((a,b) => (b.lau.length + b.chan.length + b.gocNg.length) - (a.lau.length + a.chan.length + a.gocNg.length));
   q.soShop = tat.length; q.tienLau = tienLau;
-  q.soLau = tat.reduce((s,r) => s + r.lau.length, 0); q.soChan = tat.reduce((s,r) => s + r.chan.length, 0);
-  q.tom = `${q.soShop} shop · ${q.soLau} cửa hàng dùng chùa (~${tienGon(q.tienLau)}/tháng) · ${q.soChan} đang bị chặn · quét ${gioVN(new Date(q.luc))}`;
+  q.soLau = tat.reduce((s,r) => s + r.lau.length + (r.gocLau.length ? 1 : 0), 0); q.soChan = tat.reduce((s,r) => s + r.chan.length + (r.gocChan.length ? 1 : 0), 0);
+  q.soAH = tat.filter(r => r.L.some(x => x.cnAH || x.ngAH) || r.gocAH.length).length;
+  q.tom = `${q.soShop} shop · ${q.soLau} cửa hàng / két ngành dùng chùa (~${tienGon(q.tienLau)}/tháng) · ${q.soChan} đang bị chặn${q.soAH ? ` · ${q.soAH} shop đang ân hạn` : ""} · quét ${gioVN(new Date(q.luc))}`;
   return q;
 }
 async function quetChiNhanh(tienDo){
   const uids = uidsSono();
   const kq = await theoLo(uids, 6, async uid => {
     const s = await getDocs(collection(fdb,"users",uid,"branches"));
-    return { uid, ids: s.docs.map(d => d.id) };
+    /* [3.3] két ngành ở GỐC: chỉ soi kho của ngành CHƯA có gói (mỗi kho đọc tối đa 1 doc) */
+    const gocKho = (await Promise.all(Object.keys(KHO_NG_GOC).filter(c => !khoGocCoGoi(uid, c)).map(c =>
+      getDocs(query(collection(fdb,"users",uid,c), limit(1))).then(x => x.empty ? null : c).catch(() => null)))).filter(Boolean);
+    return { uid, ids: s.docs.map(d => d.id), gocKho };
   }, tienDo);
   QUET.cn = { luc:Date.now(), goc: kq.filter(r => !r.loi), loi: kq.filter(r => r.loi).length };
   return tinhLaiQuetCN();
@@ -2522,26 +2584,29 @@ function veQuetCN(t){
   if(t.S.dang || !q){ t.than.innerHTML = trong(t.S.td || "Đang quét…", "Mỗi shop đọc danh sách cửa hàng một lần"); t.chan.innerHTML = ""; return; }
   t.than.innerHTML = `
     <div class="luoi" style="margin-bottom:10px">
-      <div class="o ${q.soLau ? "xau" : "tot"}"><b class="so">${q.soLau}</b><span>Cửa hàng dùng chùa</span><small>~${tienD(q.tienLau)} mỗi tháng</small></div>
+      <div class="o ${q.soLau ? "xau" : "tot"}"><b class="so">${q.soLau}</b><span>Cửa hàng / két ngành dùng chùa</span><small>~${tienD(q.tienLau)} mỗi tháng</small></div>
       <div class="o ${q.soChan ? "canh" : ""}"><b class="so">${q.soChan}</b><span>Cửa hàng đang bị chặn</span><small>khách sẽ gọi hỏi</small></div></div>
     <div class="bao ${bCn && bNg ? "tot" : "xau"}">Thu phí chi nhánh: <b>${bCn ? "BẬT" : "TẮT"}</b> · Thu phí gói ngành: <b>${bNg ? "BẬT" : "TẮT"}</b>.
-      ${bCn && bNg ? "Máy chủ đang chặn thật." : "Công tắc tắt thì các cửa hàng “dùng chùa” vẫn chạy miễn phí. Miễn trừ khách cũ bên dưới rồi bật công tắc ở Cài đặt."}</div>
+      ${bCn && bNg ? "Máy chủ đang chặn thật." : "Công tắc tắt thì các cửa hàng “dùng chùa” vẫn chạy miễn phí. Bật công tắc ở Cài đặt: app tự cho các shop đang dùng ÂN HẠN có hạn chót (kèm tin nhắn). Khách cũ muốn giữ miễn phí mãi thì bấm Miễn trừ bên dưới."}</div>
     ${q.loi ? `<p class="nho">${q.loi} shop không đọc được (lỗi mạng) — quét lại sau.</p>` : ""}
     <div class="nhom">${q.rows.length ? q.rows.map(r => {
       const acc = ACC[r.uid] || {};
       return `<div class="dong" style="flex-wrap:wrap">
         <span class="ic ${r.lau.length ? "do-c" : r.chan.length ? "dong-c" : "la-c"}">${ic("cua")}</span>
         <span class="gi"><span class="t" style="display:block">${esc(r.email)}${acc.cnMienTru === true ? " " + chip("miễn trừ","ngoc") : ""}</span>
-        <span class="d" style="display:block">${r.L.map(x => `<span class="ma" title="${esc(x.cnLy)}">${esc(x.b)}</span> ${x.chan ? "⛔" : x.lau ? "⚠️" : "✓"}`).join(" ")}</span>
-        ${r.lau.length || r.chan.length ? `<span class="d" style="display:block">${esc([...r.lau, ...r.chan].map(x => `${x.b}: ${!x.cnOk ? x.cnLy : ""}${x.licNg && !x.ngOk ? (x.cnOk ? "" : " · ") + "thiếu " + tenApp(x.licNg) : ""}`).join(" · "))}</span>` : ""}</span>
+        <span class="d" style="display:block">${r.L.map(x => `<span class="ma" title="${esc(x.cnLy)}">${esc(x.b)}</span> ${x.chan ? "⛔" : x.lau ? "⚠️" : (x.cnAH || x.ngAH) ? "⏳" : "✓"}`).join(" ")}</span>
+        ${r.lau.length || r.chan.length ? `<span class="d" style="display:block">${esc([...r.lau, ...r.chan].map(x => `${x.b}: ${!x.cnOk ? x.cnLy : ""}${x.licNg && !x.ngOk ? (x.cnOk ? "" : " · ") + "thiếu " + tenApp(x.licNg) : ""}`).join(" · "))}</span>` : ""}
+        ${r.gocNg.length ? `<span class="d" style="display:block">Cửa hàng chính đang dùng két ngành: ${esc([...new Set(r.gocNg.map(c => tenApp(KHO_NG_GOC[c])))].join(", "))} ${r.gocChan.length ? "⛔" : r.gocAH.length ? "⏳ ân hạn" : "⚠️ chưa trả tiền"}</span>` : ""}</span>
         <span class="hang-nut" style="width:100%;margin-top:8px">
           <button class="nut nho" data-act="mo-khach" data-uid="${esc(r.uid)}">Hồ sơ</button>
           ${acc.cnMienTru === true ? `<button class="nut nho" data-act="mien-tru" data-uid="${esc(r.uid)}">Gỡ miễn trừ</button>`
             : (r.lau.length || r.chan.length) ? `<button class="nut nho" data-act="mien-tru" data-uid="${esc(r.uid)}">Miễn trừ khách cũ</button>` : ""}
           ${r.maCu.length ? `<button class="nut nho" data-act="duyet-ma-cu" data-uid="${esc(r.uid)}" data-ma="${esc(r.maCu.map(x => x.b).join(","))}">Duyệt ${r.maCu.length} mã cũ</button>` : ""}
+          ${r.L.some(x => !x.laChinh && (!x.cnOk || x.cnAH)) ? `<button class="nut nho" data-act="an-han" data-uid="${esc(r.uid)}" data-loai="cn">Ân hạn chi nhánh</button>` : ""}
+          ${(r.L.some(x => x.licNg && (!x.ngOk || x.ngAH)) || r.gocNg.length) ? `<button class="nut nho" data-act="an-han" data-uid="${esc(r.uid)}" data-loai="ng">Ân hạn gói ngành</button>` : ""}
         </span></div>`; }).join("")
       : trong("Không shop nào mở cửa hàng thêm hay dùng ngành","")}</div>
-    <p class="nho">⚠️ = đang chạy nhưng chưa trả tiền (công tắc tắt) · ⛔ = máy chủ đang chặn · ✓ = hợp lệ. Miễn trừ cả tài khoản dành cho khách cũ đã dùng trước khi thu phí; duyệt mã cũ chỉ mở đúng các cửa hàng đó.</p>`;
+    <p class="nho">⚠️ = đang chạy nhưng chưa trả tiền (công tắc tắt) · ⛔ = máy chủ đang chặn · ⏳ = đang ân hạn (có hạn chót) · ✓ = hợp lệ. Miễn trừ cả tài khoản dành cho khách cũ đã dùng trước khi thu phí; duyệt mã cũ chỉ mở đúng các cửa hàng đó.</p>`;
   t.chan.innerHTML = `<button class="nut" data-act="quet-cn-lai">${ic("tai")}Quét lại</button>`;
 }
 
@@ -2597,7 +2662,12 @@ async function quetPhienBan(tienDo){
   const moiNhat = Object.keys(bans).sort().pop() || "";
   const kq = { luc:Date.now(), rows: ok, bans, moiNhat,
     cu: ok.filter(r => r.m && r.m.build && r.m.build !== moiNhat), chuaBao: ok.filter(r => !r.m) };
-  kq.tom = `${ok.length} khách còn hạn · ${kq.cu.length} máy bản cũ · bản mới nhất ${moiNhat || "—"} · ${gioVN(new Date(kq.luc))}`;
+  /* [3.3] SỨC KHOẺ KHÁCH: đang TRẢ TIỀN (không phải dùng thử) mà ≥ DN_IM ngày không mở app ⇒ sắp bỏ — hỏi thăm trước khi rớt hạn */
+  const lanMo = r => num(r.m && r.m.atMs) || hanRules(r.m && r.m.at) || 0;
+  const traTien = uid => LIC.some(l => l.uid === uid && String(l.app).indexOf("sono") === 0 && l.trial !== true && ["tra","vv"].includes(tt(l).ma));
+  kq.im = ok.filter(r => r.m && lanMo(r) && (Date.now() - lanMo(r)) > DN_IM*864e5 && traTien(r.uid))
+    .map(r => ({ ...r, ngay: Math.floor((Date.now() - lanMo(r)) / 864e5) })).sort((a,b) => b.ngay - a.ngay);
+  kq.tom = `${ok.length} khách còn hạn · ${kq.cu.length} máy bản cũ · ${kq.im.length} khách trả tiền lâu không mở app · bản mới nhất ${moiNhat || "—"} · ${gioVN(new Date(kq.luc))}`;
   QUET.ban = kq;
   return kq;
 }
@@ -2624,6 +2694,9 @@ function veQuetBan(t){
     ${mucHtml("Máy chạy bản cũ", `${q.cu.length} khách`)}
     <div class="nhom">${q.cu.length ? q.cu.slice(0,100).map(r => dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(r.uid)}"`, ic:"may", lop:"dong-c",
       t:esc(r.email), d:`${esc(r.m.build)} · mở lần cuối ${esc(lauRoi(r.m.atMs || r.m.at))}${r.m.pwa ? " · đã cài" : ""}`, mui:true })).join("") : trong("Mọi máy đều chạy bản mới nhất","")}</div>
+    ${mucHtml("Khách trả tiền mà lâu không mở app", `${(q.im || []).length} khách`, (q.im || []).length ? `<button class="lk" data-act="hoi-tham">Nhắn hỏi thăm</button>` : "")}
+    <div class="nhom">${(q.im || []).length ? q.im.slice(0,100).map(r => dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(r.uid)}"`, ic:"chuong", lop: r.ngay > 30 ? "do-c" : "dong-c",
+      t:esc(r.email), d:`${r.ngay} ngày chưa mở app${r.m && r.m.build ? " · " + esc(r.m.build) : ""}`, mui:true })).join("") : trong("Khách trả tiền đều đang mở app", `Không ai im lặng quá ${DN_IM} ngày`)}</div>
     ${q.chuaBao.length ? `<p class="nho">${q.chuaBao.length} khách còn hạn chưa từng báo về (app quá cũ hoặc chưa mở từ khi có tính năng báo về).</p>` : ""}`;
   t.chan.innerHTML = `<button class="nut" data-act="quet-ban-lai">${ic("tai")}Quét lại</button>
     ${q.cu.length ? `<button class="nut chinh" data-act="ban-cap-nhat">Bật thanh cập nhật cho ${q.cu.length} máy</button>` : ""}`;
@@ -2889,7 +2962,7 @@ function moBangGia(){
     <label class="o-nhap"><span>Chủ tài khoản (viết không dấu)</span><input data-g="accName" value="${v(BILL.accName)}"></label>
     <div id="qrThu"></div>
     ${mucHtml("Dùng thử · khuyến mãi · hotline")}
-    <p class="nho" style="margin-top:0">Mọi app khách (Sổ Nợ, Bán hàng, chi nhánh, gói ngành, Đơn QR) đọc chung — đổi ở đây là đổi ở mọi máy lần mở kế tiếp.</p>
+    <p class="nho" style="margin-top:0">Mọi app khách (Sổ Nợ, Bán hàng, chi nhánh, gói ngành, Bán online) đọc chung — đổi ở đây là đổi ở mọi máy lần mở kế tiếp.</p>
     <div class="hai"><label class="o-nhap"><span>Ngày dùng thử (1–14)</span><input data-g="ngayThu" inputmode="numeric" value="${ngayThu()}"></label>
       <label class="o-nhap"><span>Hotline hỗ trợ</span><input data-g="hotline" inputmode="tel" value="${v(hotTxt())}"></label></div>
     <div class="hai" style="grid-template-columns:1fr 1fr 1fr">${[3,6,12].map(m => `<label class="o-nhap"><span>Mua ${m} tháng tặng</span><input data-g="km_${m}" inputmode="numeric" value="${thangTang(m) || ""}" placeholder="0"></label>`).join("")}</div>
@@ -2899,7 +2972,7 @@ function moBangGia(){
     ${NHOM_APP.map(g => `<p class="nho" style="margin:14px 2px 6px;font-weight:600">${esc(g.ten)}</p>` + g.apps.map(a => { const o = CFG.oGia[a], k = o[0];
       const du = (o[1] ? num(BILL[o[1]]) : 0) || o[2];
       return `<label class="o-nhap"><span>${esc(tenApp(a))}${laCN(a) ? " (mỗi suất)" : ""}</span><input data-g="g_${a}" inputmode="numeric" value="${BILL[k] != null && BILL[k] !== "" ? tien(BILL[k]) : ""}" placeholder="${du > 0 ? "để trống = " + tien(du) : "để trống = CHƯA BÁN (khách không mua được)"}"></label>`; }).join("")).join("")}
-    <p class="nho">Ô trống = xoá giá riêng (về giá dự phòng/mặc định). Gói ngành, Đơn QR và Bán hàng (POS) không có giá dự phòng: để trống là CHƯA BÁN. Gõ 50.000 hay 50000 đều được.</p>`;
+    <p class="nho">Ô trống = xoá giá riêng (về giá dự phòng/mặc định). Gói ngành, Bán online và Bán hàng (POS) không có giá dự phòng: để trống là CHƯA BÁN. Gõ 50.000 hay 50000 đều được.</p>`;
   t.chan.innerHTML = `<button class="nut chinh" data-act="luu-gia">Lưu bảng giá</button>`;
   veQrThu(t);
 }
@@ -2984,7 +3057,8 @@ const ACT = {
       catch(e){ bao("Không đọc được file: " + maLoi(e), 1); } };
     document.body.appendChild(inp); inp.click(); },
   "ds-duyet": b => { const t = tamCua(b), x = t && t.S.kq ? t.S.kq.khop[Number(b.dataset.i)] : null; if(!x) return;
-    moCapHan({ r: x.o.x.r, saoKe: x.khoan }); },
+    const t2 = moCapHan({ r: x.o.x.r, saoKe: x.khoan });
+    if(t2 && t2.S && (x.trung > 1 || x.o.x.giaMao)) t2.S.canGo = true; },
   "ds-cap": b => { const t = tamCua(b), x = t && t.S.kq ? t.S.kq.ngoai[Number(b.dataset.i)] : null; if(!x) return;
     moCapHan({ uid: x.uid, app: x.app, saoKe: x.khoan }); },
   "mo-ban-tin": () => moBanTin(),
@@ -3024,9 +3098,10 @@ const ACT = {
     if(!ds.length) return;
     if(!(await hoi({ tieuDe:"Dọn giấy phép lai", noiDung:`${ds.length} giấy phép vừa vĩnh viễn vừa có ngày.\n\n${giu === "vv" ? "Giữ VĨNH VIỄN: xoá ngày hết hạn." : "Giữ NGÀY HẾT HẠN: gỡ vĩnh viễn — gói nào ngày đã qua sẽ bị chặn ngay."}`, nutOk:"Làm", nguy: giu !== "vv" }))) return;
     await chay(b, async () => { for(const l of ds) await donLaiLai(l.uid, l.app, giu); bao("Đã dọn " + ds.length + " giấy phép"); await taiLai(true); }); },
-  "sua-vv": async b => { const n = LIC.filter(l => tt(l).ma === "trong").length;
-    if(!n) return bao("Không có giấy phép nào thiếu hạn");
-    if(!(await hoi({ tieuDe:"Sửa giấy phép thiếu hạn", noiDung:`Gắn "vĩnh viễn" cho ${n} giấy phép chưa có ngày hết hạn (đang bị máy chủ chặn oan).\n\nGiấy phép đang KHOÁ được bỏ qua.`, nutOk:"Sửa " + n + " giấy phép" }))) return;
+  "sua-vv": async b => { const tat = LIC.filter(l => tt(l).ma === "trong"), n = tat.filter(daTraGoi).length, bo = tat.length - n;
+    if(!tat.length) return bao("Không có giấy phép nào thiếu hạn");
+    if(!n) return bao(`${bo} giấy phép thiếu hạn đều của khách CHƯA trả đồng nào — mở hồ sơ từng người để đặt hạn (không gắn vĩnh viễn)`, 1);
+    if(!(await hoi({ tieuDe:"Sửa giấy phép thiếu hạn", noiDung:`Gắn "vĩnh viễn" cho ${n} giấy phép chưa có ngày hết hạn của khách ĐÃ từng trả tiền (đang bị máy chủ chặn oan).${bo ? `\n\nBỏ qua ${bo} giấy phép của khách CHƯA trả đồng nào — gắn vĩnh viễn là cho dùng miễn phí trọn đời. Mở hồ sơ từng người để đặt hạn.` : ""}\n\nGiấy phép đang KHOÁ được bỏ qua.`, nutOk:"Sửa " + n + " giấy phép" }))) return;
     await chay(b, async () => { const x = await suaVinhVienLoat(); bao(`Đã sửa ${x} giấy phép`); await taiLai(true); }); },
 
   /* ── hồ sơ khách ── */
@@ -3219,17 +3294,17 @@ async function doiCongTacUI(b){
   const dang = dong[3](CFGDB[k]), moi = !dang;
   let nd = `${dong[1]}: ${dang ? "BẬT → TẮT" : "TẮT → BẬT"}\n\n${dong[2]}`, nguy = false;
   if(k === "enforce" && !moi){ nd = "TẮT bắt buộc giấy phép = MỌI khách dùng MIỄN PHÍ toàn bộ app.\n\nChỉ làm khi đang sửa sự cố."; nguy = true; }
-  if((k === "enforceCn" || k === "enforceNganh") && moi){
-    b.disabled = true; bao("Đang quét xem bật lên ai sẽ bị chặn…");
+  /* [3.3] BẬT THU PHÍ AN TOÀN: quét trước; ai sẽ bị chặn thì mở bảng "cho ân hạn có hạn chót rồi mới đổi" */
+  const gia2 = (k === "enforceCn" && moi) ? { enforceCn:true } : (k === "enforceNganh" && moi) ? { enforceNganh:true } : (k === "cnChung" && !moi) ? { cnChung:false } : null;
+  if(gia2){
+    b.disabled = true; bao("Đang quét xem đổi công tắc này ai sẽ bị chặn…");
     try{ await quetChiNhanh(); }catch(e){ b.disabled = false; return bao("Chưa quét được: " + maLoi(e), 1); }
     b.disabled = false;
-    const ds = QUET.cn.rows.map(r => ({ r, x: r.L.filter(x => k === "enforceCn" ? !x.cnOk : (x.licNg && !x.ngOk)) })).filter(o => o.x.length);
-    const soCH = ds.reduce((s,o) => s + o.x.length, 0);
-    nd = soCH ? `Bật lên sẽ CHẶN NGAY ${soCH} cửa hàng của ${ds.length} shop:\n\n${ds.slice(0,8).map(o => `• ${o.r.email}: ${o.x.map(x => x.b).join(", ")}`).join("\n")}${ds.length > 8 ? `\n• …và ${ds.length - 8} shop nữa` : ""}\n\nKhách cũ nên được miễn trừ trước (Radar → Chi nhánh & gói ngành). Vẫn bật?`
-              : "Đã quét: bật lên KHÔNG chặn nhầm cửa hàng nào. Bật ngay?";
-    nguy = soCH > 0;
+    const ds = aiBiChan(gia2);
+    if(ds.length) return moBatAnToan(k, ds);
+    nd = `Đã quét ${QUET.cn.soShop} shop: ${moi ? "bật" : "tắt"} công tắc này KHÔNG chặn cửa hàng nào. ${moi ? "Bật" : "Tắt"} ngay?`;
+    if(k === "cnChung" && CFGDB.enforceCn !== true) nd += "\n\nThu phí chi nhánh đang TẮT nên chưa ai bị chặn. Khi bật, mỗi ngành phải có gói chi nhánh riêng — lúc đó app quét lại và cho ân hạn.";
   }
-  if(k === "cnChung" && !moi){ nd += "\n\nKhách đang dùng 1 suất sono_cn cho cửa hàng ngành sẽ bị chặn ở ngành chưa mua gói riêng (khi thu phí chi nhánh đang bật)."; nguy = true; }
   if(k === "choThu" && !moi) nd += "\n\nKhách MỚI sẽ không tự mở dùng thử được nữa.";
   if(!(await hoi({ tieuDe:"Đổi công tắc", noiDung:nd, nutOk: moi ? "Bật" : "Tắt", nguy }))) return;
   await chay(b, async () => { await doiCongTac(k, moi); bao(`${dong[1]}: đã ${moi ? "bật" : "tắt"}`); await taiLai(true); });
@@ -3257,7 +3332,15 @@ async function capOk(t, btn){
   if(S.r && S.tien > 0 && !(S.r.ck && typeof S.r.ck === "object") && !S.saoKe)
     hoiLai.push("Khách CHƯA bấm “Đã chuyển khoản” và bạn chưa đối soát sao kê. Chỉ duyệt khi ĐÃ THẤY TIỀN VỀ tài khoản.");
   const tom = `${tenApp(S.app)} · ${S.thang} tháng${laCN(S.app) ? ` · ${S.qty} suất` : ""}\nHạn mới: ${ngayVN(hanMoi)}\nGhi sổ: ${tienD(S.tien)}`;
-  if(!(await hoi({ tieuDe: S.r ? "Duyệt đơn" : "Đặt hạn", noiDung: (hoiLai.length ? "⚠️ " + hoiLai.join("\n⚠️ ") + "\n\n" : "") + tom, nutOk: S.r ? "Duyệt" : "Đặt hạn", nguy: hoiLai.length > 0 }))) return;
+  /* [3.3] Đơn mang email người khác / email sao kê gắn nhiều tài khoản ⇒ KHÔNG duyệt 1 chạm: phải gõ DUYET */
+  const dcx = S.r ? donCho().find(d => d.r.id === S.r.id) : null;
+  const canGo = !!(S.canGo || (dcx && dcx.giaMao));
+  if(dcx && dcx.giaMao) hoiLai.unshift(`MẠO DANH? Email trên đơn (${S.r.email || "?"}) KHÁC email tài khoản (${emailCua(S.uid) || "?"}). Chỉ duyệt khi chắc chắn tiền là của CHÍNH tài khoản này.`);
+  else if(S.canGo) hoiLai.unshift("Email trong sao kê gắn với NHIỀU tài khoản — mở hồ sơ kiểm tay cho chắc tiền về đúng người.");
+  if(!(await hoi({ tieuDe: S.r ? "Duyệt đơn" : "Đặt hạn", noiDung: (hoiLai.length ? "⚠️ " + hoiLai.join("\n⚠️ ") + "\n\n" : "") + tom, nutOk: S.r ? "Duyệt" : "Đặt hạn", nguy: hoiLai.length > 0, go: canGo ? "DUYET" : null }))){
+    if(canGo) bao("Chưa duyệt — muốn duyệt phải gõ đúng chữ DUYET", 1);
+    return;
+  }
   let xong = false;
   await chay(btn, async () => {
     await capHan({ uid:S.uid, app:S.app, thang:S.thang, soTien:S.tien, qty:S.qty, hanMoi, ghiChu:S.ghi, r:S.r, vanTay:S.vanTay, saoKe:S.saoKe });
@@ -3294,6 +3377,7 @@ document.addEventListener("input", e => {
   else if(k === "cu" || k === "moi"){ S[k] = el.value; if(S.san){ S.san = null; veChuyen(t); const i = $(`[data-in="${k}"]`, t.than); if(i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } } }
   else if(k === "nkTim"){ S.tim = el.value; veNhatKyTam(t); }
   else if(k === "skText"){ S.text = el.value; _skNho = el.value; }
+  else if(k === "ahNgay"){ S.ngay = Math.floor(num(el.value)) || 0; const nb = t.chan.querySelector('[data-act="bat-an-han"]'); if(nb) nb.textContent = `Ân hạn ${S.ngay || "?"} ngày rồi đổi`; }
 });
 document.addEventListener("change", e => {
   const el = e.target, t = tamCua(el); if(!t || !t.S) return;
@@ -3307,6 +3391,8 @@ document.addEventListener("change", e => {
   else if(k === "mau"){ S.mau = el.value; veNhac(t); }
   else if(k === "ly") S.ly = el.value;
   else if(k === "saoLuu") S.saoLuu = !!el.checked;
+  else if(k === "ahNgay"){ S.ngay = Math.min(90, Math.max(1, Math.floor(num(el.value)) || 30)); veBatAnToan(t); }
+  else if(k === "ahNhan"){ S.nhan = !!el.checked; veBatAnToan(t); }
 });
 $("#man").addEventListener("click", () => dongTam());
 document.addEventListener("keydown", e => { if(e.key === "Escape" && TAM.length && !document.querySelector(".hop-nen")) dongTam(); });
@@ -3342,6 +3428,9 @@ async function batDau(){
     _donDaThay = new Set(REQ.filter(rCho).map(r => r.id));
     veTatCa();
     quetThuong().then(n => { if(n){ bao(`🎁 Đã tự thưởng ${n} người giới thiệu`); taiLai(true); } }).catch(()=>{});
+    ngheDon();   /* [3.3] đơn mới / khách báo đã chuyển khoản hiện NGAY, không phải bấm Tải lại */
+    /* [3.3] Sức khoẻ khách: tự quét nhịp mở app 1 lần mỗi phiên, chạy nền, không chặn giao diện */
+    setTimeout(() => { if(!QUET.ban && auth.currentUser) quetPhienBan().then(() => { if(!TAM.length && (VIEW === "homnay" || VIEW === "radar")) veView(VIEW); }).catch(() => {}); }, 6000);
   }catch(e){
     $("#v-" + VIEW).innerHTML = `<div class="bao xau" style="margin-top:14px"><b>Chưa tải được số liệu.</b><br>${esc(maLoi(e))}</div><button class="nut chinh rong" data-act="tai-lai-dau">Thử lại</button>`;
   }
@@ -3364,12 +3453,12 @@ document.addEventListener("visibilitychange", async () => {
   if(moi.length) bao(`🔔 Có ${moi.length} đơn mới chờ duyệt`);
 });
 const veMang = () => $("#matMang").classList.toggle("on", !navigator.onLine);
-addEventListener("online", () => { veMang(); if(DA_NAP) taiLai(true); });
+addEventListener("online", () => { veMang(); if(DA_NAP) taiLai(true); if(DA_NAP && !_ngheReq) ngheDon(); });
 addEventListener("offline", veMang);
 veMang();
 khoiNav();
 onAuthStateChanged(auth, async u => {
-  if(!u){ DA_NAP = false; while(TAM.length) dongTam(); return veCong(); }
+  if(!u){ tatNgheDon(); DA_NAP = false; while(TAM.length) dongTam(); return veCong(); }
   if(String(u.email || "").toLowerCase() !== CFG.admin){ await signOut(auth); return veCong("Tài khoản này không có quyền quản trị."); }
   window.__ERR_UID = u.uid;
   $("#cong").classList.add("an"); ["#top","#main","#nav"].forEach(s => $(s).classList.remove("an"));
@@ -3709,12 +3798,188 @@ Object.assign(ACT, {
   "dn-kp-chon": b => { const t = tamCua(b), x = t && t.S && t.S.dnKp ? t.S.dnKp[Number(b.dataset.i)] : null;
     if(!x) return; const ten = t.S.dnTen; dongTam(t); return moNapFile(String(x.uid), x.data, ten); }
 });
+
+/* ══════════════════════════ [3.3] NGHE ĐƠN TRỰC TIẾP ══════════════════════════
+   Khách mở màn thanh toán / bấm "Đã chuyển khoản" là bảng này biết NGAY — không phải bấm Tải lại.
+   Chỉ tin số từ MÁY CHỦ (bỏ qua lượt từ bộ đệm). Listener chết (mất mạng lâu, mất quyền) ⇒ tự nối lại,
+   chờ tăng dần tối đa 60 giây — không bao giờ treo im mà mình không biết. */
+const DN_IM = 14;   /* khách trả tiền mà quá chừng này ngày không mở app = sắp bỏ */
+let _ngheReq = null, _ngheLan = 0, _ngheHen = 0;
+function tatNgheDon(){ clearTimeout(_ngheHen); try{ if(_ngheReq) _ngheReq(); }catch(e){} _ngheReq = null; }
+function ngheDon(){
+  if(_ngheReq || !auth.currentUser) return;
+  clearTimeout(_ngheHen);
+  try{
+    _ngheReq = onSnapshot(collection(fdb,"renewalRequests"), snap => {
+      if(!snap || (snap.metadata && snap.metadata.fromCache)) return;
+      _ngheLan = 0;
+      const coCK = r => !!(r && r.ck && typeof r.ck === "object");
+      const cu = new Map(REQ.filter(r => !r._cu).map(r => [r.id, r]));
+      const moiDs = snap.docs.map(d => { const x = d.data() || {}, p = d.id.split("__");
+        return { ...x, id:d.id, _uid: x.uid || p[0], _app: x.app || p[1] || "" }; });
+      const moi = [], ck = [];
+      moiDs.forEach(r => { if(!rCho(r)) return; const o = cu.get(r.id);
+        if(!o || !rCho(o)) (coCK(r) ? ck : moi).push(r);
+        else if(coCK(r) && !coCK(o)) ck.push(r); });
+      REQ = moiDs; donCu();
+      if(!DA_NAP) return;
+      _donDaThay = new Set(REQ.filter(rCho).map(r => r.id));
+      veHuyHieu();
+      const a = document.activeElement, dangGo = !!(a && a.matches && a.matches("input,textarea,select"));
+      if(!TAM.length && !dangGo) veView(VIEW);
+      if(ck.length){ const r = ck[0];
+        bao(`💸 ${r.email || emailCua(r._uid) || r._uid} vừa báo ĐÃ chuyển ${tienD(r.ck.tien != null ? r.ck.tien : r.amount)} · ${tenApp(r._app)}${ck.length > 1 ? ` (+${ck.length - 1} đơn nữa)` : ""}`);
+        try{ navigator.vibrate && navigator.vibrate([120, 60, 120]); }catch(e){} }
+      else if(moi.length) bao(`🔔 ${moi.length} đơn mới: ${moi.slice(0,3).map(r => tenApp(r._app)).join(", ")}${moi.length > 3 ? "…" : ""}`);
+    }, err => {
+      console.warn("nghe đơn:", err); _ngheReq = null;
+      if(!auth.currentUser) return;
+      const cho = Math.min(60000, 2000 * Math.pow(2, _ngheLan++));
+      clearTimeout(_ngheHen); _ngheHen = setTimeout(ngheDon, cho);
+    });
+  }catch(e){ console.warn(e); _ngheReq = null; }
+}
+
+/* ══════════════════════════ [3.3] BẬT THU PHÍ AN TOÀN — ÂN HẠN CÓ HẠN CHÓT ══════════════════════════
+   Trước đây bật enforceCn / enforceNganh hay tắt cnChung chỉ có 2 đường: chặn NGAY (khách đang dùng gọi
+   điện than, dễ mất khách) hoặc miễn trừ VĨNH VIỄN (mất tiền mãi). Nay: quét ai sẽ bị chặn → cho ân hạn
+   N ngày (accounts/{uid}.cnAnHanDen / ngAnHanDen — Rules VÁ LỖ S) + nhắn vào app từng shop → rồi mới đổi
+   công tắc. Qua hạn chót chưa mua là máy chủ chặn thật; cửa hàng mở thêm từ nay phải trả tiền ngay. */
+function themNgay(n){ const d = new Date(); d.setDate(d.getDate() + Number(n || 0)); d.setHours(23, 59, 0, 0); return d; }
+function aiBiChan(gia){
+  const Q = QUET.cn; if(!Q) return [];
+  return Q.goc.map(g => {
+    const nay = hangCN(g.uid, g.ids, null, g.gocKho), sau = hangCN(g.uid, g.ids, gia, g.gocKho);
+    return { r: sau, x: sau.L.filter((s, i) => s.chan && !nay.L[i].chan), goc: sau.gocChan.filter(c => !nay.gocChan.includes(c)) };
+  }).filter(o => o.x.length || o.goc.length);
+}
+function tinAnHan(o, loai, han){
+  if(loai === "ng"){
+    const goi = [...new Set([...o.x.map(s => s.licNg), ...o.goc.map(c => KHO_NG_GOC[c])].filter(Boolean))].map(tenApp).join(", ");
+    return `📢 ${goi} là gói thuê riêng. Bạn được dùng MIỄN PHÍ tới hết ngày ${ngayVN(han)}. Qua ngày đó chưa mua thì phần việc của ngành tạm khoá — hàng hoá, đơn hàng, sổ nợ vẫn còn nguyên. Mua ngay trong app: Bán hàng → chọn ngành → Mua gói. Hỗ trợ: ${hotTxt()}.`.slice(0, 500);
+  }
+  return `📢 Cửa hàng / chi nhánh thêm (${o.x.length} cửa hàng) nay cần gói Chi nhánh. Bạn được dùng MIỄN PHÍ tới hết ngày ${ngayVN(han)}. Qua ngày đó chưa mua thì cửa hàng thêm tạm khoá — dữ liệu vẫn còn nguyên. Mua ngay trong app: Bán hàng → 🏪 Cửa hàng → Mua thêm chi nhánh. Hỗ trợ: ${hotTxt()}.`.slice(0, 500);
+}
+function tinNhacAnHan(u){
+  const a = ACC[u] || {}, cn = anHanCua(a, "cn"), ng = anHanCua(a, "ng");
+  const phan = [cn ? `chi nhánh thêm (tới hết ngày ${ngayVN(new Date(cn))})` : "", ng ? `gói ngành (tới hết ngày ${ngayVN(new Date(ng))})` : ""].filter(Boolean).join(" và ");
+  return `⏰ Ân hạn miễn phí ${phan} sắp hết. Qua hạn chót chưa mua thì phần đó tạm khoá — dữ liệu vẫn còn nguyên. Mua ngay trong app để dùng liền mạch. Hỗ trợ: ${hotTxt()}.`.slice(0, 500);
+}
+function tinHoiTham(r){
+  return `👋 Đã ${r.ngay} ngày bạn chưa mở Sổ Nợ + Bán hàng. Có gì chưa tiện hoặc cần hướng dẫn thêm, gọi ${hotTxt()} — hỗ trợ miễn phí, tận tình.`.slice(0, 500);
+}
+const TIEU_AN_TOAN = { enforceCn:"Bật thu phí chi nhánh thêm", enforceNganh:"Bật thu phí gói ngành", cnChung:"Tắt gói chi nhánh dùng chung" };
+function moBatAnToan(k, ds){
+  const t = moTam({ tieuDe: TIEU_AN_TOAN[k] || "Đổi công tắc" });
+  t.S = { k, ds, ngay:30, nhan:true };
+  veBatAnToan(t);
+  return t;
+}
+function veBatAnToan(t){
+  const S = t.S, loai = S.k === "enforceNganh" ? "ng" : "cn", han = themNgay(S.ngay), dao = S.k === "cnChung" ? "Tắt" : "Bật";
+  const soCho = S.ds.reduce((s, o) => s + o.x.length + (o.goc.length ? 1 : 0), 0);
+  const moTa = o => [...o.x.map(s => `${s.b}: ${loai === "ng" ? "thiếu " + tenApp(s.licNg) : s.cnLy}`),
+    ...(o.goc.length ? [`cửa hàng chính dùng két ${[...new Set(o.goc.map(c => tenApp(KHO_NG_GOC[c])))].join(", ")}`] : [])].join(" · ");
+  const vd = S.ds[0];
+  t.than.innerHTML = `
+    <div class="bao xau"><b>${dao} công tắc này sẽ chặn NGAY ${soCho} chỗ của ${S.ds.length} shop</b> đang chạy mà chưa trả tiền.</div>
+    <div class="bao tot"><b>Nên làm: cho ân hạn rồi mới đổi.</b> Các shop dưới đây chạy miễn phí tới hết ngày <b>${ngayVN(han)}</b> — qua hạn chót chưa mua là máy chủ chặn thật. Không ai mất dữ liệu; cửa hàng mở thêm từ nay phải trả tiền ngay.</div>
+    <label class="o-nhap"><span>Số ngày ân hạn (1–90)</span><input data-in="ahNgay" type="number" inputmode="numeric" min="1" max="90" value="${S.ngay}" autocomplete="off"></label>
+    <label style="display:flex;gap:10px;align-items:center;margin:10px 2px;cursor:pointer"><input type="checkbox" data-in="ahNhan" ${S.nhan ? "checked" : ""} style="width:20px;height:20px;flex:none"><span class="nho" style="margin:0">Nhắn vào app từng shop: báo hạn chót + cách mua</span></label>
+    ${S.nhan && vd ? `<div class="bao ngoc"><b>Xem trước tin gửi ${esc(vd.r.email)}:</b><br>${esc(tinAnHan(vd, loai, han))}</div>` : ""}
+    ${mucHtml("Shop được ân hạn", `${S.ds.length} shop`)}
+    <div class="nhom">${S.ds.slice(0, 200).map(o => dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(o.r.uid)}"`, ic:"cua", lop:"dong-c", t:esc(o.r.email), d:esc(moTa(o)), mui:true })).join("")}</div>
+    ${S.ds.length > 200 ? `<p class="nho">…và ${S.ds.length - 200} shop nữa (vẫn được ân hạn đủ).</p>` : ""}
+    <p class="nho">Khách cũ muốn giữ miễn phí mãi thì vẫn bấm “Miễn trừ” trong hồ sơ như trước.</p>`;
+  t.chan.innerHTML = `<button class="nut nguy" data-act="bat-ngay">${dao} luôn (chặn ngay)</button><button class="nut chinh" data-act="bat-an-han" style="flex:2 1 auto">Ân hạn ${S.ngay} ngày rồi đổi</button>`;
+}
+async function datAnHan(uids, loai, n, chiKeoDai){
+  const k = loai === "ng" ? "ngAnHanDen" : "cnAnHanDen", han = n > 0 ? themNgay(n) : null, ten = loai === "ng" ? "gói ngành" : "chi nhánh";
+  const viec = !han ? "go_an_han" : loai === "ng" ? "an_han_nganh" : "an_han_chi_nhanh";
+  let xong = 0;
+  for(let i = 0; i < uids.length; i += 400){
+    const b = writeBatch(fdb);
+    uids.slice(i, i + 400).forEach(u => {
+      const cu = anHanCua(ACC[u] || {}, loai);
+      const den = !han ? null : (chiKeoDai && cu > han.getTime()) ? new Date(cu) : han;   /* bật hàng loạt: chỉ KÉO DÀI, không rút ngắn */
+      b.set(doc(fdb,"accounts",u), { [k]: den || deleteField(),
+        lichSu: arrayUnion(buoc(viec, { ghi: den ? `${ten} tới ${ngayVN(den)}` : ten })) }, { merge:true });
+    });
+    await b.commit(); xong = Math.min(i + 400, uids.length);
+  }
+  if(uids.length > 1) await ghiChung(viec, { ghi: `${xong} shop${han ? " · " + ten + " tới " + ngayVN(han) : ""}` });
+  return xong;
+}
+async function batAnToanOk(t, btn, anHan){
+  if(!t || !t.S || !t.S.k) return;
+  const S = t.S, k = S.k, dong = CONG_TAC.find(x => x[0] === k); if(!dong) return;
+  const moi = k !== "cnChung", loai = k === "enforceNganh" ? "ng" : "cn";
+  const n = Math.floor(num(S.ngay));
+  if(anHan && !(n >= 1 && n <= 90)) return bao("Số ngày ân hạn từ 1 đến 90", 1);
+  const uids = S.ds.map(o => o.r.uid), han = anHan ? themNgay(n) : null;
+  const soCho = S.ds.reduce((s, o) => s + o.x.length + (o.goc.length ? 1 : 0), 0);
+  const xn = anHan
+    ? `Cho ${uids.length} shop chạy miễn phí tới hết ngày ${ngayVN(han)}${S.nhan ? " + nhắn tin báo từng shop" : ""}, rồi ${moi ? "BẬT" : "TẮT"} “${dong[1]}”.\n\nShop đang có ân hạn dài hơn thì giữ nguyên hạn cũ.`
+    : `${moi ? "BẬT" : "TẮT"} “${dong[1]}” NGAY: ${soCho} chỗ của ${uids.length} shop bị máy chủ chặn tức thì, không báo trước.`;
+  if(!(await hoi({ tieuDe: dong[1], noiDung: xn, nutOk: anHan ? "Ân hạn & đổi" : (moi ? "Bật luôn" : "Tắt luôn"), nguy: !anHan, go: anHan ? null : "CHAN" }))) return;
+  await chay(btn, async () => {
+    if(anHan){
+      await datAnHan(uids, loai, n, true);
+      if(S.nhan){ try{ await guiTinRieng(S.ds.map(o => ({ uid:o.r.uid, text: tinAnHan(o, loai, han) })), "warn"); }
+                  catch(e){ bao("Đã ân hạn nhưng chưa gửi được tin: " + maLoi(e), 1); } }
+    }
+    await doiCongTac(k, moi);
+    dongTam(t);
+    bao(anHan ? `Đã ân hạn ${uids.length} shop tới ${ngayVN(han)} · ${dong[1]}: đã ${moi ? "bật" : "tắt"}` : `${dong[1]}: đã ${moi ? "bật" : "tắt"}`);
+    await taiLai(true);
+  }, "Đang làm…");
+}
+Object.assign(TEN_VIEC, { an_han_chi_nhanh:"Ân hạn chi nhánh", an_han_nganh:"Ân hạn gói ngành", go_an_han:"Gỡ ân hạn", chan_file_cu:"Chặn file sao lưu cũ" });
+Object.assign(ACT, {
+  "an-han": async b => {
+    const uid = b.dataset.uid, loai = b.dataset.loai === "ng" ? "ng" : "cn"; if(!uid) return;
+    const cu = anHanCua(ACC[uid] || {}, loai), ten = loai === "ng" ? "gói ngành" : "chi nhánh thêm";
+    const v = await nhap({ tieuDe:`Ân hạn ${ten}`, noiDung:`${emailCua(uid) || uid}\n${cu ? `Đang ân hạn tới ${ngayVN(new Date(cu))}.` : "Chưa có ân hạn."}\n\nSố ngày cho chạy miễn phí, tính từ hôm nay (1–90). Gõ 0 để GỠ ân hạn.\nChỉ có tác dụng khi công tắc thu phí ${loai === "ng" ? "gói ngành" : "chi nhánh"} đang bật.`,
+      macDinh: cu ? "0" : "30", kieu:"number", nutOk:"Lưu" });
+    if(v == null) return;
+    const n = Math.floor(num(v));
+    if(String(v).trim() === "" || !(n >= 0 && n <= 90)) return bao("Số ngày từ 0 đến 90", 1);
+    await chay(b, async () => { await datAnHan([uid], loai, n, false);
+      bao(n ? `Đã ân hạn ${ten} tới ${ngayVN(themNgay(n))}` : `Đã gỡ ân hạn ${ten}`); await taiLai(true); });
+  },
+  "bat-an-han": b => batAnToanOk(tamCua(b), b, true),
+  "bat-ngay": b => batAnToanOk(tamCua(b), b, false),
+  "nhac-an-han": async b => {
+    const x = radar().find(y => y.ma === "anHanSapHet"), ds = x ? x.items.filter(i => i.uid) : [];
+    if(!ds.length) return bao("Không có shop nào sắp hết ân hạn");
+    if(!(await hoi({ tieuDe:"Nhắc mua trước khi hết ân hạn", noiDung:`Gửi ${ds.length} tin vào app các shop sắp hết ân hạn?\n\nVí dụ: ${tinNhacAnHan(ds[0].uid)}`, nutOk:`Gửi ${ds.length} tin` }))) return;
+    await chay(b, async () => { const n = await guiTinRieng(ds.map(i => ({ uid:i.uid, text: tinNhacAnHan(i.uid) })), "warn");
+      bao(`Đã gửi ${n} tin nhắc`); await taiLai(true); }, "Đang gửi…");
+  },
+  "hoi-tham": async b => {
+    const ds = (QUET.ban && QUET.ban.im) || [];
+    if(!ds.length) return bao("Không có khách nào cần hỏi thăm");
+    if(!(await hoi({ tieuDe:"Nhắn hỏi thăm", noiDung:`Gửi ${ds.length} tin hỏi thăm vào app các khách đang trả tiền mà lâu không mở app?\n\nVí dụ: ${tinHoiTham(ds[0])}`, nutOk:`Gửi ${ds.length} tin` }))) return;
+    await chay(b, async () => { const n = await guiTinRieng(ds.map(r => ({ uid:r.uid, text: tinHoiTham(r) })), "info");
+      bao(`Đã gửi ${n} tin hỏi thăm`); await taiLai(true); }, "Đang gửi…");
+  },
+  "chan-file-cu": async b => {
+    const moi = !(BILL.chanFileCu === true);
+    if(!(await hoi({ tieuDe:"Chặn nạp file sao lưu đời cũ", noiDung: moi
+        ? "BẬT: file sao lưu bản cũ (không ghi tài khoản chủ) sẽ KHÔNG nạp được nữa.\n\nKhách đang giữ file cũ: đăng nhập tài khoản cũ, xuất lại file mới rồi nạp."
+        : "TẮT: file sao lưu bản cũ lại nạp được (không xác minh được file của ai).", nutOk: moi ? "Bật" : "Tắt", nguy: !moi }))) return;
+    await chay(b, async () => {
+      await setDoc(doc(fdb,"billing","info"), { chanFileCu: moi }, { merge:true }); BILL.chanFileCu = moi;
+      await ghiChung("chan_file_cu", { ghi: moi ? "bật" : "tắt" });
+      bao(moi ? "Đã chặn file sao lưu đời cũ" : "Đã mở lại file sao lưu đời cũ"); await taiLai(true); });
+  }
+});
 </script>
 <!-- ===== BỘ THU LỖI · tự chạy, không đụng code cũ · app=admin ===== -->
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "3.1.1";
+const APP_ID = "admin", APP_VERSION = "3.3.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
