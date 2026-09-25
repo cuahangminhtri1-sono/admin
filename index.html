@@ -462,7 +462,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.1.1"
+  ver:"3.2.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -987,6 +987,13 @@ function radar(){
   const cu = Object.entries(ACC).filter(([u,a]) => a.migrated !== true && (ngay(a.paidUntil) || ngay(a.posUntil) || a.posActive === true))
     .map(([u,a]) => ({ uid:u, t:emailCua(u)||u, d:`Hạn đời cũ ${a.paidUntil ? ngayVN(a.paidUntil) : ""}${a.posUntil ? " · POS "+ngayVN(a.posUntil) : ""}${a.posActive===true ? " · POS vĩnh viễn" : ""}` }));
   them("nhe","doiCu","Còn sót hạn kiểu đời cũ","Máy chủ không dùng hạn này nữa, nhưng app khách có thể tưởng còn hạn rồi bị chặn. Mở hồ sơ, cấp giấy phép riêng rồi cắt quyền cũ.", cu);
+
+  /* [3.2] Dọn shop đã nghỉ — nhắc nhẹ (không cộng vào huy hiệu đỏ). Lỗi gì cũng không làm hỏng radar. */
+  try{ const dn = dsNghi().du;
+    them("nhe","donNghi",`Shop đã nghỉ quá ${DN.NGAY} ngày`,
+      `Mọi gói Sổ Nợ + Bán hàng hết hạn quá ${DN.NGAY} ngày. Dọn để khỏi tốn tiền lưu dữ liệu và ảnh — app tự tải file sao lưu về máy trước khi xoá.`,
+      dn.map(x => ({ uid:x.uid, t:x.email, d:`hết hạn ${x.qua} ngày${x.dang ? " · đang dọn dở" : ""}` })), "don-nghi"); }
+  catch(e){ console.warn("dọn shop nghỉ:", e); }
 
   return R;
 }
@@ -1764,6 +1771,7 @@ function veCaiDat(){
     ${mucHtml("Công cụ")}
     <div class="nhom">
       ${dongHtml({ the:"button", act:"mo-chuyen", ic:"chuyen", t:"Chuyển dữ liệu sang tài khoản mới", d:"Khách mất Gmail, gõ nhầm email, sang nhượng shop — giữ nguyên hạn", mui:true })}
+      ${dongHtml({ the:"button", act:"mo-don-nghi", ic:"taive", t:"Dọn shop đã nghỉ", d:`${dnDem()} shop hết hạn quá ${DN.NGAY} ngày — sao lưu về máy rồi xoá dữ liệu, ảnh cho đỡ tốn tiền lưu trữ`, mui:true })}
       ${dongHtml({ the:"button", act:"sua-vv", ic:"xong", t:"Sửa giấy phép thiếu hạn", d:`${LIC.filter(l => tt(l).ma === "trong").length} giấy phép đang bị máy chủ chặn oan`, mui:true })}
       ${dongHtml({ the:"button", act:"mo-nhat-ky", ic:"so", t:"Nhật ký thao tác", d:"Mọi lần duyệt, khoá, đổi giá, gửi tin — không xoá được", mui:true })}
       ${dongHtml({ the:"button", act:"doi-mk-admin", ic:"chia", t:"Đổi mật khẩu quản trị", d: esc(toiLa()), mui:true })}
@@ -2448,6 +2456,7 @@ function veMucRadar(t){
   const nut = { "cong-tac":`<button class="nut chinh" data-act="nav" data-v="caidat">Mở công tắc thu tiền</button>`,
     "quet-cn":`<button class="nut chinh" data-act="quet-cn">Quét chi nhánh & gói ngành</button>`,
     "sua-vv":`<button class="nut chinh" data-act="sua-vv">Sửa hàng loạt thành vĩnh viễn</button>`,
+    "don-nghi":`<button class="nut chinh" data-act="mo-don-nghi">Mở bảng Dọn shop đã nghỉ</button>`,
     "bang-gia":`<button class="nut chinh" data-act="mo-bang-gia">Mở bảng giá</button>` }[x.hanhDong] || "";
   t.chan.innerHTML = x.ma === "lai" ? `<button class="nut" data-act="lai-loat" data-giu="ngay">Giữ ngày hết hạn (tất cả)</button><button class="nut chinh" data-act="lai-loat" data-giu="vv">Giữ vĩnh viễn (tất cả)</button>` : nut;
 }
@@ -3367,6 +3376,338 @@ onAuthStateChanged(auth, async u => {
   chuyenView(VIEW);
   $("#v-homnay").innerHTML = trong("Đang lấy số liệu…","Đơn chờ, giấy phép, sổ thu, radar");
   await batDau();
+});
+/* ══════════════════════════ DỌN SHOP ĐÃ NGHỈ ══════════════════════════
+   VÌ SAO: shop bỏ app (qua dùng app khác, dùng thử xong bỏ…) thì chỉ đơn giản là NGỪNG GIA HẠN —
+   dữ liệu + ảnh của họ nằm lại mãi trên Firebase, chủ phần mềm trả tiền lưu hằng tháng.
+   ĐỦ ĐIỀU KIỆN DỌN (thiếu 1 điều là KHÔNG dọn):
+     • MỌI gói Sổ Nợ + Bán hàng (mã sono…) hết hạn quá 180 ngày (+1 ngày chống lệch giờ máy chủ),
+       không gói nào vĩnh viễn, không gói nào thiếu / sai kiểu ngày hết hạn;
+     • không có đơn gia hạn nhóm Sổ Nợ đang chờ; không có dòng thu nhóm Sổ Nợ trong 180 ngày;
+     • chưa bấm "Giữ"; không phải tài khoản quản trị.
+   DỌN = (1) tải 1 file sao lưu về máy bạn (app "sono-don-nghi" — khôi phục bằng nút "Khôi phục
+     từ file" trong bảng này) → (2) xoá ảnh trên Storage (chứng từ, sản phẩm, chữ ký) → (3) xoá dữ
+     liệu Sổ Nợ + Bán hàng trên Firestore → (4) gỡ link nợ / hoá đơn / thực đơn QR / link online /
+     đơn QR / liên kết máy nhân viên.
+   GIỮ NGUYÊN: tài khoản, giấy phép, sổ doanh thu, đơn gia hạn cũ ⇒ khách quay lại vẫn đăng nhập,
+     gia hạn như thường (như shop mới; muốn lấy lại dữ liệu thì nạp file sao lưu).
+   AN TOÀN: đọc lại giấy phép TRÊN MÁY CHỦ ngay trước khi xoá từng shop · mọi lượt đọc phải là số
+     thật trên máy chủ (không nhận bộ đệm) · xoá ẢNH TRƯỚC — Storage Rules tự kiểm "hết hạn quá 180
+     ngày" lần nữa, sai là chặn, dữ liệu chưa bị đụng · dừng giữa chừng thì lần sau làm tiếp, KHÔNG
+     sao lưu đè bằng dữ liệu đã xoá dở · dữ liệu app khác (TrọSafe, Cafe…) không bị đụng.
+   ĐỔI MỐC 180 NGÀY: sửa DN.NGAY bên dưới VÀ 2 chỗ (180 · 15552000000) trong Storage Rules.       */
+const DN = { NGAY:180, MOI_LAN:25, LO:250 };
+const DN_GOC = ["meta","staff","suppliers","supplier_payments","pos_nv","_diag"];
+const dnLaSono = a => String(a || "").indexOf("sono") === 0;
+Object.assign(TEN_VIEC, { don_shop_nghi:"Dọn dữ liệu shop đã nghỉ", giu_du_lieu:"Giữ lại dữ liệu (không dọn)", bo_giu_du_lieu:"Bỏ giữ dữ liệu" });
+
+/* Mọi gói nhóm Sổ Nợ đều hết hạn quá mốc? → { moi, qua } (moi = ngày hết hạn muộn nhất) hoặc null */
+function dnHetHan(L, now){
+  if(!L || !L.length) return null;
+  if(!L.some(l => l && (l.app === "sono" || l.app === "sono_pos"))) return null;   /* Storage Rules soi đúng 2 gói này */
+  let moi = 0;
+  for(const l of L){
+    if(!l || l.vinhVien === true) return null;
+    const h = hanRules(l.paidUntil);
+    if(h == null) return null;
+    if(h > moi) moi = h;
+  }
+  const qua = Math.floor((now - moi) / 864e5);
+  return qua >= DN.NGAY + 1 ? { moi, qua } : null;
+}
+function dsNghi(){
+  const now = Date.now(), toi = (auth.currentUser && auth.currentUser.uid) || "";
+  const theo = {};
+  LIC.forEach(l => { if(l && l.uid && dnLaSono(l.app)) (theo[l.uid] = theo[l.uid] || []).push(l); });
+  const cho = new Set(REQ.filter(r => r && r._uid && rCho(r) && dnLaSono(r._app || "sono")).map(r => r._uid));
+  const vuaTra = new Set(PAY.filter(p => { if(!p || !p.uid || !dnLaSono(p.app || "sono")) return false;
+    const d = pNgay(p); return !!d && (now - d) < DN.NGAY * 864e5; }).map(p => p.uid));
+  const du = [], giu = [], xong = [], doDang = [];
+  Object.keys(theo).forEach(uid => {
+    if(uid === toi || String(emailCua(uid) || "").toLowerCase() === CFG.admin) return;
+    const a = ACC[uid] || {}, dd = (a.donDuLieu && typeof a.donDuLieu === "object") ? a.donDuLieu : null;
+    const dang = !!(dd && dd.batDau && !dd.xong);
+    const h = dnHetHan(theo[uid], now);
+    const row = { uid, email: emailCua(uid) || uid, L: theo[uid], dd, dang, moi: h ? h.moi : 0, qua: h ? h.qua : 0 };
+    if(!h || cho.has(uid) || vuaTra.has(uid)){ if(dang) doDang.push(row); return; }
+    const xl = dd && ngay(dd.xong);
+    if(xl && xl.getTime() >= h.moi){ xong.push(row); return; }
+    if(a.giuDuLieu === true){ (dang ? doDang : giu).push(row); return; }
+    du.push(row);
+  });
+  du.sort((a,b) => (Number(b.dang) - Number(a.dang)) || (b.qua - a.qua));
+  giu.sort((a,b) => b.qua - a.qua);
+  xong.sort((a,b) => (ngay(b.dd && b.dd.xong) || 0) - (ngay(a.dd && a.dd.xong) || 0));
+  return { du, giu, xong, doDang };
+}
+function dnDem(){ try{ return dsNghi().du.length; }catch(e){ return 0; } }
+function dnLoi(e){
+  const m = maLoi(e);
+  if(/storage\/unauthori[sz]ed|storage\/unauthenticated/.test(m)) return "máy chủ (Storage Rules) chưa cho xoá ảnh — kiểm tra đã dán Storage Rules mới chưa";
+  if(/permission-denied/.test(m)) return "Firestore Rules chặn (" + m + ")";
+  if(/unavailable|offline|network|retry-limit|failed to fetch|chập chờn|mất mạng/i.test(m)) return "mất mạng giữa chừng — có mạng lại thì bấm Dọn để làm tiếp";
+  return m;
+}
+
+/* ─────────── Đọc & xoá — mọi lượt đọc phải là số thật trên máy chủ ─────────── */
+function dnThat(s){ if(s && s.metadata && s.metadata.fromCache) throw new Error("mạng chập chờn — chưa đọc được số thật trên máy chủ"); return s; }
+async function dnLay(...p){ const s = dnThat(await getDocs(collection(fdb, ...p))); return s.docs.map(d => ({ id:d.id, d:d.data() })); }
+/* Y hệt cdlLayKho nhưng KHẮT KHE: đọc hỏng / đọc từ bộ đệm là dừng (không sao lưu thiếu rồi xoá) */
+async function dnLayKho(uid){
+  const kho = { uid, meta:[], customers:[], branches:[], pos:{} };
+  kho.meta = (await dnLay("users",uid,"meta")).filter(m => m.id !== "app");
+  for(const c of await dnLay("users",uid,"customers"))
+    kho.customers.push({ id:c.id, d:c.d, tx: await dnLay("users",uid,"customers",c.id,"transactions") });
+  for(const n of CDL_GOC) kho[n] = await dnLay("users",uid,n);
+  kho.branches = await dnLay("users",uid,"branches");
+  const ids = ["main"].concat(kho.branches.map(b => b.id).filter(x => x !== "main"));
+  for(const b of ids){
+    const bd = {};
+    for(const n of CDL_CN) bd[n] = b === "main" ? await dnLay("users",uid,n) : await dnLay("users",uid,"branches",b,n);
+    kho.pos[b] = bd;
+  }
+  return kho;
+}
+/* Xoá sạch 1 kho / 1 truy vấn theo lô; 'truoc' = dọn kho con của từng doc trước khi xoá doc */
+async function dnQuet(q, truoc){
+  let dem = 0;
+  for(let v = 0; v < 4000; v++){
+    if(!navigator.onLine) throw new Error("mất mạng");
+    const s = dnThat(await getDocs(query(q, limit(DN.LO))));
+    if(s.empty) return dem;
+    if(truoc) for(const d of s.docs) dem += await truoc(d);
+    const b = writeBatch(fdb); s.docs.forEach(d => b.delete(d.ref)); await b.commit();
+    dem += s.size;
+  }
+  throw new Error("quá nhiều bản ghi — bấm Dọn lại để làm tiếp");
+}
+let _dnKho = null;
+async function dnKho(){
+  if(!_dnKho){ const m = await import("https://www.gstatic.com/firebasejs/12.17.1/firebase-storage.js"); _dnKho = { m, s: m.getStorage(fbApp) }; }
+  return _dnKho;
+}
+async function dnXoaAnh(uid, log){
+  const { m, s } = await dnKho();
+  let dem = 0;
+  for(const goc of ["att","sign"]){
+    const r = await m.listAll(m.ref(s, `u/${uid}/${goc}`));
+    let ds = r.items.slice();
+    for(const p of r.prefixes) ds = ds.concat((await m.listAll(p)).items);
+    if(!ds.length) continue;
+    log(`  · Xoá ${ds.length} ảnh ${goc === "att" ? "chứng từ / sản phẩm" : "chữ ký"}…`);
+    const kq = await theoLo(ds, 6, f => m.deleteObject(f).then(() => 1, e => { if(e && e.code === "storage/object-not-found") return 0; throw e; }));
+    const hu = kq.find(x => x && typeof x === "object" && x.loi);
+    if(hu){ const e = new Error(hu.loi); e.code = hu.loi; throw e; }
+    dem += kq.filter(x => x === 1).length;
+  }
+  return dem;
+}
+async function dnXoaDuLieu(uid, log){
+  let dem = 0;
+  log("  · Xoá khách & sổ nợ…");
+  dem += await dnQuet(collection(fdb,"users",uid,"customers"), d => dnQuet(collection(d.ref,"transactions")));
+  log("  · Xoá cài đặt, nhân viên, nhà cung cấp…");
+  for(const n of DN_GOC) dem += await dnQuet(collection(fdb,"users",uid,n));
+  log("  · Xoá hàng hoá, đơn, kho của từng cửa hàng…");
+  const sb = dnThat(await getDocs(collection(fdb,"users",uid,"branches")));
+  const ids = ["main"].concat(sb.docs.map(d => d.id).filter(x => x !== "main"));
+  for(const b of ids) for(const n of CDL_CN) dem += await dnQuet(bcol(uid, b, n));
+  dem += await dnQuet(collection(fdb,"users",uid,"branches"));
+  return dem;
+}
+async function dnXoaLink(uid, log){
+  log("  · Gỡ link nợ / hoá đơn / thực đơn QR / link online…");
+  let dem = 0;
+  dem += await dnQuet(query(collection(fdb,"shares"), where("ownerUid","==",uid)), d => dnQuet(collection(d.ref,"chuky")));
+  dem += await dnQuet(query(collection(fdb,"shares_qr"), where("ownerUid","==",uid)));
+  dem += await dnQuet(query(collection(fdb,"qr_don"), where("ownerUid","==",uid)));
+  dem += await dnQuet(query(collection(fdb,"nv_map"), where("shopUid","==",uid)));
+  return dem;
+}
+/* Dọn 1 shop: kiểm lại trên máy chủ → ảnh → đánh dấu → dữ liệu → link → ghi sổ */
+async function dnDonShop(x, tenFile, log){
+  const uid = x.uid;
+  log(`• ${x.email}`);
+  if(!navigator.onLine) throw new Error("mất mạng");
+  const sl = dnThat(await getDocs(collection(fdb,"accounts",uid,"lic")));
+  const L = sl.docs.map(d => ({ ...(d.data() || {}), uid, app:d.id })).filter(l => dnLaSono(l.app));
+  if(!dnHetHan(L, Date.now())) throw new Error("giấy phép vừa đổi — không còn đủ điều kiện, KHÔNG xoá gì");
+  const anh = await dnXoaAnh(uid, log);
+  if(!x.dang) await setDoc(doc(fdb,"accounts",uid), { donDuLieu:{ batDau:new Date(), boi:toiLa(), file: tenFile || "", xong:null } }, { merge:true });
+  const bg = await dnXoaDuLieu(uid, log);
+  const lk = await dnXoaLink(uid, log);
+  await setDoc(doc(fdb,"accounts",uid), { donDuLieu:{ xong:new Date(), soAnh:anh, soBanGhi:bg, soLink:lk } }, { merge:true });
+  const ghi = `${bg} bản ghi · ${anh} ảnh · ${lk} link · file ${tenFile || "—"}`;
+  await ghiTK(uid, "don_shop_nghi", { ghi });
+  await ghiChung("don_shop_nghi", { ghi:`${x.email} · ${ghi}` }, uid);
+  log(`  ✓ Xong: ${bg} bản ghi · ${anh} ảnh · ${lk} link`);
+  return { anh, bg, lk };
+}
+
+/* ─────────── Bảng "Dọn shop đã nghỉ" ─────────── */
+function moDonNghi(){
+  const t = moTam({ tieuDe:"Dọn shop đã nghỉ", lamMoi: () => veDonNghi(t) });
+  t.S = { dnBang:true, dang:false, log:"" };
+  veDonNghi(t);
+}
+function dnGhiLog(t, m){
+  t.S.log += m + "\n";
+  if(!TAM.includes(t)) return;
+  const el = $("#dnLog", t.than);
+  if(el){ el.textContent = t.S.log; el.scrollTop = el.scrollHeight; } else veDonNghi(t);
+}
+function veDonNghi(t){
+  if(!TAM.includes(t)) return;
+  const S = t.S;
+  let k; try{ k = dsNghi(); }catch(e){ console.warn(e); k = { du:[], giu:[], xong:[], doDang:[] }; }
+  const goi = x => x.L.map(l => tenApp(l.app)).join(", ");
+  const nut = x => S.dang ? "" : `<span style="display:flex;gap:6px;flex:none">`
+    + `<button class="nut nho" data-act="dn-giu" data-uid="${esc(x.uid)}">Giữ</button>`
+    + `<button class="nut nho nguy" data-act="dn-don" data-uid="${esc(x.uid)}">Dọn</button></span>`;
+  t.than.innerHTML = `
+    <div class="bao canh">Shop có <b>mọi gói Sổ Nợ + Bán hàng hết hạn quá ${DN.NGAY} ngày</b> — không vĩnh viễn, không có đơn gia hạn chờ, không trả tiền trong ${DN.NGAY} ngày qua.<br>
+      <b>Dọn</b> = tải file sao lưu về máy bạn, rồi xoá ảnh, khách, sổ nợ, hàng, đơn, link của shop.<br>
+      <b>Giữ nguyên</b> tài khoản, giấy phép, sổ doanh thu — khách quay lại vẫn gia hạn được.</div>
+    ${S.log ? `<div class="nhatky" id="dnLog"></div>` : ""}
+    ${k.doDang.length ? mucHtml("Dọn dở — cần xem", k.doDang.length) + `<div class="nhom">${k.doDang.map(x => dongHtml({ ic:"canh", lop:"dong-c",
+        t: esc(x.email), d: esc(`Đang dọn dở nhưng không còn đủ điều kiện (vừa gia hạn / có đơn chờ / đang giữ). Dữ liệu có thể đã mất một phần — khôi phục từ file ${(x.dd && x.dd.file) || "sao lưu"}.`) })).join("")}</div>` : ""}
+    ${mucHtml("Đủ điều kiện dọn", k.du.length)}
+    <div class="nhom">${k.du.length ? k.du.slice(0, 300).map(x => dongHtml({ ic:"khach", lop: x.dang ? "dong-c" : "do-c",
+        t: esc(x.email) + (x.dang ? " " + chip("dọn dở","canh") : ""),
+        d: esc(`Hết hạn ${x.qua} ngày · ${goi(x)}`) + (x.dang && x.dd && x.dd.file ? "<br>" + esc("Đã sao lưu: " + x.dd.file) : ""),
+        ph: nut(x) })).join("")
+      : trong("Chưa có shop nào", `Shop hết hạn quá ${DN.NGAY} ngày sẽ hiện ở đây`)}</div>
+    ${k.du.length > 300 ? `<p class="nho">…và ${k.du.length - 300} shop nữa</p>` : ""}
+    ${k.giu.length ? mucHtml("Đang giữ lại", k.giu.length) + `<div class="nhom">${k.giu.map(x => dongHtml({ ic:"khoa", lop:"la-c",
+        t: esc(x.email), d: esc(`Hết hạn ${x.qua} ngày · không bao giờ bị dọn`),
+        ph: S.dang ? "" : `<button class="nut nho" data-act="dn-bo-giu" data-uid="${esc(x.uid)}">Bỏ giữ</button>` })).join("")}</div>` : ""}
+    ${k.xong.length ? `<p class="nho">Đã dọn ${k.xong.length} shop · lần gần nhất ${esc(gioVN(k.xong[0].dd && k.xong[0].dd.xong))}.</p>` : ""}`;
+  const lg = $("#dnLog", t.than); if(lg){ lg.textContent = S.log; lg.scrollTop = lg.scrollHeight; }
+  t.chan.innerHTML = S.dang ? `<button class="nut" disabled>Đang dọn…</button>`
+    : `<button class="nut" data-act="dn-khoi-phuc">${ic("nap")}Khôi phục từ file</button>`
+      + (k.du.length ? `<button class="nut nguy dac" data-act="dn-don-het">Dọn ${Math.min(k.du.length, DN.MOI_LAN)} shop</button>` : "");
+}
+let _dnKhoa = false;                       /* khoá chung: bấm 2 lần / mở 2 bảng cũng chỉ chạy 1 lượt */
+async function chayDonNghi(t, uids){
+  const S = t.S; if(S.dang) return;
+  if(_dnKhoa) return bao("Đang có một lượt dọn — đợi xong đã", 1);
+  if(!navigator.onLine) return bao("Không có mạng", 1);
+  const lo = dsNghi().du.filter(x => uids.includes(x.uid)).slice(0, DN.MOI_LAN);
+  if(!lo.length) return bao("Không còn shop nào đủ điều kiện dọn", 1);
+  const soDo = lo.filter(x => x.dang).length;
+  const tom = lo.slice(0, 8).map(x => `• ${x.email} — hết hạn ${x.qua} ngày${x.dang ? " (dọn dở)" : ""}`).join("\n")
+    + (lo.length > 8 ? `\n• …và ${lo.length - 8} shop nữa` : "");
+  _dnKhoa = true;
+  let dongY = false;
+  try{
+    dongY = await hoi({ tieuDe:`Dọn ${lo.length} shop đã nghỉ`, nutOk:"Tiếp tục", nguy:true, go:"DON",
+      noiDung:`${tom}\n\nSẽ XOÁ HẲN: ảnh (chứng từ, sản phẩm, chữ ký), khách, sổ nợ, hàng, đơn, link nợ / thực đơn QR / link online.\nGiữ nguyên: tài khoản, giấy phép, sổ doanh thu.\n\nTrước khi xoá, app tải 1 file sao lưu về máy bạn${soDo ? ` (${soDo} shop dọn dở dùng file sao lưu lần trước)` : ""}.` });
+  }finally{ if(!dongY) _dnKhoa = false; }
+  if(!dongY) return;
+  const log = m => { try{ dnGhiLog(t, m); }catch(e){ console.warn(e); } };
+  let xong = 0, hong = 0, anh = 0, bg = 0, lk = 0, daXoa = false;
+  try{
+    S.dang = true; S.log = ""; try{ veDonNghi(t); }catch(e){ console.warn(e); }
+    await dnKho();
+    log("▶ Làm mới số liệu từ máy chủ…");
+    await napDuLieu();
+    const moi = dsNghi().du;
+    const ds = lo.map(y => moi.find(x => x.uid === y.uid)).filter(Boolean);
+    const bo = lo.filter(y => !moi.some(x => x.uid === y.uid));
+    if(bo.length) log(`  ⚠️ Bỏ qua ${bo.length} shop vì không còn đủ điều kiện: ${bo.map(x => x.email).join(", ")}`);
+    if(!ds.length){ log("Không còn shop nào để dọn — chưa xoá gì."); return; }
+    let tenFile = "";
+    const canSL = ds.filter(x => !x.dang);
+    if(canSL.length){
+      log(`▶ BƯỚC 1 — Sao lưu ${canSL.length} shop`);
+      const goi = [];
+      for(const x of canSL){
+        const kho = await dnLayKho(x.uid), d = cdlDem(kho);
+        goi.push({ uid:x.uid, email:x.email, hetHanNgay:x.qua, soBanGhi:d.tong, data: cdlRaJson(x.uid, x.email, kho) });
+        log(`  ✓ ${x.email}: ${d.nC} khách · ${d.nT} giao dịch · ${d.nP} sản phẩm · ${d.nO} đơn`);
+      }
+      const n = new Date();
+      tenFile = `SoNo-DonShopNghi-${hnay()}-${pad2(n.getHours())}${pad2(n.getMinutes())}-${goi.length}shop.json`;
+      taiFile({ app:"sono-don-nghi", version:1, exportedAt:n.toISOString(), boi:toiLa(), mocNgay:DN.NGAY, shops:goi }, tenFile);
+      log(`▶ BƯỚC 2 — Đã tải file sao lưu: ${tenFile}`);
+      if(!(await hoi({ tieuDe:"Kiểm tra file sao lưu", nutOk:"Xoá dữ liệu", nguy:true,
+          noiDung:`App vừa tải về máy: ${tenFile}\n\nMở thư mục Tải về (Download) xem đã có file này chưa. CÓ RỒI mới bấm Xoá dữ liệu.\nChưa thấy thì bấm Huỷ — chưa có gì bị xoá.` }))){
+        log("⛔ Đã dừng — CHƯA xoá gì."); return;
+      }
+    }
+    log(`▶ BƯỚC 3 — Xoá dữ liệu ${ds.length} shop`);
+    for(const x of ds){
+      daXoa = true;
+      try{ const r = await dnDonShop(x, x.dang ? ((x.dd && x.dd.file) || "") : tenFile, log); xong++; anh += r.anh; bg += r.bg; lk += r.lk; }
+      catch(e){
+        hong++; log(`  ❌ ${x.email}: ${dnLoi(e)}`);
+        /* shop ĐẦU TIÊN đã bị chối ⇒ gần như chắc chắn chưa dán Storage Rules mới ⇒ dừng luôn, khỏi báo lỗi cả loạt */
+        if(!xong && /storage\/unauthori[sz]ed|storage\/unauthenticated/.test(maLoi(e))){ log("⛔ Dừng: Storage Rules chưa cho tài khoản quản trị xoá ảnh — dán Rules mới rồi bấm Dọn lại."); break; }
+        if(!navigator.onLine){ log("⛔ Dừng: mất mạng."); break; }
+      }
+    }
+    log(`\n${hong ? "⚠️" : "✅"} Xong ${xong}/${ds.length} shop · ${bg} bản ghi · ${anh} ảnh · ${lk} link${hong ? ` · ${hong} shop chưa xong (bấm Dọn lại để làm tiếp)` : ""}`);
+    bao(hong ? `Dọn xong ${xong} shop, ${hong} shop chưa xong` : `Đã dọn ${xong} shop`, hong > 0);
+  }catch(e){
+    log(`\n❌ Dừng: ${dnLoi(e)}${daXoa ? "" : " — chưa xoá gì"}`);
+    bao("Dọn lỗi: " + dnLoi(e), 1);
+  }finally{
+    S.dang = false; _dnKhoa = false;
+    if(daXoa){ try{ await napDuLieu(); veTatCa(); }catch(e){} }
+    try{ if(TAM.includes(t)) veDonNghi(t); }catch(e){ console.warn(e); }
+  }
+}
+async function dnGiu(b, giu){
+  const uid = b.dataset.uid; if(!uid) return;
+  const t = tamCua(b), mail = emailCua(uid) || uid;
+  if(giu && !(await hoi({ tieuDe:"Giữ lại dữ liệu", nutOk:"Giữ lại",
+      noiDung:`${mail}\n\nShop này sẽ KHÔNG BAO GIỜ bị dọn, dù hết hạn bao lâu. Bỏ giữ lúc nào cũng được.` }))) return;
+  let ok = false;
+  await chay(b, async () => {
+    await setDoc(doc(fdb,"accounts",uid), { giuDuLieu: !!giu }, { merge:true });
+    (ACC[uid] = ACC[uid] || {}).giuDuLieu = !!giu;
+    ok = true;
+    await ghiTK(uid, giu ? "giu_du_lieu" : "bo_giu_du_lieu");
+    await ghiChung(giu ? "giu_du_lieu" : "bo_giu_du_lieu", { ghi: mail }, uid);
+  }, "Đang lưu…");
+  if(!ok) return;
+  bao(giu ? "Đã giữ lại — shop này không bao giờ bị dọn" : "Đã bỏ giữ");
+  if(t && TAM.includes(t)) veDonNghi(t);
+  try{ veView(VIEW); }catch(e){}
+}
+/* Khôi phục: nhận file "sono-don-nghi" (nhiều shop) hoặc "sono-full" → mở đúng bảng Nạp file sẵn có */
+function dnChonFile(){
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = ".json,application/json"; inp.style.display = "none";
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; inp.remove(); if(!f) return;
+    let obj = null;
+    try{ obj = JSON.parse(await f.text()); }catch(e){ return bao("File hỏng hoặc không phải .json", 1); }
+    if(obj && obj.app === "sono-full"){
+      if(!obj.ownerUid) return bao("File không ghi tài khoản chủ — mở hồ sơ khách rồi nạp", 1);
+      return moNapFile(String(obj.ownerUid), obj, f.name);
+    }
+    const ds = (obj && obj.app === "sono-don-nghi" && Array.isArray(obj.shops))
+      ? obj.shops.filter(x => x && x.uid && x.data && x.data.app === "sono-full") : [];
+    if(!ds.length) return bao("Không phải file sao lưu của Dọn shop đã nghỉ", 1);
+    if(ds.length === 1) return moNapFile(String(ds[0].uid), ds[0].data, f.name);
+    const t = moTam({ tieuDe:"Khôi phục shop nào?" });
+    t.S = { dnKp: ds, dnTen: f.name };
+    t.than.innerHTML = `<p class="nho">File ${esc(f.name)} · ${ds.length} shop. Chọn shop cần nạp lại dữ liệu:</p>
+      <div class="nhom">${ds.map((x, i) => dongHtml({ the:"button", act:"dn-kp-chon", data:`data-i="${i}"`, ic:"khach",
+        t: esc(x.email || x.uid), d: esc(`${num(x.soBanGhi)} bản ghi`), mui:true })).join("")}</div>`;
+  };
+  document.body.appendChild(inp); inp.click();
+}
+Object.assign(ACT, {
+  "mo-don-nghi": () => moDonNghi(),
+  "dn-don": b => { const t = tamCua(b); if(t && t.S && t.S.dnBang) return chayDonNghi(t, [b.dataset.uid]); },
+  "dn-don-het": b => { const t = tamCua(b); if(t && t.S && t.S.dnBang) return chayDonNghi(t, dsNghi().du.map(x => x.uid)); },
+  "dn-giu": b => dnGiu(b, true),
+  "dn-bo-giu": b => dnGiu(b, false),
+  "dn-khoi-phuc": () => dnChonFile(),
+  "dn-kp-chon": b => { const t = tamCua(b), x = t && t.S && t.S.dnKp ? t.S.dnKp[Number(b.dataset.i)] : null;
+    if(!x) return; const ten = t.S.dnTen; dongTam(t); return moNapFile(String(x.uid), x.data, ten); }
 });
 </script>
 <!-- ===== BỘ THU LỖI · tự chạy, không đụng code cũ · app=admin ===== -->
