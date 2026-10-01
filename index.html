@@ -433,7 +433,7 @@ import { initializeAuth, indexedDBLocalPersistence, browserLocalPersistence, bro
          EmailAuthProvider, reauthenticateWithCredential, updatePassword }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
 import { getFirestore, collection, collectionGroup, doc, getDoc, getDocs, setDoc, addDoc, deleteDoc,
-         writeBatch, runTransaction, query, where, orderBy, limit, arrayUnion, arrayRemove, deleteField, onSnapshot, serverTimestamp }
+         writeBatch, runTransaction, query, where, orderBy, limit, startAfter, arrayUnion, arrayRemove, deleteField, onSnapshot, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
 import { getFunctions, httpsCallable }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-functions.js";
@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.7.0"
+  ver:"3.8.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -1888,6 +1888,7 @@ function veCaiDat(){
     ${mucHtml("Công cụ")}
     <div class="nhom">
       ${dongHtml({ the:"button", act:"mo-chuyen", ic:"chuyen", t:"Chuyển dữ liệu sang tài khoản mới", d:"Khách mất Gmail, gõ nhầm email, sang nhượng shop — giữ nguyên hạn", mui:true })}
+      ${drDongCongCu()}
       ${dongHtml({ the:"button", act:"mo-don-nghi", ic:"taive", t:"Dọn shop đã nghỉ", d:`${dnDem()} shop hết hạn quá ${DN.NGAY} ngày — sao lưu về máy rồi xoá dữ liệu, ảnh cho đỡ tốn tiền lưu trữ`, mui:true })}
       ${dongHtml({ the:"button", act:"sua-vv", ic:"xong", t:"Sửa giấy phép thiếu hạn", d:`${LIC.filter(l => tt(l).ma === "trong").length} giấy phép đang bị máy chủ chặn oan`, mui:true })}
       ${dongHtml({ the:"button", act:"mo-nhat-ky", ic:"so", t:"Nhật ký thao tác", d:"Mọi lần duyệt, khoá, đổi giá, gửi tin — không xoá được", mui:true })}
@@ -2127,6 +2128,7 @@ function hoHoTro(S, k){
       ${dongHtml({ the:"button", act:"reset-mk", data:`data-uid="${esc(S.uid)}"`, ic:"chia", t:"Đặt lại mật khẩu cho khách", d:"Khách quên mật khẩu, không cần khách nhớ email", mui:true })}
       ${dongHtml({ the:"button", act:"tai-du-lieu", data:`data-uid="${esc(S.uid)}"`, ic:"taive", t:"Tải toàn bộ dữ liệu về máy", d:"File .json khách tự phục hồi được", mui:true })}
       ${dongHtml({ the:"button", act:"nap-du-lieu", data:`data-uid="${esc(S.uid)}"`, ic:"nap", t:"Nạp file dữ liệu vào tài khoản này", d:"Không đụng giấy phép, không xoá gì sẵn có", mui:true })}
+      ${drDongHoSo(S.uid)}
       ${dongHtml({ the:"button", act:"mo-chuyen", data:`data-tu="${esc(k.email || "")}"`, ic:"chuyen", t:"Chuyển dữ liệu sang email khác", d:"Giữ nguyên hạn, khoá tài khoản nguồn", mui:true })}
       ${coCu ? dongHtml({ the:"button", act:"cat-cu", data:`data-uid="${esc(S.uid)}"`, ic:"canh", lop:"dong-c", t:"Cắt quyền đời cũ", d:"Tài khoản còn hạn kiểu cũ ở doc tài khoản", mui:true }) : ""}
     </div>`;
@@ -3653,6 +3655,9 @@ async function dnLayKho(uid){
   for(const n of CDL_GOC) kho[n] = await dnLay("users",uid,n);
   kho.branches = await dnLay("users",uid,"branches");
   const ids = ["main"].concat(kho.branches.map(b => b.id).filter(x => x !== "main"));
+  /* [3.8] + cửa hàng đã xoá ở app bản cũ (chỉ xoá tên) mà dữ liệu bên trong còn ⇒ sao lưu luôn trước khi dọn */
+  const dr = kho.meta.find(m => m.id === "donRac");
+  ids.push(...await drCnSot(uid, ids, Object.keys((dr && dr.d && dr.d.cnXoa) || {}).concat(await drCnGoiY(uid))));
   for(const b of ids){
     const bd = {};
     for(const n of CDL_CN) bd[n] = b === "main" ? await dnLay("users",uid,n) : await dnLay("users",uid,"branches",b,n);
@@ -3694,25 +3699,37 @@ async function dnXoaAnh(uid, log){
   }
   return dem;
 }
-async function dnXoaDuLieu(uid, log){
+async function dnXoaDuLieu(uid, log, tok){
   let dem = 0;
+  /* [3.8] đọc TRƯỚC khi xoá meta: mã cửa hàng app đã xoá (meta/donRac) + mã cửa hàng trong đơn / tin / link QR */
+  const md = dnThat(await getDoc(doc(fdb,"users",uid,"meta","donRac")));
+  const cnXoa = Object.keys((md.exists() && (md.data() || {}).cnXoa) || {});
+  const goiY = await drCnGoiY(uid);
   log("  · Xoá khách & sổ nợ…");
-  dem += await dnQuet(collection(fdb,"users",uid,"customers"), d => dnQuet(collection(d.ref,"transactions")));
+  dem += await dnQuet(collection(fdb,"users",uid,"customers"), d => { const t = (d.data() || {}).shareToken; if(tok && t) tok.add(String(t)); return dnQuet(collection(d.ref,"transactions")); });
   log("  · Xoá cài đặt, nhân viên, nhà cung cấp…");
   for(const n of DN_GOC) dem += await dnQuet(collection(fdb,"users",uid,n));
   log("  · Xoá hàng hoá, đơn, kho của từng cửa hàng…");
   const sb = dnThat(await getDocs(collection(fdb,"users",uid,"branches")));
   const ids = ["main"].concat(sb.docs.map(d => d.id).filter(x => x !== "main"));
-  for(const b of ids) for(const n of CDL_CN) dem += await dnQuet(bcol(uid, b, n));
+  /* [3.8] + cửa hàng đã xoá ở app bản cũ (chỉ xoá tên) mà dữ liệu bên trong còn nằm lại */
+  const sot = await drCnSot(uid, ids, cnXoa.concat(goiY));
+  if(sot.length) log(`  · + ${sot.length} cửa hàng đã xoá còn dữ liệu: ${sot.join(", ")}`);
+  for(const b of ids.concat(sot)) for(const n of DR_CN)
+    dem += await dnQuet(bcol(uid, b, n), n === "orders" ? (d => { const h = (d.data() || {}).hdToken; if(tok && h) tok.add(String(h)); return 0; }) : null);
   dem += await dnQuet(collection(fdb,"users",uid,"branches"));
   return dem;
 }
-async function dnXoaLink(uid, log){
+async function dnXoaLink(uid, log, tok){
   log("  · Gỡ link nợ / hoá đơn / thực đơn QR / link online…");
   let dem = 0;
   dem += await dnQuet(query(collection(fdb,"shares"), where("ownerUid","==",uid)), d => dnQuet(collection(d.ref,"chuky")));
+  /* [3.8] chữ ký của link đã THU HỒI (doc link mất, chữ ký còn) — theo mã gom từ khách + đơn */
+  if(tok && tok.size) dem += await drChuKyMa(uid, [...tok]);
   dem += await dnQuet(query(collection(fdb,"shares_qr"), where("ownerUid","==",uid)));
   dem += await dnQuet(query(collection(fdb,"qr_don"), where("ownerUid","==",uid)));
+  log("  · Xoá tin nhắn khách…");                                    /* [3.8] bản cũ bỏ sót */
+  dem += await dnQuet(query(collection(fdb,"qr_chat"), where("ownerUid","==",uid)), d => dnQuet(collection(d.ref,"tin")));
   dem += await dnQuet(query(collection(fdb,"nv_map"), where("shopUid","==",uid)));
   return dem;
 }
@@ -3726,8 +3743,9 @@ async function dnDonShop(x, tenFile, log){
   if(!dnHetHan(L, Date.now())) throw new Error("giấy phép vừa đổi — không còn đủ điều kiện, KHÔNG xoá gì");
   const anh = await dnXoaAnh(uid, log);
   if(!x.dang) await setDoc(doc(fdb,"accounts",uid), { donDuLieu:{ batDau:new Date(), boi:toiLa(), file: tenFile || "", xong:null } }, { merge:true });
-  const bg = await dnXoaDuLieu(uid, log);
-  const lk = await dnXoaLink(uid, log);
+  const tok = new Set();                                             /* [3.8] mã link gom từ khách + đơn */
+  const bg = await dnXoaDuLieu(uid, log, tok);
+  const lk = await dnXoaLink(uid, log, tok);
   await setDoc(doc(fdb,"accounts",uid), { donDuLieu:{ xong:new Date(), soAnh:anh, soBanGhi:bg, soLink:lk } }, { merge:true });
   const ghi = `${bg} bản ghi · ${anh} ảnh · ${lk} link · file ${tenFile || "—"}`;
   await ghiTK(uid, "don_shop_nghi", { ghi });
@@ -3900,6 +3918,333 @@ Object.assign(ACT, {
   "dn-khoi-phuc": () => dnChonFile(),
   "dn-kp-chon": b => { const t = tamCua(b), x = t && t.S && t.S.dnKp ? t.S.dnKp[Number(b.dataset.i)] : null;
     if(!x) return; const ten = t.S.dnTen; dongTam(t); return moNapFile(String(x.uid), x.data, ten); }
+});
+
+/* ══════════════════════════ [3.8] DỌN RÁC HỘ — SHOP ĐANG DÙNG ══════════════════════════
+   App bán hàng (bản 2026-10-01-DON1 trở lên) TỰ DỌN trên máy chủ shop. Bảng này là LƯỚI AN TOÀN cho phần
+   app không tự làm được: máy chủ shop lâu không mở app, máy chạy bản cũ, Rules không cho chủ shop thấy
+   (link nợ không còn khách nào giữ), cửa hàng đã xoá ở bản cũ còn nguyên dữ liệu bên trong.
+   DỌN: link nợ / hoá đơn không còn khách / đơn (kèm chữ ký) · tin nhắn khách quá 30 ngày · đơn QR / online cũ ·
+        dữ liệu bên trong cửa hàng đã xoá (+ thực đơn QR, link online, đơn, tin nhắn của cửa hàng đó) ·
+        két ngành của sản phẩm đã xoá · phiếu trả NCC của NCC đã xoá.
+   KHÔNG ĐỤNG: khách, sổ nợ, hàng, đơn bán, kho, ca, quỹ đang dùng · ẢNH (Storage Rules chỉ cho quản trị xoá
+        ảnh shop nghỉ quá 180 ngày — ảnh / file chữ ký mồ côi do app shop tự dọn hằng tháng).
+   KHÔNG cần sửa Rules. */
+const DR = { NGAY:30, MOI_LAN:20, SO_CN:10, TRANG:300, CHAT:30, DON_XL:3, CHO_ONL:7, CHO_BAN:2, LICH:2 };
+const DR_CN = CDL_CN.concat(["_diag"]);                   /* mọi kho bên trong 1 cửa hàng */
+const DR_DO = ["products","orders","pos_meta"];            /* dò nhanh: cửa hàng từng dùng thì kiểu gì cũng có 1 trong 3 kho này */
+const DR_NGANH = ["pos_fnb","pos_fs","pos_rm","pos_kg"];   /* két ngành — mỗi doc mang đúng mã sản phẩm */
+Object.assign(TEN_VIEC, { don_rac_ho:"Dọn rác hộ" });
+
+function drNem(kq){ const hu = kq.find(x => x && typeof x === "object" && x.loi); if(hu){ const e = new Error(hu.loi); e.code = hu.loi; throw e; } }
+function drMs(v){ const d = ngay(v); return d ? d.getTime() : 0; }
+async function drXoaRef(refs){
+  for(let i = 0; i < refs.length; i += DN.LO){ const b = writeBatch(fdb); refs.slice(i, i + DN.LO).forEach(r => b.delete(r)); await b.commit(); }
+  return refs.length;
+}
+/* Link vừa cập nhật trong 2 ngày ⇒ chưa đụng (chống va chạm lúc shop đang tạo link) — updatedAt là chữ "8:05 ngày 1/10/2026" */
+function drMoi(s){
+  const m = /(\d{1,2}):(\d{2}) ngày (\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(String(s || ""));
+  if(!m) return false;
+  const d = new Date(+m[5], +m[4] - 1, +m[3], +m[1], +m[2]);
+  return !isNaN(d) && (Date.now() - d.getTime()) < 2 * 864e5;
+}
+/* Giờ hẹn của đơn đặt lịch — y hệt app bán hàng */
+function drHen(d){
+  const h = Number(d && d.henMoi) || 0; if(h > 0) return h;
+  const its = Array.isArray(d && d.items) ? d.items : [];
+  for(const x of its){ const v = Number(x && x.h) || 0; if(v > 0) return v; }
+  return 0;
+}
+function drNenXoaDon(o, now){
+  const tt = String(o.tt || ""), t = drMs(o.taoLuc) || Number(o.tsClient) || 0, N = 864e5;
+  if(tt === "cho"){
+    const h = drHen(o);
+    if(h > 0) return h < now - DR.LICH * N;                                 /* đặt lịch còn chờ: chỉ xoá khi đã qua giờ hẹn */
+    return !!t && t < now - (o.kieu === "online" ? DR.CHO_ONL : DR.CHO_BAN) * N;
+  }
+  if(tt === "lich"){ const h = drHen(o); return h > 0 ? h < now - DR.LICH * N : (!!t && t < now - 7 * N); }
+  if(tt === "xong" || tt === "bo"){ const x = drMs(o.xuLy) || t; return !!x && x < now - DR.DON_XL * N; }
+  if(tt === "nhan" || tt === "huy") return !!t && t < now - DR.DON_XL * N;
+  return false;                                                             /* trạng thái lạ ⇒ không đụng */
+}
+/* Mã cửa hàng app có thể đã cấp (mã cố định theo ngành) */
+function drMaDo(){
+  const a = ["main_fnb","main_fs","main_rm","main_kg"];
+  ["cn_","cn_fnb_","cn_fs_","cn_rm_","cn_kg_"].forEach(p => { for(let i = 1; i <= DR.SO_CN; i++) a.push(p + i); });
+  return a;
+}
+/* Mã cửa hàng gặp trong đơn / tin nhắn / link QR của shop (bắt cả mã đời cũ không theo mẫu) */
+async function drCnGoiY(uid){
+  const s = new Set();
+  for(const c of ["qr_don","qr_chat","shares_qr"]){
+    const q = dnThat(await getDocs(query(collection(fdb,c), where("ownerUid","==",uid))));
+    q.forEach(d => { const b = (d.data() || {}).chiNhanh; if(typeof b === "string" && b) s.add(b); });
+  }
+  return [...s];
+}
+/* Cửa hàng ĐÃ XOÁ (không còn doc) mà dữ liệu bên trong còn nằm lại — bản app cũ chỉ xoá tên */
+async function drCnSot(uid, song, them){
+  const bo = new Set(song);
+  const ds = [...new Set(drMaDo().concat(them || []))].filter(b => b && b !== "main" && !bo.has(b) && /^[A-Za-z0-9_-]{1,80}$/.test(b));
+  const co = [];
+  const kq = await theoLo(ds, 8, async b => {
+    for(const n of DR_DO){ const s = dnThat(await getDocs(query(bcol(uid, b, n), limit(1)))); if(!s.empty){ co.push(b); return 1; } }
+    return 0;
+  });
+  drNem(kq);
+  return co.sort();
+}
+/* Hoá đơn nào còn đơn (mọi cửa hàng còn sống) — hỏi 30 mã một lượt */
+async function drHdSong(uid, song, toks){
+  const con = new Set(), lo = [];
+  for(let i = 0; i < toks.length; i += 30) lo.push(toks.slice(i, i + 30));
+  for(const b of song){
+    const can = lo.map(l => l.filter(t => !con.has(t))).filter(l => l.length);
+    if(!can.length) break;
+    const kq = await theoLo(can, 6, async l => {
+      const s = dnThat(await getDocs(query(bcol(uid, b, "orders"), where("hdToken","in",l))));
+      s.forEach(d => { const h = (d.data() || {}).hdToken; if(h) con.add(String(h)); });
+      return 1;
+    });
+    drNem(kq);
+  }
+  return con;
+}
+/* Chữ ký của link đã THU HỒI (doc link mất, chữ ký còn) — dọn theo mã lấy từ khách / đơn */
+async function drChuKyMa(uid, toks){
+  let dem = 0;
+  const kq = await theoLo(toks, 6, async t => {
+    const s = dnThat(await getDoc(doc(fdb,"shares",t)));
+    if(s.exists() && (s.data() || {}).ownerUid && s.data().ownerUid !== uid) return 0;   /* link của shop khác ⇒ không đụng */
+    return dnQuet(collection(fdb,"shares",t,"chuky"));
+  });
+  drNem(kq);
+  kq.forEach(x => { if(typeof x === "number") dem += x; });
+  return dem;
+}
+/* Dọn sạch bên trong 1 cửa hàng đã xoá: kho, link hoá đơn, thực đơn QR / link online, đơn & tin nhắn khách */
+async function drDonCN(uid, b, r){
+  const toks = [];
+  const m = dnThat(await getDoc(bdoc(uid, b, "pos_meta", "qr")));
+  if(m.exists()){
+    const x = m.data() || {};
+    for(const t of [x.token, x.onl]) if(typeof t === "string" && t){
+      const s = dnThat(await getDoc(doc(fdb,"shares_qr",t)));
+      if(s.exists() && (s.data() || {}).ownerUid === uid){ await deleteDoc(s.ref); r.qr++; }
+    }
+  }
+  r.banGhi += await dnQuet(bcol(uid, b, "orders"), d => { const h = (d.data() || {}).hdToken; if(h) toks.push(String(h)); return 0; });
+  for(const n of DR_CN) if(n !== "orders") r.banGhi += await dnQuet(bcol(uid, b, n));
+  for(const t of toks){
+    const s = dnThat(await getDoc(doc(fdb,"shares",t)));
+    if(s.exists() && (s.data() || {}).ownerUid && s.data().ownerUid !== uid) continue;
+    await dnQuet(collection(fdb,"shares",t,"chuky"));
+    if(s.exists()){ await deleteDoc(s.ref); r.link++; }
+  }
+  r.don += await dnQuet(query(collection(fdb,"qr_don"), where("ownerUid","==",uid), where("chiNhanh","==",b)));
+  r.chat += await dnQuet(query(collection(fdb,"qr_chat"), where("ownerUid","==",uid), where("chiNhanh","==",b)), async d => { r.tin += await dnQuet(collection(d.ref,"tin")); return 0; });
+  r.cn++;
+}
+/* Dọn rác 1 shop đang dùng — chỉ xoá rác, KHÔNG đụng sổ sách đang dùng */
+async function drDonShop(uid, log){
+  const r = { link:0, chat:0, tin:0, don:0, qr:0, cn:0, banGhi:0, ket:0, ncc:0 }, now = Date.now();
+  if(!navigator.onLine) throw new Error("mất mạng");
+  const sb = dnThat(await getDocs(collection(fdb,"users",uid,"branches")));
+  const song = ["main"].concat(sb.docs.map(d => d.id).filter(x => x !== "main"));
+  const cs = dnThat(await getDocs(collection(fdb,"users",uid,"customers")));
+  const tokK = new Set(); cs.forEach(d => { const t = (d.data() || {}).shareToken; if(t) tokK.add(String(t)); });
+  /* 1) link nợ / hoá đơn không còn khách / đơn nào giữ (kèm chữ ký) — đọc theo trang */
+  let last = null;
+  for(let v = 0; v < 2000; v++){
+    const q = query(collection(fdb,"shares"), where("ownerUid","==",uid), ...(last ? [startAfter(last)] : []), limit(DR.TRANG));
+    const s = dnThat(await getDocs(q));
+    if(s.empty) break;
+    const hd = [], mo = [];
+    s.docs.forEach(d => {
+      const x = d.data() || {};
+      if(x.tam === true) mo.push(d);                                                   /* doc tạm app dựng để xoá chữ ký mà chưa kịp gỡ */
+      else if(x.kind === "invoice"){ if(!drMoi(x.updatedAt)) hd.push(d); }
+      else if(Array.isArray(x.transactions) && !tokK.has(d.id) && !drMoi(x.updatedAt)) mo.push(d);
+    });
+    if(hd.length){ const con = await drHdSong(uid, song, hd.map(d => d.id)); hd.forEach(d => { if(!con.has(d.id)) mo.push(d); }); }
+    for(const d of mo){ await dnQuet(collection(d.ref,"chuky")); await deleteDoc(d.ref); r.link++; }
+    if(s.size < DR.TRANG) break;
+    last = s.docs[s.docs.length - 1];
+  }
+  if(r.link) log(`  · ${r.link} link không còn khách / đơn`);
+  /* 2) tin nhắn khách cũ */
+  const cut = now - DR.CHAT * 864e5, goiY = new Set();
+  const ch = dnThat(await getDocs(query(collection(fdb,"qr_chat"), where("ownerUid","==",uid))));
+  for(const d of ch.docs){
+    const x = d.data() || {}; if(typeof x.chiNhanh === "string" && x.chiNhanh) goiY.add(x.chiNhanh);
+    const cuoi = drMs(x.cuoi) || drMs(x.tao), tao = drMs(x.tao) || cuoi;
+    if(cuoi && cuoi < cut){
+      r.tin += await dnQuet(collection(d.ref,"tin"));
+      if(x.chan !== true){ await deleteDoc(d.ref); r.chat++; }                          /* cuộc đã chặn: giữ vỏ để còn chặn */
+    }else if(tao && tao < cut){
+      r.tin += await dnQuet(query(collection(d.ref,"tin"), where("luc","<",new Date(cut))));
+    }
+  }
+  /* 3) đơn QR / online cũ */
+  const qd = dnThat(await getDocs(query(collection(fdb,"qr_don"), where("ownerUid","==",uid))));
+  const xd = [];
+  qd.forEach(d => { const x = d.data() || {}; if(typeof x.chiNhanh === "string" && x.chiNhanh) goiY.add(x.chiNhanh); if(drNenXoaDon(x, now)) xd.push(d.ref); });
+  r.don += await drXoaRef(xd);
+  /* 4) cửa hàng đã xoá còn sót dữ liệu bên trong */
+  const md = dnThat(await getDoc(doc(fdb,"users",uid,"meta","donRac")));
+  const cnXoa = Object.keys((md.exists() && (md.data() || {}).cnXoa) || {});
+  const sq = dnThat(await getDocs(query(collection(fdb,"shares_qr"), where("ownerUid","==",uid))));
+  sq.forEach(d => { const b = (d.data() || {}).chiNhanh; if(typeof b === "string" && b) goiY.add(b); });
+  const sot = await drCnSot(uid, song, cnXoa.concat([...goiY]));
+  for(const b of sot){ log(`  · Cửa hàng đã xoá còn dữ liệu: ${b}`); await drDonCN(uid, b, r); }
+  if(cnXoa.length){ const x = {}; cnXoa.forEach(b => { x[b] = deleteField(); }); await setDoc(doc(fdb,"users",uid,"meta","donRac"), { cnXoa:x }, { merge:true }); }
+  /* 5) két ngành của sản phẩm đã xoá */
+  for(const b of song){
+    let pids = null;
+    for(const n of DR_NGANH){
+      const s = dnThat(await getDocs(bcol(uid, b, n)));
+      if(s.empty) continue;
+      if(!pids){ const p = dnThat(await getDocs(bcol(uid, b, "products"))); pids = new Set(p.docs.map(d => d.id)); }
+      r.ket += await drXoaRef(s.docs.filter(d => !pids.has(d.id)).map(d => d.ref));
+    }
+  }
+  /* 6) phiếu trả NCC của NCC đã xoá */
+  const sp = dnThat(await getDocs(collection(fdb,"users",uid,"supplier_payments")));
+  if(!sp.empty){
+    const su = dnThat(await getDocs(collection(fdb,"users",uid,"suppliers")));
+    const ids = new Set(su.docs.map(d => d.id));
+    r.ncc += await drXoaRef(sp.docs.filter(d => { const s = (d.data() || {}).supplierId; return typeof s === "string" && s && !ids.has(s); }).map(d => d.ref));
+  }
+  /* ghi sổ */
+  const luc = new Date();
+  await setDoc(doc(fdb,"accounts",uid), { donRac:{ at:luc, boi:toiLa(), ...r } }, { merge:true });
+  (ACC[uid] = ACC[uid] || {}).donRac = { at:luc, ...r };
+  const tom = drTom(r);
+  if(tom){ await ghiTK(uid, "don_rac_ho", { ghi:tom }); await ghiChung("don_rac_ho", { ghi:`${emailCua(uid) || uid} · ${tom}` }, uid); }
+  return r;
+}
+function drTom(r){
+  if(!r) return "";
+  const a = [];
+  if(r.link) a.push(`${r.link} link`);
+  if(r.chat || r.tin) a.push(`${r.chat || 0} cuộc · ${r.tin || 0} tin nhắn`);
+  if(r.don) a.push(`${r.don} đơn QR / online`);
+  if(r.cn) a.push(`${r.cn} cửa hàng đã xoá (${r.banGhi || 0} bản ghi${r.qr ? ` · ${r.qr} thực đơn QR` : ""})`);
+  if(r.ket) a.push(`${r.ket} két ngành`);
+  if(r.ncc) a.push(`${r.ncc} phiếu trả NCC`);
+  return a.join(" · ");
+}
+/* Shop đang dùng (có gói nhóm Sổ Nợ, chưa thuộc bảng "Dọn shop đã nghỉ"), chưa dọn lâu nhất lên đầu */
+function drDs(){
+  const now = Date.now(), toi = (auth.currentUser && auth.currentUser.uid) || "";
+  const nghi = new Set();
+  try{ const k = dsNghi(); k.du.concat(k.xong).forEach(x => nghi.add(x.uid)); }catch(e){}
+  const uids = new Set();
+  LIC.forEach(l => { if(l && l.uid && dnLaSono(l.app)) uids.add(l.uid); });
+  const out = [];
+  uids.forEach(uid => {
+    if(uid === toi || String(emailCua(uid) || "").toLowerCase() === CFG.admin || nghi.has(uid)) return;
+    const a = ACC[uid] || {}, dr = (a.donRac && typeof a.donRac === "object") ? a.donRac : null, luc = dr ? ngay(dr.at) : null;
+    out.push({ uid, email: emailCua(uid) || uid, luc, han: luc ? (now - luc.getTime()) / 864e5 : Infinity });
+  });
+  out.sort((a, b) => b.han - a.han);
+  return out;
+}
+function drDem(){ try{ return drDs().filter(x => x.han >= DR.NGAY).length; }catch(e){ return 0; } }
+/* Dòng nút cho bảng Công cụ & hồ sơ shop — bọc try: lỗi gì cũng không làm hỏng cả trang */
+function drDongCongCu(){
+  try{ return dongHtml({ the:"button", act:"mo-don-rac", ic:"xong", t:"Dọn rác hộ shop đang dùng",
+    d:`${drDem()} shop chưa dọn quá ${DR.NGAY} ngày — link, tin nhắn, đơn cũ, dữ liệu mồ côi (không đụng sổ sách, không xoá ảnh)`, mui:true }); }
+  catch(e){ return ""; }
+}
+function drDongHoSo(uid){
+  try{ return dongHtml({ the:"button", act:"dr-don-1", data:`data-uid="${esc(uid)}"`, ic:"xong", t:"Dọn rác dữ liệu", d: esc(drMoTa(uid)), mui:true }); }
+  catch(e){ return ""; }
+}
+function drMoTa(uid){
+  const dr = (ACC[uid] || {}).donRac, l = dr && ngay(dr.at);
+  return l ? `Dọn lần cuối ${gioVN(l)} · ${drTom(dr) || "không có rác"}` : "Chưa dọn lần nào · link, tin nhắn, đơn cũ, dữ liệu mồ côi — không đụng sổ sách";
+}
+
+/* ─────────── Bảng "Dọn rác hộ" ─────────── */
+function moDonRac(uids){
+  const t = moTam({ tieuDe:"Dọn rác hộ shop đang dùng", lamMoi: () => veDonRac(t) });
+  t.S = { drBang:true, dang:false, log:"" };
+  veDonRac(t);
+  if(uids && uids.length) chayDonRac(t, uids);
+}
+function drGhiLog(t, m){
+  t.S.log += m + "\n";
+  if(!TAM.includes(t)) return;
+  const el = $("#drLog", t.than);
+  if(el){ el.textContent = t.S.log; el.scrollTop = el.scrollHeight; } else veDonRac(t);
+}
+function veDonRac(t){
+  if(!TAM.includes(t)) return;
+  const S = t.S;
+  let ds; try{ ds = drDs(); }catch(e){ console.warn(e); ds = []; }
+  const can = ds.filter(x => x.han >= DR.NGAY);
+  t.than.innerHTML = `
+    <div class="bao">App bán hàng bản mới <b>tự dọn</b> trên máy chủ shop. Bảng này là <b>lưới an toàn</b> cho phần app không tự làm được (máy chủ shop lâu không mở app, máy chạy bản cũ, Rules không cho chủ shop thấy).<br>
+      <b>Dọn</b>: link nợ / hoá đơn không còn khách / đơn (kèm chữ ký) · tin nhắn khách quá ${DR.CHAT} ngày · đơn QR / online cũ · dữ liệu bên trong cửa hàng đã xoá · két ngành của sản phẩm đã xoá · phiếu trả NCC của NCC đã xoá.<br>
+      <b>Không đụng</b>: khách, sổ nợ, hàng, đơn bán, kho, ca, quỹ đang dùng · ảnh (app shop tự dọn).</div>
+    ${S.log ? `<div class="nhatky" id="drLog"></div>` : ""}
+    ${mucHtml(`Chưa dọn quá ${DR.NGAY} ngày`, can.length)}
+    <div class="nhom">${can.length ? can.slice(0, 300).map(x => dongHtml({ ic:"khach", t: esc(x.email),
+        d: esc(x.luc ? `Dọn lần cuối ${gioVN(x.luc)}` : "Chưa dọn lần nào"),
+        ph: S.dang ? "" : `<button class="nut nho" data-act="dr-don" data-uid="${esc(x.uid)}">Dọn</button>` })).join("")
+      : trong("Không có shop nào cần dọn", `Shop đã dọn trong ${DR.NGAY} ngày qua không hiện ở đây`)}</div>
+    ${can.length > 300 ? `<p class="nho">…và ${can.length - 300} shop nữa</p>` : ""}
+    <p class="nho">${ds.length - can.length} shop đã dọn trong ${DR.NGAY} ngày qua · shop nghỉ quá ${DN.NGAY} ngày nằm ở bảng "Dọn shop đã nghỉ".</p>`;
+  const lg = $("#drLog", t.than); if(lg){ lg.textContent = S.log; lg.scrollTop = lg.scrollHeight; }
+  t.chan.innerHTML = S.dang ? `<button class="nut" disabled>Đang dọn…</button>`
+    : (can.length ? `<button class="nut dac" data-act="dr-don-het">Dọn ${Math.min(can.length, DR.MOI_LAN)} shop</button>` : "");
+}
+let _drKhoa = false;
+async function chayDonRac(t, uids){
+  const S = t.S; if(S.dang) return;
+  if(_drKhoa || _dnKhoa) return bao("Đang có một lượt dọn — đợi xong đã", 1);
+  if(!navigator.onLine) return bao("Không có mạng", 1);
+  const ds = [...new Set(uids)].filter(Boolean).slice(0, DR.MOI_LAN);
+  if(!ds.length) return bao("Không có shop nào để dọn", 1);
+  _drKhoa = true;
+  let dongY = false;
+  try{
+    const tom = ds.slice(0, 8).map(u => "• " + (emailCua(u) || u)).join("\n") + (ds.length > 8 ? `\n• …và ${ds.length - 8} shop nữa` : "");
+    dongY = await hoi({ tieuDe:`Dọn rác ${ds.length} shop`, nutOk:"Dọn rác",
+      noiDung:`${tom}\n\nChỉ xoá RÁC: link không còn khách / đơn, tin nhắn quá ${DR.CHAT} ngày, đơn QR cũ, dữ liệu của cửa hàng đã xoá, két ngành / phiếu NCC mồ côi.\nKhông đụng khách, sổ nợ, hàng, đơn bán, kho, ca, quỹ đang dùng.` });
+  }finally{ if(!dongY) _drKhoa = false; }
+  if(!dongY) return;
+  const log = m => { try{ drGhiLog(t, m); }catch(e){ console.warn(e); } };
+  const tong = { link:0, chat:0, tin:0, don:0, qr:0, cn:0, banGhi:0, ket:0, ncc:0 };
+  let xong = 0, hong = 0;
+  try{
+    S.dang = true; S.log = ""; try{ veDonRac(t); }catch(e){ console.warn(e); }
+    for(const uid of ds){
+      log(`• ${emailCua(uid) || uid}`);
+      try{
+        const r = await drDonShop(uid, log);
+        xong++; Object.keys(tong).forEach(k => { tong[k] += r[k] || 0; });
+        log(`  ✓ ${drTom(r) || "sạch — không có rác"}`);
+      }catch(e){
+        hong++; log(`  ❌ ${dnLoi(e)}`);
+        if(!navigator.onLine){ log("⛔ Dừng: mất mạng."); break; }
+      }
+    }
+    log(`\n${hong ? "⚠️" : "✅"} Xong ${xong}/${ds.length} shop${drTom(tong) ? " · " + drTom(tong) : " · không có rác"}${hong ? ` · ${hong} shop lỗi (bấm Dọn lại)` : ""}`);
+    bao(hong ? `Dọn xong ${xong} shop, ${hong} shop lỗi` : `Đã dọn rác ${xong} shop`, hong > 0);
+  }finally{
+    S.dang = false; _drKhoa = false;
+    try{ if(TAM.includes(t)) veDonRac(t); }catch(e){ console.warn(e); }
+    try{ veView(VIEW); }catch(e){}
+  }
+}
+Object.assign(ACT, {
+  "mo-don-rac": () => moDonRac(),
+  "dr-don": b => { const t = tamCua(b); if(t && t.S && t.S.drBang) return chayDonRac(t, [b.dataset.uid]); },
+  "dr-don-het": b => { const t = tamCua(b); if(t && t.S && t.S.drBang) return chayDonRac(t, drDs().filter(x => x.han >= DR.NGAY).map(x => x.uid)); },
+  "dr-don-1": b => { const uid = b.dataset.uid; if(uid) moDonRac([uid]); }
 });
 
 /* ══════════════════════════ [3.3] NGHE ĐƠN TRỰC TIẾP ══════════════════════════
@@ -4443,7 +4788,7 @@ Object.assign(ACT, {
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "3.7.0";
+const APP_ID = "admin", APP_VERSION = "3.8.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
