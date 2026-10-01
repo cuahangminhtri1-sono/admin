@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.6.0"
+  ver:"3.7.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -1050,6 +1050,7 @@ function radar(){
   if(sw("chanBiDanh") === false) them("vua","chanBiDanh","Đang cho dùng thử bằng email bí danh","Email có dấu + (ten+1@gmail.com…) chung hộp thư với email gốc — mỗi địa chỉ lại được dùng thử miễn phí. Bật lại công tắc ở Cài đặt.",[{t:"Công tắc chanBiDanh = tắt"}],"cong-tac");
   if(sw("chanChuKyCu") === false) them("nhe","chanChuKyCu","Đang nhận chữ ký kiểu cũ (ảnh nhúng)","Kẻ phá có thể bơm chữ ký gần 1MB vào link nợ công khai cho tốn tiền Firestore. App hiện không dùng kiểu này — bật lại chặn ở Cài đặt.",[{t:"Công tắc chanChuKyCu = tắt"}],"cong-tac");
   if(sw("thu1May") === false) them("nhe","thu1May","Đang cho một máy dùng thử nhiều tài khoản","Điện thoại đã có tài khoản khác vẫn tự mở dùng thử cho tài khoản mới — đổi email là dùng thử lại. Bật lại công tắc ở Cài đặt.",[{t:"Công tắc thu1May = tắt"}],"cong-tac");
+  if(sw("motThuMoiHop") === false) them("vua","motThuMoiHop","Đang cho một hộp thư dùng thử nhiều lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư — mỗi địa chỉ lại được dùng thử miễn phí. Bật lại công tắc ở Cài đặt.",[{t:"Công tắc motThuMoiHop = tắt"}],"cong-tac");
   /* [3.4] NICK PHỤ ĂN DÙNG THỬ — chung hộp thư Gmail · chung một máy */
   try{
     const g = nhomHopThu();
@@ -1062,6 +1063,20 @@ function radar(){
       "App khách báo cùng một mã máy cho nhiều tài khoản chủ shop — thường là lập nick để dùng thử lại (người nhà dùng chung máy thì bỏ qua). Mở hồ sơ nick phụ → Khoá các gói đang dùng thử. Số liệu lấy từ lần quét máy khách gần nhất + máy lúc đăng ký.",
       mg.flatMap(x => x.uids.map(u => ({ uid:u, t: emailCua(u) || u, d:`cùng máy với ${x.uids.length - 1} tài khoản khác · ${tomTatUid(u)}` }))), "quet-ban");
   }catch(e){ console.warn("nick dùng thử:", e); }
+
+  /* [3.7] CẤP DƯ SO VỚI TIỀN THU: dòng thu 60 ngày qua (duyệt đơn / đối soát sao kê) có số tiền THẤP hơn bảng giá của
+     đúng số tháng × số suất đã cấp — dấu vết của cú duyệt vội đơn khai nhiều tháng mà tiền về chỉ đủ ít tháng. */
+  try{
+    const thieu = PAY.filter(p => !p.dieuChinh && p.uid && CFG.apps.includes(p.app) && (p.src === "duyet" || p.src === "sao_ke")
+        && pThang(p) > 0 && pTien(p) > 0 && pNgay(p) && (Date.now() - pNgay(p)) < 60*864e5)
+      .map(p => ({ p, q: laCN(p.app) ? Math.max(1, Math.floor(num(p.qty)) || 1) : 1 }))
+      .map(x => ({ ...x, chuan: giaGiaHan(giaCua(x.p.uid, x.p.app), pThang(x.p)) * x.q }))
+      .filter(x => x.chuan > 0 && pTien(x.p) < x.chuan);
+    them("vua","thuThieu","Cấp hạn nhiều hơn số tiền thu (60 ngày)",
+      "Dòng thu có số tiền THẤP hơn bảng giá của đúng số tháng / số suất đã cấp — thường do duyệt vội đơn khai nhiều tháng mà tiền về chỉ đủ ít tháng. Soát sao kê; cấp dư thì mở hồ sơ đặt lại hạn cho đúng. (Bảng giá vừa tăng cũng làm dòng cũ hiện ở đây.)",
+      thieu.map(x => ({ uid:x.p.uid, t:x.p.email || emailCua(x.p.uid) || x.p.uid,
+        d:`${tenApp(x.p.app)} · ${pThang(x.p)} tháng${x.q > 1 ? ` · ${x.q} suất` : ""} · thu ${tienD(pTien(x.p))} / giá ${tienD(x.chuan)} · ${ngayVN(pNgay(x.p))}` })));
+  }catch(e){ console.warn("thu thiếu:", e); }
 
   /* [3.2] Dọn shop đã nghỉ — nhắc nhẹ (không cộng vào huy hiệu đỏ). Lỗi gì cũng không làm hỏng radar. */
   try{ const dn = dsNghi().du;
@@ -1119,7 +1134,11 @@ async function thuongNeuDu(uid, app, months){
 /* Quét khi mở app: đơn 12 tháng đủ điều kiện mà chưa thưởng thì thưởng (chạy lại vô hại) */
 async function quetThuong(){
   const ds = new Set();
-  PAY.forEach(p => { if(pThang(p) < GOI_TOI_THIEU || !p.uid || !p.app) return;
+  /* [3.7] Chỉ tính khoản 12 tháng CÒN TIỀN THẬT: dòng thu > 0 và chưa bị dòng điều chỉnh âm trừ hết (hoàn tiền).
+     Bản cũ thưởng cả khoản đã hoàn tiền ⇒ người giới thiệu được 1 tháng miễn phí từ một khoản mình đã trả lại. */
+  const bu = {};
+  PAY.forEach(p => { const m = p.dieuChinh ? /^Điều chỉnh dòng ([^\s:]+):/.exec(String(p.ghiChu || "")) : null; if(m) bu[m[1]] = (bu[m[1]] || 0) + pTien(p); });
+  PAY.forEach(p => { if(p.dieuChinh || pThang(p) < GOI_TOI_THIEU || !p.uid || !p.app || !(pTien(p) + (bu[p.id] || 0) > 0)) return;
     const rd = REF[p.uid]; if(rd && rd.referredByUid && rd.appJoined === p.app) ds.add(p.uid); });
   let co = 0;
   for(const u of ds){ const kq = await thuong(u); if(kq === "ok") co++; }
@@ -1157,7 +1176,7 @@ const vanTayLic = l => { l = l || {}; const h = hanRules(l.paidUntil);
 function doanThang(uid, app, tien, qty){
   const g = giaCua(uid, app), q = laCN(app) ? Math.max(1, Math.floor(num(qty)) || 1) : 1;
   if(!(g > 0) || !(tien > 0)) return 0;
-  for(let m = 1; m <= 24; m++) if(giaGiaHan(g, m) * q === tien) return m;
+  for(let m = 24; m >= 1; m--) if(giaGiaHan(g, m) * q === tien) return m;   /* [3.7] lấy số tháng LỚN nhất khớp tiền: 100.000đ = 12 tháng gói năm (mua 12 tặng 2), không phải 10 tháng */
   return 0;
 }
 /* ĐẶT HẠN & GHI SỔ — [3.1] MỘT TRANSACTION: đọc lại đơn + giấy phép NGAY LÚC GHI.
@@ -1848,7 +1867,8 @@ const CONG_TAC = [
   ["enforceRef","Khoá gắn người giới thiệu muộn","Bật: chỉ gắn người giới thiệu được lúc tạo tài khoản, chặn mở nick rồi gắn ngược để ăn hoa hồng.", v => v === true, true],
   ["chanBiDanh","Chặn dùng thử bằng email bí danh","Email có dấu + (ten+1@gmail.com…) về chung hộp thư với email gốc: không cho mở dùng thử gói Sổ Nợ + Bán hàng (vẫn mua gói bình thường).", v => v !== false, true],
   ["chanChuKyCu","Chặn chữ ký kiểu cũ (ảnh nhúng)","Chữ ký nay nằm ở kho ảnh. Chặn kiểu nhúng thẳng tới 950KB mỗi chữ ký để kẻ phá không bơm rác vào link nợ công khai cho tốn tiền Firestore.", v => v !== false, true],
-  ["thu1May","Mỗi máy chỉ dùng thử 1 tài khoản","Điện thoại đã có tài khoản chủ shop khác đăng nhập thì tài khoản mới KHÔNG tự mở dùng thử Sổ Nợ (app báo đăng nhập lại tài khoản cũ hoặc gọi mua gói). Chặn đổi email ăn dùng thử trên cùng máy.", v => v !== false, true]
+  ["thu1May","Mỗi máy chỉ dùng thử 1 tài khoản","Điện thoại đã có tài khoản chủ shop khác đăng nhập thì tài khoản mới KHÔNG tự mở dùng thử Sổ Nợ (app báo đăng nhập lại tài khoản cũ hoặc gọi mua gói). Chặn đổi email ăn dùng thử trên cùng máy.", v => v !== false, true],
+  ["motThuMoiHop","Mỗi hộp thư chỉ dùng thử 1 lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư. Bật: chỉ tài khoản ĐẦU TIÊN của hộp thư đó được dùng thử các gói Sổ Nợ + Bán hàng — máy chủ chặn thật, đổi máy hay xoá dữ liệu trình duyệt cũng không lách được. Nick phụ vẫn mua gói bình thường.", v => v !== false, true]
 ];
 function veCaiDat(){
   const bank = [BILL.bankName, BILL.account, BILL.accName].filter(Boolean).join(" · ");
@@ -2169,7 +2189,13 @@ function moCapHan({ r = null, uid = "", app = "", saoKe = null } = {}){
   if(saoKe){
     S.tien = num(saoKe.tien); S.tienTay = true;
     S.ghi = ("Đối soát sao kê: " + String(saoKe.text || "")).slice(0,180);
-    if(!r && S.app){ const m = doanThang(u, S.app, S.tien, qty0); if(m) S.thang = m; }
+    /* [3.7] VÁ BẪY DUYỆT THIẾU TIỀN: đơn khách tự ghi 12 tháng mà tiền về chỉ đủ 1 tháng ⇒ bản cũ vẫn điền 12 tháng,
+       một cú bấm vội là cấp dư 11 tháng. Nay số tháng theo ĐÚNG TIỀN VỀ (khớp bảng giá + khuyến mãi của khách).
+       Đơn khớp đúng tiền về thì giữ nguyên. Tiền không khớp tròn số tháng nào ⇒ giữ đơn, lúc duyệt bắt gõ DUYET (capOk). */
+    if(S.app){
+      const g = giaCua(u, S.app), q = laCN(S.app) ? Math.max(1, Math.floor(num(qty0)) || 1) : 1;
+      const m = (g > 0 && giaGiaHan(g, S.thang) * q === S.tien) ? S.thang : doanThang(u, S.app, S.tien, qty0);
+      if(m && m !== S.thang){ if(r) S.doiThang = { tu:S.thang, sang:m }; S.thang = m; } }
   }
   const t = moTam({ tieuDe: r ? "Duyệt đơn & ghi sổ" : "Đặt hạn & ghi sổ", lamMoi: null });
   t.S = S; t.loai = "cap";
@@ -2221,6 +2247,7 @@ function veCapHan(t){
     <div class="o-nhap" style="margin-top:12px"><span>Số tháng cấp</span>
       <div class="thang-chon">${CFG.thang.map(m => `<button data-act="cap-thang" data-m="${m}" class="${S.thang === m ? "on" : ""}">${m}${thangTang(m) ? " 🎁" : ""}</button>`).join("")}
         <button data-act="cap-thang-khac" class="${khac ? "on" : ""}">${khac ? S.thang + " th" : "Khác"}</button></div></div>
+    ${S.doiThang && S.doiThang.sang === S.thang ? `<div class="bao canh"><b>Đã đổi số tháng theo tiền về.</b> Đơn khách ghi ${S.doiThang.tu} tháng, nhưng tiền về ${tienD(S.tien)} khớp đúng giá ${S.thang} tháng nên app đặt ${S.thang} tháng. Muốn cấp số khác thì chọn lại — thu thiếu so với bảng giá phải gõ DUYET.</div>` : ""}
     ${thangTang(S.thang) ? `<div class="bao tot">Gói năm: cấp ${S.thang} tháng, chỉ thu tiền ${thangTinhTien(S.thang)} tháng (tặng ${thangTang(S.thang)}).</div>` : ""}
     ${S.app && laCN(S.app) ? `<div class="o-nhap"><span>Số chi nhánh thêm (mỗi chi nhánh 1 suất)</span>
       <div class="buoc"><button data-act="cap-qty" data-d="-1" aria-label="Bớt">−</button><b class="so">${S.qty}</b><button data-act="cap-qty" data-d="1" aria-label="Thêm">+</button>
@@ -2911,7 +2938,7 @@ async function thucHienChuyen(t){
       await setDoc(doc(fdb,"accounts",s.uMoi), p, { merge:true }); log("  ✓ Xong");
     }
     log("▶ BƯỚC 9 — Khoá cổng vào tài khoản nguồn (chặn tự mở lại dùng thử)");
-    for(const app of ["sono","sono_pos"]){
+    for(const app of CFG.apps.filter(a => a.indexOf("sono") === 0)){   /* [3.7] khoá đủ 12 gói nhóm Sổ Nợ — bản cũ chỉ khoá 2 gói, tài khoản nguồn vẫn tự mở dùng thử gói ngành / chi nhánh / Bán online */
       if(LIC.some(x => x.uid === s.uCu && x.app === app)) continue;
       try{ await setDoc(doc(fdb,"accounts",s.uCu,"lic",app), { app, active:false, trial:false, trialUsed:true, paidUntil:null, vinhVien:false,
              lichSu: arrayUnion(buoc("khoa_sau_chuyen", { sang:s.mMoi })) }, { merge:true }); log(`  ✓ Khoá ${tenApp(app)}`); }
@@ -3365,7 +3392,7 @@ async function doiCongTacUI(b){
   const dang = dong[3](CFGDB[k]), moi = !dang;
   let nd = `${dong[1]}: ${dang ? "BẬT → TẮT" : "TẮT → BẬT"}\n\n${dong[2]}`, nguy = false;
   if(k === "enforce" && !moi){ nd = "TẮT bắt buộc giấy phép = MỌI khách dùng MIỄN PHÍ toàn bộ app.\n\nChỉ làm khi đang sửa sự cố."; nguy = true; }
-  if((k === "chanBiDanh" || k === "chanChuKyCu" || k === "thu1May") && !moi) nguy = true;   /* [3.4] tắt chốt chặn = mở lại lỗ */
+  if((k === "chanBiDanh" || k === "chanChuKyCu" || k === "thu1May" || k === "motThuMoiHop") && !moi) nguy = true;   /* [3.4] tắt chốt chặn = mở lại lỗ */
   /* [3.3] BẬT THU PHÍ AN TOÀN: quét trước; ai sẽ bị chặn thì mở bảng "cho ân hạn có hạn chót rồi mới đổi" */
   const gia2 = (k === "enforceCn" && moi) ? { enforceCn:true } : (k === "enforceNganh" && moi) ? { enforceNganh:true } : (k === "cnChung" && !moi) ? { cnChung:false } : null;
   if(gia2){
@@ -3406,7 +3433,9 @@ async function capOk(t, btn){
   const tom = `${tenApp(S.app)} · ${S.thang} tháng${laCN(S.app) ? ` · ${S.qty} suất` : ""}\nHạn mới: ${ngayVN(hanMoi)}\nGhi sổ: ${tienD(S.tien)}`;
   /* [3.3] Đơn mang email người khác / email sao kê gắn nhiều tài khoản ⇒ KHÔNG duyệt 1 chạm: phải gõ DUYET */
   const dcx = S.r ? donCho().find(d => d.r.id === S.r.id) : null;
-  const canGo = !!(S.canGo || (dcx && (dcx.giaMao || dcx.emLa)));
+  /* [3.7] THU THIẾU so với bảng giá (kể cả 0đ) ⇒ cũng phải gõ DUYET: cố ý giảm giá / tặng vẫn làm được, bấm vội thì không */
+  const thieuTien = c.chuan > 0 && S.tien < c.chuan;
+  const canGo = !!(S.canGo || (dcx && (dcx.giaMao || dcx.emLa)) || thieuTien);
   if(dcx && dcx.emLa) hoiLai.unshift("MẠO DANH? Tài khoản này ghi email dạng danh sách / số — mánh giả email người khác. Chỉ duyệt khi sao kê ghi đúng người trả.");   /* [3.5] VÁ LỖ Z */
   if(dcx && dcx.giaMao) hoiLai.unshift(`MẠO DANH? Email trên đơn (${S.r.email || "?"}) KHÁC email tài khoản (${emailCua(S.uid) || "?"}). Chỉ duyệt khi chắc chắn tiền là của CHÍNH tài khoản này.`);
   else if(S.canGo) hoiLai.unshift("Email trong sao kê gắn với NHIỀU tài khoản — mở hồ sơ kiểm tay cho chắc tiền về đúng người.");
@@ -4414,7 +4443,7 @@ Object.assign(ACT, {
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "3.3.0";
+const APP_ID = "admin", APP_VERSION = "3.7.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
