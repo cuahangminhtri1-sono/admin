@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"3.8.1"
+  ver:"4.0.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -1120,6 +1120,7 @@ function radar(){
       dn.map(x => ({ uid:x.uid, t:x.email, d:`hết hạn ${x.qua} ngày${x.dang ? " · đang dọn dở" : ""}` })), "don-nghi"); }
   catch(e){ console.warn("dọn shop nghỉ:", e); }
 
+  try{ v4Radar(them); }catch(e){ console.warn("radar 4.0:", e); }   /* [4.0] khoá két + soi sổ */
   return R;
 }
 const radarNang = () => radar().filter(x => x.muc === "nang" && x.items.length);
@@ -1722,7 +1723,7 @@ function veHomNay(){
   const c = chiSo(), v = viecCanLam(), dc = donCho(), sap = nhomCham("sap");
   const [nam, th] = c.th.split("-");
   const lech = c.thuTruoc ? Math.round((c.thuThang - c.thuTruoc) / Math.abs(c.thuTruoc) * 100) : null;
-  $("#v-homnay").innerHTML = `
+  $("#v-homnay").innerHTML = `${v4BangCanhBao()}
     <div class="ket">
       <div class="nhan">Đã thu tháng ${Number(th)}/${nam}</div>
       <div class="tien so">${tien(c.thuThang)}<i>đ</i></div>
@@ -1733,6 +1734,7 @@ function veHomNay(){
         <div><b class="so">${tienGon(c.duBao)}</b><span>Dự báo thu 30 ngày</span></div>
       </div>
     </div>
+    ${v4Pheu()}
     ${mucHtml("Việc cần làm", v.length ? `${v.length} việc` : "")}
     <div class="nhom">${v.length ? v.map(x => dongHtml(x)).join("") : trong("Hết việc rồi","Không có đơn chờ, không ai sắp hết hạn, radar sạch.")}</div>
     <div id="dsDon">${mucHtml("Đơn chờ duyệt", dc.length ? `${dc.length} đơn` : "", `<button class="lk" data-act="mo-doi-soat">Đối soát tiền về</button>`)}</div>
@@ -1903,7 +1905,9 @@ const CONG_TAC = [
   ["chanBiDanh","Chặn dùng thử bằng email bí danh","Email có dấu + (ten+1@gmail.com…) về chung hộp thư với email gốc: không cho mở dùng thử gói Sổ Nợ + Bán hàng (vẫn mua gói bình thường).", v => v !== false, true],
   ["chanChuKyCu","Chặn chữ ký kiểu cũ (ảnh nhúng)","Chữ ký nay nằm ở kho ảnh. Chặn kiểu nhúng thẳng tới 950KB mỗi chữ ký để kẻ phá không bơm rác vào link nợ công khai cho tốn tiền Firestore.", v => v !== false, true],
   ["thu1May","Mỗi máy chỉ dùng thử 1 tài khoản","Điện thoại đã có tài khoản chủ shop khác đăng nhập thì tài khoản mới KHÔNG tự mở dùng thử Sổ Nợ (app báo đăng nhập lại tài khoản cũ hoặc gọi mua gói). Chặn đổi email ăn dùng thử trên cùng máy.", v => v !== false, true],
-  ["motThuMoiHop","Mỗi hộp thư chỉ dùng thử 1 lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư. Bật: chỉ tài khoản ĐẦU TIÊN của hộp thư đó được dùng thử các gói Sổ Nợ + Bán hàng — máy chủ chặn thật, đổi máy hay xoá dữ liệu trình duyệt cũng không lách được. Nick phụ vẫn mua gói bình thường.", v => v !== false, true]
+  ["motThuMoiHop","Mỗi hộp thư chỉ dùng thử 1 lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư. Bật: chỉ tài khoản ĐẦU TIÊN của hộp thư đó được dùng thử các gói Sổ Nợ + Bán hàng — máy chủ chặn thật, đổi máy hay xoá dữ liệu trình duyệt cũng không lách được. Nick phụ vẫn mua gói bình thường.", v => v !== false, true],
+  /* [4.0] MẶC ĐỊNH TẮT (y như trước giờ). Bật = khách mới phải bấm link trong thư xác minh rồi mới dùng thử được. */
+  ["thuXacMinh","Xác minh email trước khi dùng thử","Bật: tài khoản mới phải bấm link trong thư xác minh rồi mới mở được dùng thử các gói Sổ Nợ + Bán hàng ⇒ mỗi lần dùng thử cần một hộp thư CÓ THẬT, hết đường gõ bừa email để thử mãi. Khách đang dùng / đã giữ khoá hộp thư KHÔNG bị hỏi lại; MUA gói không bao giờ cần xác minh. Chỉ bật SAU KHI app Sổ Nợ bản 2026-10-09-SN6 trở lên đã lên GitHub (bản cũ hơn vẫn chặn đúng nhưng báo sai lý do cho khách).", v => v === true, false]
 ];
 function veCaiDat(){
   const bank = [BILL.bankName, BILL.account, BILL.accName].filter(Boolean).join(" · ");
@@ -1922,6 +1926,7 @@ function veCaiDat(){
     </div>
     ${mucHtml("Công cụ")}
     <div class="nhom">
+      ${v4DongCaiDat()}
       ${dongHtml({ the:"button", act:"mo-chuyen", ic:"chuyen", t:"Chuyển dữ liệu sang tài khoản mới", d:"Khách mất Gmail, gõ nhầm email, sang nhượng shop — giữ nguyên hạn", mui:true })}
       ${drDongCongCu()}
       ${dongHtml({ the:"button", act:"mo-don-nghi", ic:"taive", t:"Dọn shop đã nghỉ", d:`${dnDem()} shop hết hạn quá ${DN.NGAY} ngày — sao lưu về máy rồi xoá dữ liệu, ảnh cho đỡ tốn tiền lưu trữ`, mui:true })}
@@ -2012,7 +2017,7 @@ function khachCua(uid){
 function veHoSo(t){
   const S = t.S, k = khachCua(S.uid);
   t.datTieuDe("Hồ sơ khách");
-  const tabs = [["gp","Giấy phép"],["ch","Cửa hàng"],["so","Sổ shop"],["ht","Hỗ trợ"],["ls","Lịch sử"]];
+  const tabs = [["gp","Giấy phép"],["ch","Cửa hàng"],["so","Sổ shop"],["ks","Kiểm soát"],["ht","Hỗ trợ"],["ls","Lịch sử"]];   /* [4.0] thêm tab Kiểm soát */
   const nhanh = [];
   if(k.cho) nhanh.push(`<button class="nut chinh" data-act="duyet" data-id="${esc(k.req.find(rCho).id)}">${ic("xong")}Duyệt đơn chờ</button>`);
   t.than.innerHTML = `
@@ -2024,10 +2029,11 @@ function veHoSo(t){
       <div class="o"><b class="so">${k.pay.filter(p => pTien(p) > 0).length}</b><span>Lần trả</span></div>
       <div class="o"><b class="so" style="font-size:15px">${k.tao ? ngayVN(k.tao) : "—"}</b><span>Ngày tạo</span></div></div>
     ${nhanh.length ? `<div class="hang-nut" style="margin-bottom:6px">${nhanh.join("")}</div>` : ""}
-    <div class="tab-tam">${tabs.map(([k2,n]) => `<button data-act="ho-tab" data-t="${k2}" class="${S.tab === k2 ? "on" : ""}">${n}</button>`).join("")}</div>
-    <div id="hoThan">${S.tab === "gp" ? hoGiayPhep(S, k) : S.tab === "ch" ? hoCuaHang(S, k) : S.tab === "so" ? hoSoShop(S) : S.tab === "ht" ? hoHoTro(S, k) : hoLichSu(S, k)}</div>`;
+    <div class="tab-tam sau">${tabs.map(([k2,n]) => `<button data-act="ho-tab" data-t="${k2}" class="${S.tab === k2 ? "on" : ""}">${n}</button>`).join("")}</div>
+    <div id="hoThan">${S.tab === "gp" ? hoGiayPhep(S, k) : S.tab === "ch" ? hoCuaHang(S, k) : S.tab === "so" ? hoSoShop(S) : S.tab === "ks" ? v4HoKiemSoat(S, k) : S.tab === "ht" ? hoHoTro(S, k) : hoLichSu(S, k)}</div>`;
   if((S.tab === "ch" || S.tab === "ht" || S.tab === "so") && !S.shop && !S.dangShop && !S.loiShop) napShopHoSo(t);
   if(S.tab === "so") ssNap(t);
+  if(S.tab === "ks") ksNap(t);   /* [4.0] */
 }
 async function napShopHoSo(t){
   const S = t.S; S.dangShop = true; S.loiShop = "";
@@ -2626,6 +2632,7 @@ function moRadar(ma){
 }
 function veMucRadar(t){
   if(t.S && t.S.ma === "thuTrung") return veThuTrung(t);   /* [3.6] mục này có nút Đã đối chiếu */
+  if(t.S && v4CoNut(t.S.ma)) return v4VeMuc(t);            /* [4.0] mục có nút Đã xem — bỏ qua */
   const x = radar().find(y => y.ma === t.S.ma);
   if(!x || !x.items.length){ t.datTieuDe("Radar"); t.than.innerHTML = trong("Đã sạch","Mục này không còn gì cần xử lý."); t.chan.innerHTML = ""; return; }
   t.datTieuDe(x.ten);
@@ -4818,12 +4825,664 @@ Object.assign(ACT, {
     if(!(await hoi({ tieuDe:"Khoá gói dùng thử", noiDung:`${emailCua(uid) || uid}\n\nKhoá ${ds.length} gói đang dùng thử: ${ds.map(l => tenApp(l.app)).join(", ")}.\nDùng cho nick phụ lập ra để ăn dùng thử. Khách mua gói thì duyệt như thường là mở lại.`, nutOk:"Khoá", nguy:true }))) return;
     await chay(b, async () => { const n = await khoaDungThu(uid); bao(`Đã khoá ${n} gói dùng thử`); await taiLai(true); }); }
 });
+
+/* ══════════════════════════ [4.0] KHOÁ KÉT · RADAR SOI SỔ · TAB KIỂM SOÁT · BẢN ĐỒ KIỂM SOÁT 100% ══════════════════════════
+   Khối này CHỈ THÊM, không sửa logic cũ (các chỗ gọi vào đều bọc try/catch: hỏng gì cũng không làm hỏng phần đang chạy).
+   1) KHOÁ KÉT — tiền của cả hệ chạy về MỘT tài khoản ngân hàng ghi ở billing/info:
+      • Đổi tài khoản nhận tiền phải NHẬP LẠI MẬT KHẨU quản trị + ghi một dòng nhật ký riêng (cũ → mới).
+      • BẪY: máy này nhớ tài khoản nhận tiền lần trước nó thấy. Lần nạp số liệu nào thấy KHÁC mà không phải do chính
+        máy này vừa đổi ⇒ băng đỏ ở Hôm nay + mục nặng trên Radar (có kẻ vào được tài khoản quản trị để lái tiền).
+      • TỰ KHOÁ MÀN sau 15 phút không thao tác (bật/tắt theo từng máy ở Cài đặt → Khoá két & an toàn).
+   2) RADAR SOI SỔ — 9 mục mới, soi ngay trên số liệu đã nạp (không tốn thêm lượt đọc): gói vĩnh viễn không có đồng nào ·
+      giá riêng dưới nửa giá · miễn phí chi nhánh · cấp hạn 0đ · hạn bị đổi ngoài sổ · dùng thử dài bất thường ·
+      một tài khoản nhiều đơn chờ · chưa có tài khoản nhận tiền · gợi ý bật xác minh email. Mục cần người xét có nút
+      “Đã xem — bỏ qua” (ghi vào nhật ký audit: mọi máy đều thấy, không xoá được, bấm nhầm thì Mở lại).
+   3) HỒ SƠ KHÁCH → tab KIỂM SOÁT: điều khiển nhanh · khoá hộp thư dùng thử (xem / gỡ / giao) · đơn khách đặt qua link +
+      hội thoại (xem) · phép chuyển dữ liệu (xem / thu hồi) · KHO DỮ LIỆU: xem 100% mọi kho của shop, từng bản ghi;
+      sửa 1 ô / xoá 1 bản ghi phải nhập lại mật khẩu, tự tải bản sao về máy trước khi xoá, ghi nhật ký giá trị cũ.
+   4) CÀI ĐẶT: công tắc “Xác minh email trước khi dùng thử” · Bản đồ kiểm soát 100% app Sổ Nợ · Khoá két & an toàn ·
+      Phép chuyển dữ liệu đang còn hiệu lực.
+   5) HÔM NAY: phễu khách mới 30 ngày (đăng ký → đang thử → đã trả tiền → hết thử chưa mua).                          */
+/* Hồ sơ khách nay có 6 tab: xếp 2 hàng × 3 cho thấy đủ, khỏi phải vuốt ngang mới thấy tab cuối. */
+try{ const _st = document.createElement("style"); _st.textContent = ".tab-tam.sau{flex-wrap:wrap;overflow:visible}.tab-tam.sau button{flex:1 0 30%}"; document.head.appendChild(_st); }catch(e){}
+const V4 = { KEY_TK:"qt_tk_v1", KEY_KHOA:"qt_tukhoa_v1", PHUT:15, TRANG:30 };
+const V4_VIEC = ["radar_da_xem", "radar_mo_lai"];
+/* Dấu “Đã xem” nằm ở kho audit; mượn đúng lượt đọc riêng của mục “Đã đối chiếu” (không bị trần 3000 dòng nhật ký). */
+try{ V4_VIEC.forEach(v => { if(!DC_VIEC.includes(v)) DC_VIEC.push(v); }); }catch(e){ console.warn("v4:", e); }
+const V4_KHONG_DOI_HAN = ["khoa","mo_khoa","khoa_dung_thu","khoa_sau_chuyen","dieu_chinh","giu_ngay_het_han"];
+const V4_MA = { vvKhongThu:1, giaRiengThap:1, mienTruCn:1, capKhongTien:1, hanLechSo:1, thuDai:1 };   /* mục radar có nút “Đã xem — bỏ qua” */
+let V4_MOI = [], _v4Xem = { k:"", m:new Map() }, _v4TuDoi = false;
+const v4Toi = () => (auth.currentUser && auth.currentUser.uid) || "";
+const v4LaToi = u => u === v4Toi() || String(emailCua(u) || "").trim().toLowerCase() === CFG.admin;
+
+/* ─────────── nhập lại mật khẩu quản trị cho việc đụng tới tiền / dữ liệu ─────────── */
+const v4LoiMK = e => { const m = maLoi(e);
+  return /wrong-password|invalid-credential|invalid-login/i.test(m) ? "Mật khẩu không đúng" : /network/i.test(m) ? "Không có mạng"
+       : /too-many/i.test(m) ? "Thử sai nhiều lần — đợi vài phút" : "Chưa xác nhận được: " + m; };
+async function v4XacNhanMK(viec){
+  const mk = await nhap({ tieuDe:"Nhập lại mật khẩu quản trị", kieu:"password", nutOk:"Xác nhận",
+    noiDung: `${viec}\n\nViệc này đụng tới tiền / dữ liệu của khách nên phải nhập lại mật khẩu — để người cầm được máy đang mở sẵn cũng không tự làm được.` });
+  if(mk == null) return false;
+  if(!mk){ bao("Chưa nhập mật khẩu", 1); return false; }
+  try{ await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, mk)); return true; }
+  catch(e){ bao(v4LoiMK(e), 1); return false; }
+}
+
+/* ─────────── 1. KHOÁ KÉT: tài khoản nhận tiền ─────────── */
+const v4VanTayTK = B => { B = B || {}; return [String(B.bin || B.bankBin || "").replace(/\s/g,""), String(B.account || B.acc || "").replace(/\s/g,""), String(B.accName || "").trim().toUpperCase()].join("|"); };
+const v4MoTaTK = B => { B = B || {}; const p = [B.bankName, B.bin || B.bankBin, B.account || B.acc, B.accName].map(x => String(x == null ? "" : x).trim()).filter(Boolean); return p.length ? p.join(" · ") : "(đang trống)"; };
+const v4CoTK = B => { B = B || {}; return !!(String(B.bin || B.bankBin || "").trim() && String(B.account || B.acc || "").trim()); };
+function v4TKNho(){ try{ const o = JSON.parse(localStorage.getItem(V4.KEY_TK) || "null"); return (o && typeof o === "object" && typeof o.vt === "string") ? o : null; }catch(e){ return null; } }
+function v4TKGhi(){ try{ localStorage.setItem(V4.KEY_TK, JSON.stringify({ vt:v4VanTayTK(BILL), mt:v4MoTaTK(BILL), luc:Date.now() })); }catch(e){} }
+/* null = khớp với lần trước máy này thấy (lần đầu thì ghi nhớ luôn) · { cu, moi, luc } = ĐÃ ĐỔI ở nơi khác */
+function v4TKLech(){
+  if(!DA_NAP || _v4TuDoi) return null;
+  const n = v4TKNho();
+  if(!n){ v4TKGhi(); return null; }
+  return n.vt === v4VanTayTK(BILL) ? null : { cu: String(n.mt || "(không rõ)"), moi: v4MoTaTK(BILL), luc: Number(n.luc) || 0 };
+}
+const v4DoiTKCuoi = () => AUD.filter(x => x && x.viec === "doi_tk_nhan_tien").sort((a, b) => (ngay(b.at) || 0) - (ngay(a.at) || 0))[0] || null;
+function v4BangCanhBao(){
+  try{
+    const l = v4TKLech(); if(!l) return "";
+    const c = v4DoiTKCuoi();
+    return `<div class="bao xau" id="v4TK" style="margin-top:10px"><b>⚠️ Tài khoản NHẬN TIỀN đã đổi so với lần trước máy này thấy</b><br>
+      Trước${l.luc ? " (" + esc(lauRoi(l.luc)) + ")" : ""}: ${esc(l.cu)}<br>Nay: <b>${esc(l.moi)}</b><br>
+      ${c ? `Nhật ký ghi lần đổi gần nhất: ${esc(gioVN(c.at))}${c.boi ? " · " + esc(c.boi) : ""}.` : "Nhật ký KHÔNG có dòng đổi tài khoản nào — lần đổi này không đi qua nút Lưu bảng giá của app."}<br>
+      Mọi mã QR gia hạn của khách đang chuyển tiền vào tài khoản mới này. KHÔNG phải bạn đổi ⇒ sửa lại ngay rồi đổi mật khẩu quản trị.
+      <div class="hang-nut" style="margin-top:10px"><button class="nut nguy" data-act="mo-bang-gia">Xem / sửa lại</button>
+        <button class="nut" data-act="doi-mk-admin">Đổi mật khẩu</button><button class="nut" data-act="v4-tk-ok">Đúng là tôi đổi</button></div></div>`;
+  }catch(e){ console.warn("bẫy tài khoản nhận tiền:", e); return ""; }
+}
+
+/* ─────────── TỰ KHOÁ MÀN ─────────── */
+let _v4Cham = Date.now(), _v4Khoa = null;
+const v4TuKhoaBat = () => { try{ return localStorage.getItem(V4.KEY_KHOA) !== "0"; }catch(e){ return true; } };
+function v4MoMan(){ if(_v4Khoa){ try{ _v4Khoa.remove(); }catch(e){} _v4Khoa = null; } _v4Cham = Date.now(); }
+function v4KhoaMan(){
+  if(_v4Khoa || !auth.currentUser || !DA_NAP) return;
+  const n = document.createElement("div"); n.className = "hop-nen"; n.id = "v4Khoa"; n.style.zIndex = "94"; n.style.background = "rgb(6,20,18)";   /* kín hẳn: người đứng cạnh không đọc được số liệu phía sau */
+  n.innerHTML = `<div class="hop" role="dialog" aria-modal="true" aria-label="Đã tự khoá"><h4>🔒 Đã tự khoá</h4>
+    <div class="nd">Quá ${V4.PHUT} phút không thao tác. Nhập mật khẩu quản trị để làm tiếp. Việc đang chạy dở (dọn dữ liệu, chuyển tài khoản…) vẫn chạy bình thường phía sau.</div>
+    <label class="o-nhap" style="margin:14px 0 0"><span>Mật khẩu quản trị</span><input type="password" autocomplete="current-password"></label>
+    <div class="hang-nut"><button class="nut" data-k="thoat">Đăng xuất</button><button class="nut chinh" data-k="mo">Mở khoá</button></div></div>`;
+  document.body.appendChild(n); _v4Khoa = n;
+  const inp = n.querySelector("input"), nutMo = n.querySelector('[data-k="mo"]');
+  const mo = async () => {
+    const mk = inp.value; if(!mk) return bao("Chưa nhập mật khẩu", 1);
+    nutMo.disabled = true; nutMo.textContent = "Đang kiểm…";
+    try{ await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, mk)); v4MoMan(); bao("Đã mở khoá"); }
+    catch(e){ nutMo.disabled = false; nutMo.textContent = "Mở khoá"; inp.value = ""; try{ inp.focus(); }catch(_){} bao(v4LoiMK(e), 1); }
+  };
+  n.addEventListener("click", e => { const k = e.target.closest("[data-k]"); if(!k) return; e.stopPropagation();
+    if(k.dataset.k === "mo") mo(); else { v4MoMan(); signOut(auth); } });
+  inp.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); mo(); } });
+  setTimeout(() => { try{ inp.focus(); }catch(e){} }, 30);
+}
+const v4XetKhoa = () => { try{ if(v4TuKhoaBat() && !_v4Khoa && auth.currentUser && DA_NAP && Date.now() - _v4Cham > V4.PHUT * 60000) v4KhoaMan(); }catch(e){} };
+try{
+  ["pointerdown","keydown","touchstart","wheel"].forEach(ev => addEventListener(ev, () => { if(!_v4Khoa) _v4Cham = Date.now(); }, { passive:true, capture:true }));
+  /* đang khoá: phím bấm không được lọt xuống giao diện phía sau */
+  document.addEventListener("keydown", e => { if(_v4Khoa && !_v4Khoa.contains(e.target)){ e.stopPropagation(); e.preventDefault(); try{ _v4Khoa.querySelector("input").focus(); }catch(_){} } }, true);
+  document.addEventListener("focusin", e => { if(_v4Khoa && !_v4Khoa.contains(e.target)){ try{ _v4Khoa.querySelector("input").focus(); }catch(_){} } });
+  setInterval(v4XetKhoa, 15000);
+  document.addEventListener("visibilitychange", () => { if(!document.hidden) v4XetKhoa(); });
+  onAuthStateChanged(auth, u => { if(!u) v4MoMan(); else _v4Cham = Date.now(); });
+}catch(e){ console.warn("tự khoá màn:", e); }
+
+/* ─────────── 2. RADAR SOI SỔ ─────────── */
+const v4KhoaGhi = ghi => { const m = /@([A-Za-z0-9_.:|-]+)$/.exec(String(ghi || "")); return m ? m[1] : ""; };
+const v4MoTaGhi = ghi => String(ghi || "").replace(/ · @[A-Za-z0-9_.:|-]+$/, "");
+/* khoá → dòng nhật ký MỚI NHẤT của mục đó (đã xem hay mở lại) */
+function v4DaXem(){
+  const k = LUC_NAP + "|" + DC_LOG.length + "|" + V4_MOI.length;
+  if(_v4Xem.k === k) return _v4Xem.m;
+  const m = new Map();
+  try{
+    const co = new Set(DC_LOG.map(x => x && x.id));
+    DC_LOG.concat(V4_MOI.filter(x => !co.has(x.id))).filter(x => x && V4_VIEC.includes(x.viec))
+      .map((x, i) => ({ x, i, t: +(ngay(x.at) || 0) })).sort((a, b) => (a.t - b.t) || (a.i - b.i))
+      .forEach(({ x }) => { const kk = v4KhoaGhi(x.ghi); if(kk) m.set(kk, x); });
+  }catch(e){ console.warn("radar đã xem:", e); }
+  _v4Xem = { k, m };
+  return m;
+}
+const v4An = k => { const e = v4DaXem().get(k); return !!(e && e.viec === "radar_da_xem"); };
+async function v4GhiXem(viec, khoa, uid, app, moTa){
+  if(!navigator.onLine) throw new Error("Không có mạng — chưa ghi được");
+  const e = sach({ ...buoc(viec, { ghi: `${String(moTa || "").slice(0, 200)} · @${khoa}` }), uid: uid || "", app: app || "" });
+  const ref = await addDoc(collection(fdb,"audit"), e);
+  const x = { ...e, id: ref.id };
+  V4_MOI.push(x); AUD.unshift(x);
+  return x;
+}
+function v4Radar(them){
+  const loc = ds => ds.filter(i => !v4An(i.k));
+  const ten = u => emailCua(u) || u;
+
+  /* a) tài khoản nhận tiền */
+  if(!v4CoTK(BILL)) them("nang","tkTrong","Chưa có tài khoản nhận tiền","Thiếu mã ngân hàng hoặc số tài khoản: mọi app khách không hiện được mã QR — khách muốn trả tiền cũng không trả được.",
+    [{ t:"Mở Bảng giá để điền mã ngân hàng (BIN) + số tài khoản" }], "bang-gia");
+  const l = v4TKLech();
+  if(l) them("nang","tkDoi","Tài khoản NHẬN TIỀN đã đổi so với lần trước máy này thấy",
+    "KHÔNG phải bạn vừa đổi ⇒ có người đã vào được tài khoản quản trị và lái tiền của khách sang tài khoản khác: sửa lại ngay ở Bảng giá rồi đổi mật khẩu quản trị. Đúng là bạn đổi (ở máy khác) ⇒ bấm “Đúng là tôi đổi” ở màn Hôm nay.",
+    [{ t:"Trước: " + l.cu }, { t:"Nay: " + l.moi }], "bang-gia");
+
+  /* b) gói VĨNH VIỄN mà sổ không có dòng thu nào của đúng gói đó */
+  const vv = LIC.filter(x => CFG.apps.includes(x.app) && !v4LaToi(x.uid) && tt(x).ma === "vv"
+      && !PAY.some(p => p.uid === x.uid && p.app === x.app && pTien(p) > 0)
+      && !(Array.isArray(x.lichSu) && x.lichSu.some(e => e && /nhan_chuyen/.test(String(e.viec || "")))))
+    .map(x => ({ uid:x.uid, app:x.app, k:`vvKhongThu:${x.uid}:${x.app}`, t:ten(x.uid), d:`${tenApp(x.app)} · dùng trọn đời · sổ không có dòng thu nào cho gói này` }));
+  them("vua","vvKhongThu","Gói VĨNH VIỄN mà sổ không có đồng nào",
+    "Được dùng trọn đời nhưng sổ thu không có dòng nào cho đúng gói đó. Tặng thật (người nhà, đối tác) thì bấm Đã xem; không phải thì mở hồ sơ đặt lại ngày hết hạn.", loc(vv));
+
+  /* c) giá riêng thấp hơn nửa giá chung */
+  const gr = [];
+  Object.keys(ACC).forEach(u => { if(v4LaToi(u)) return; const g = (ACC[u] || {}).giaRieng; if(!g || typeof g !== "object" || Array.isArray(g)) return;
+    CFG.apps.forEach(a => { const r = giaRieng(u, a), c = giaApp(a);
+      if(r > 0 && c > 0 && r < c * 0.5) gr.push({ uid:u, app:a, k:`giaRiengThap:${u}:${a}:${r}`, t:ten(u), d:`${tenApp(a)} · giá riêng ${tienD(r)} / giá chung ${tienD(c)} (giảm ${Math.round((1 - r / c) * 100)}%)` }); }); });
+  them("vua","giaRiengThap","Giá riêng thấp hơn nửa giá chung",
+    "Khách này đang được trả dưới 50% bảng giá. Cố ý ưu đãi thì bấm Đã xem; gõ nhầm (thiếu số 0) thì mở hồ sơ → Giá riêng để sửa.", loc(gr));
+
+  /* d) miễn phí chi nhánh (miễn trừ cả tài khoản / duyệt riêng cửa hàng mã cũ) */
+  const mt = Object.keys(ACC).filter(u => !v4LaToi(u)).map(u => { const a = ACC[u] || {}, cho = Array.isArray(a.cnCho) ? a.cnCho.filter(x => typeof x === "string" && x) : [];
+    if(a.cnMienTru !== true && !cho.length) return null;
+    return { uid:u, app:"", k:`mienTruCn:${u}:${a.cnMienTru === true ? "tat" : cho.length}`, t:ten(u),
+      d: a.cnMienTru === true ? "Miễn trừ thu phí chi nhánh cho CẢ tài khoản — mở bao nhiêu cửa hàng cũng không tốn tiền" : `Được duyệt riêng ${cho.length} cửa hàng mã cũ: ${cho.slice(0, 6).join(", ")}${cho.length > 6 ? "…" : ""}` }; }).filter(Boolean);
+  them("nhe","mienTruCn","Tài khoản đang được miễn phí chi nhánh",
+    "Các tài khoản này mở cửa hàng thêm mà KHÔNG phải mua suất chi nhánh (miễn trừ / duyệt mã cũ). Còn đúng thì bấm Đã xem; hết lý do thì mở hồ sơ → Cửa hàng để gỡ.", loc(mt));
+
+  /* đ) cấp hạn 0đ trong 90 ngày */
+  const k0 = [];
+  LIC.forEach(x => { if(v4LaToi(x.uid) || !Array.isArray(x.lichSu)) return;
+    x.lichSu.forEach(e => { if(!e || e.viec !== "gia_han") return; const d = ngay(e.at); if(!d || (Date.now() - d) > 90 * 864e5) return;
+      if(num(e.tien) > 0 || !(num(e.thang) > 0)) return;
+      k0.push({ uid:x.uid, app:x.app, k:`capKhongTien:${x.uid}:${x.app}:${+d}`, t:ten(x.uid),
+        d:`${tenApp(x.app)} · cấp ${num(e.thang)} tháng 0đ ngày ${ngayVN(d)}${e.boi ? " · " + e.boi : ""}${e.ghi ? " · " + String(e.ghi).slice(0, 60) : ""}` }); }); });
+  them("vua","capKhongTien","Cấp hạn KHÔNG thu tiền (90 ngày qua)",
+    "Những lần Đặt hạn ghi 0đ: tặng, đền bù, hoặc bấm vội khi tiền chưa về. Soát từng dòng; đúng là tặng thì bấm Đã xem.", loc(k0));
+
+  /* e) hạn hiện tại KHÁC hạn ghi ở lần gia hạn cuối cùng */
+  const hl = [];
+  LIC.forEach(x => { if(v4LaToi(x.uid) || tt(x).ma !== "tra" || !Array.isArray(x.lichSu) || !x.lichSu.length) return;
+    const ls = x.lichSu.filter(e => e && ngay(e.at)).sort((a, b) => ngay(a.at) - ngay(b.at));
+    let i = ls.length - 1; while(i >= 0 && V4_KHONG_DOI_HAN.includes(ls[i].viec)) i--;      /* khoá / mở khoá… không đổi ngày hết hạn ⇒ bỏ qua khi tìm lần đặt hạn cuối */
+    const cuoi = i >= 0 ? ls[i] : null;
+    if(!cuoi || cuoi.viec !== "gia_han") return;                                            /* sau lần gia hạn cuối còn thưởng / chuyển / vĩnh viễn ⇒ không so */
+    const dm = ngay(cuoi.hanMoi), hm = dm ? +dm : null, h = hanRules(x.paidUntil);
+    if(hm == null || h == null || Math.abs(h - hm) <= 36 * 3600e3) return;
+    hl.push({ uid:x.uid, app:x.app, k:`hanLechSo:${x.uid}:${x.app}:${h}`, t:ten(x.uid),
+      d:`${tenApp(x.app)} · hạn đang là ${ngayVN(new Date(h))}, lần gia hạn cuối (${ngayVN(cuoi.at)}) ghi ${ngayVN(dm)} — ${h > hm ? "DÀI hơn" : "ngắn hơn"} ${Math.round(Math.abs(h - hm) / 864e5)} ngày` }); });
+  them("vua","hanLechSo","Hạn bị đổi ngoài sổ",
+    "Ngày hết hạn hiện tại KHÁC ngày ghi ở lần gia hạn cuối cùng ⇒ có thay đổi KHÔNG đi qua nút Đặt hạn & ghi sổ (sửa thẳng trên máy chủ, công cụ cũ…). Mở hồ sơ → Lịch sử để soát; đúng thì bấm Đã xem.", loc(hl));
+
+  /* g) "dùng thử" mà còn quá 16 ngày — máy chủ không bao giờ cho khách tự mở dài vậy */
+  const td = LIC.filter(x => !v4LaToi(x.uid) && x.trial === true).map(x => ({ x, t: tt(x) })).filter(o => o.t.ma === "thu" && o.t.con > 16)
+    .map(o => ({ uid:o.x.uid, app:o.x.app, k:`thuDai:${o.x.uid}:${o.x.app}`, t:ten(o.x.uid), d:`${tenApp(o.x.app)} · đang ghi là dùng thử mà còn tới ${o.t.con} ngày (khách tự mở tối đa 16 ngày)` }));
+  them("vua","thuDai","Dùng thử dài bất thường",
+    "Giấy phép ghi là dùng thử nhưng hạn còn quá 16 ngày — chỉ có thể do cấp tay. Cố ý cho thử dài thì bấm Đã xem; không thì mở hồ sơ đặt lại hạn.", loc(td));
+
+  /* h) một tài khoản có từ 3 đơn chờ */
+  const dem = {}; REQ.filter(rCho).forEach(r => { if(r._uid) dem[r._uid] = (dem[r._uid] || 0) + 1; });
+  them("nhe","donNhieu","Một tài khoản có từ 3 đơn chờ","Mở màn thanh toán nhiều gói rồi bỏ, hoặc cố tình làm rối bảng duyệt. Soát sao kê rồi Ẩn các đơn không có tiền về.",
+    Object.keys(dem).filter(u => dem[u] >= 3).map(u => ({ uid:u, t:ten(u), d:`${dem[u]} đơn đang chờ duyệt` })));
+
+  /* i) có dấu hiệu lập nick ăn dùng thử mà công tắc xác minh email đang tắt */
+  if(CFGDB.thuXacMinh !== true){
+    const theoNgay = {};
+    LIC.forEach(x => { if(x.trial !== true) return; const d = ngay(x.startedAt); if(!d || (Date.now() - d) > 14 * 864e5) return; (theoNgay[dToS(d)] = theoNgay[dToS(d)] || new Set()).add(x.uid); });
+    const dong = Object.keys(theoNgay).filter(k => theoNgay[k].size >= 5);
+    let nhom = 0; try{ nhom = nhomHopThu().length; }catch(e){ nhom = 0; }
+    if(dong.length || nhom >= 2) them("vua","goiYXacMinh","Nên bật “Xác minh email trước khi dùng thử”",
+      "Có dấu hiệu lập nick ăn dùng thử. Bật công tắc này ở Cài đặt: khách mới phải bấm link trong thư xác minh rồi mới được dùng thử ⇒ mỗi lần dùng thử cần một hộp thư CÓ THẬT. Khách đang dùng không bị ảnh hưởng; mua gói không cần xác minh.",
+      [].concat(dong.length ? [{ t:`${dong.length} ngày có từ 5 tài khoản mới mở dùng thử (14 ngày qua)` }] : [], nhom >= 2 ? [{ t:`${nhom} nhóm tài khoản chung một hộp thư Gmail` }] : []), "cong-tac");
+  }
+}
+function v4CoNut(ma){ try{ return !!V4_MA[ma]; }catch(e){ return false; } }
+function v4HoKiemSoat(S, k){ try{ return hoKiemSoat(S, k); }catch(e){ console.warn("tab kiểm soát:", e); return `<div class="bao xau">Chưa dựng được tab này: ${esc(maLoi(e))}</div>`; } }
+function v4VeMuc(t){
+  const ma = t.S.ma, x = radar().find(y => y.ma === ma) || { ten:"Radar", mota:"", items:[], muc:"vua" };
+  const da = [...v4DaXem().entries()].filter(([k, e]) => e.viec === "radar_da_xem" && k.indexOf(ma + ":") === 0)
+    .sort((a, b) => (ngay(b[1].at) || 0) - (ngay(a[1].at) || 0));
+  const dong = (tieu, d1, d2, uid, nut) => `<div class="dong" style="flex-wrap:wrap">
+      <span class="gi"><span class="t" style="display:block">${esc(tieu)}</span>${d1 ? `<span class="d" style="display:block">${esc(d1)}</span>` : ""}${d2 ? `<span class="d" style="display:block">${esc(d2)}</span>` : ""}</span>
+      <span class="hang-nut" style="width:100%;margin-top:8px">${uid ? `<button class="nut nho" data-act="mo-khach" data-uid="${esc(uid)}">Hồ sơ</button>` : ""}${nut}</span></div>`;
+  t.datTieuDe(x.ten);
+  t.than.innerHTML = (x.items.length
+      ? `<div class="bao ${x.muc === "nang" ? "xau" : "canh"}">${esc(x.mota)}<br>Soát xong dòng nào thì bấm <b>Đã xem — bỏ qua</b>: dòng đó thôi tính vào radar (ghi vào nhật ký, mọi máy đều thấy; bấm nhầm thì Mở lại).</div>
+    <div class="nhom">${x.items.slice(0, 200).map(i => dong(i.t, i.d, "", i.uid, `<button class="nut nho chinh" data-act="v4-da-xem" data-k="${esc(i.k)}">Đã xem — bỏ qua</button>`)).join("")}</div>
+    ${x.items.length > 200 ? `<p class="nho">…và ${x.items.length - 200} dòng nữa</p>` : ""}`
+      : trong("Đã sạch", "Mục này không còn gì cần xử lý."))
+    + (da.length ? mucHtml("Đã xem — bỏ qua", `${da.length} dòng`, `<button class="lk" data-act="v4-xem-an">${t.S.xemAn ? "Ẩn" : "Xem"}</button>`)
+      + (t.S.xemAn ? `<div class="nhom">${da.slice(0, 200).map(([k, e]) => dong(emailCua(e.uid) || e.uid || "—", v4MoTaGhi(e.ghi),
+          `Đã xem ${gioVN(e.at)}${e.boi ? " · " + e.boi : ""}`, e.uid, `<button class="nut nho" data-act="v4-mo-lai" data-k="${esc(k)}">Mở lại</button>`)).join("")}</div>` : "") : "");
+  t.chan.innerHTML = "";
+}
+
+/* ─────────── 5. PHỄU KHÁCH MỚI 30 NGÀY (màn Hôm nay) ─────────── */
+function v4Pheu(){
+  try{
+    const ks = khach().filter(k => k.tao && (Date.now() - k.tao) < 30 * 864e5 && !v4LaToi(k.uid));
+    if(!ks.length) return "";
+    const daTra = k => k.pay.some(p => pTien(p) > 0);
+    const tra = ks.filter(daTra).length, thu = ks.filter(k => !daTra(k) && (k.thu > 0 || k.vv > 0)).length, roi = ks.length - tra - thu;
+    return mucHtml("Phễu khách mới 30 ngày", `${ks.length} tài khoản`) + `<div class="luoi" style="grid-template-columns:repeat(3,1fr)">
+      <div class="o"><b class="so">${thu}</b><span>Đang dùng thử</span></div>
+      <div class="o tot"><b class="so">${tra}</b><span>Đã trả tiền</span><small>${Math.round(tra / ks.length * 100)}% khách mới</small></div>
+      <div class="o ${roi ? "canh" : ""}"><b class="so">${roi}</b><span>Hết thử, chưa mua</span>${roi ? `<small>mời lại ở Khách → Hết hạn</small>` : ""}</div></div>`;
+  }catch(e){ console.warn("phễu:", e); return ""; }
+}
+
+/* ─────────── 3. HỒ SƠ KHÁCH → TAB KIỂM SOÁT ─────────── */
+const V4_KHO_GOC = [["customers","Khách nợ"],["suppliers","Nhà cung cấp"],["supplier_payments","Trả tiền nhà cung cấp"],["staff","Nhân viên (PIN)"],
+  ["pos_nv","Máy nhân viên"],["meta","Cài đặt cửa hàng"],["branches","Danh sách cửa hàng"],["_diag","Dữ liệu kiểm tra kết nối"]];
+const V4_KHO_CN = [["products","Hàng hoá"],["orders","Đơn bán"],["stock_moves","Thẻ kho (nhập / xuất)"],["purchases","Phiếu nhập hàng"],["returns","Trả hàng"],
+  ["shifts","Ca bán"],["cashlog","Sổ quỹ"],["pos_audit","Nhật ký thao tác bán hàng"],["pos_held","Đơn giữ"],["pos_meta","Cấu hình bán hàng / QR"],
+  ["pos_tables","Bàn (F&B)"],["pos_fnb","Két F&B"],["pos_fs","Két Thời trang"],["pos_rm","Két Karaoke / Spa"],["pos_kg","Két Cân ký"]];
+const TEN_TT_DON = { cho:"chờ shop nhận", nhan:"shop đã nhận", huy:"shop không nhận", xong:"xong" };
+const v4Mail = uid => String(emailCua(uid) || "").trim().toLowerCase();
+const v4Doc = s => (s && s.exists && s.exists()) ? { id:s.id, ...(s.data() || {}) } : null;
+const v4Ds = s => { const o = []; if(s) s.forEach(d => o.push({ id:d.id, ...(d.data() || {}) })); return o; };
+async function ksNap(t){
+  const S = t.S, o = S.ks || (S.ks = { san:false, dang:false, loi:"" });
+  if(o.san || o.dang || o.loi) return;
+  o.dang = true;
+  try{
+    const uid = S.uid, hop = hopThu(v4Mail(uid));
+    const r = await Promise.all([
+      (hop && hop.indexOf("/") < 0) ? getDoc(doc(fdb,"trialKeys",hop)).catch(() => null) : null,
+      getDocs(query(collection(fdb,"trialKeys"), where("uid","==",uid), limit(10))).catch(() => null),
+      getDocs(query(collection(fdb,"qr_don"), where("ownerUid","==",uid), limit(80))).catch(() => null),
+      getDocs(query(collection(fdb,"qr_chat"), where("ownerUid","==",uid), limit(60))).catch(() => null),
+      getDoc(doc(fdb,"chuyen_dl",uid)).catch(() => null),
+      getDocs(query(collection(fdb,"chuyen_dl"), where("tuUid","==",uid), limit(20))).catch(() => null)
+    ]);
+    o.hop = hop; o.khoa = v4Doc(r[0]); o.giu = v4Ds(r[1]);
+    o.don = v4Ds(r[2]).sort((a, b) => (ngay(b.taoLuc) || ngay(b.tsClient) || 0) - (ngay(a.taoLuc) || ngay(a.tsClient) || 0));
+    o.chat = v4Ds(r[3]).sort((a, b) => (ngay(b.cuoi) || 0) - (ngay(a.cuoi) || 0));
+    o.phep = v4Doc(r[4]); o.phepDi = v4Ds(r[5]);
+    o.san = true;
+  }catch(e){ o.loi = maLoi(e); }
+  o.dang = false;
+  if(TAM.includes(t) && S.tab === "ks") veHoSo(t);
+}
+function hoKiemSoat(S, k){
+  const uid = S.uid, o = S.ks || {}, U = `data-uid="${esc(uid)}"`;
+  const nhanh = `${mucHtml("Điều khiển nhanh")}<div class="nhom">
+    ${k.lic.length ? dongHtml({ the:"button", act:"khoa-tat", data:`${U} data-mo="0"`, ic:"khoa", lop:"do-c", t:"Khoá tất cả giấy phép", d:"Khách không dùng được app nào nữa — dữ liệu vẫn còn nguyên", mui:true })
+      + dongHtml({ the:"button", act:"khoa-tat", data:`${U} data-mo="1"`, ic:"mo", t:"Mở khoá tất cả giấy phép", d:"Mở lại mọi gói đang bị khoá", mui:true }) : ""}
+    ${k.lic.some(x => tt(x).ma === "thu") ? dongHtml({ the:"button", act:"khoa-thu", data:U, ic:"khoa", lop:"dong-c", t:"Khoá các gói đang dùng thử", d:"Nick phụ lập ra để ăn dùng thử", mui:true }) : ""}
+    ${dongHtml({ the:"button", act:"buoc-dx", data:`${U} data-bat="1"`, ic:"thoat", lop:"do-c", t:"Buộc đăng xuất mọi máy", d:"Lộ mật khẩu, mất máy, nghi dùng chung tài khoản", mui:true })}
+    ${dongHtml({ the:"button", act:"reset-mk", data:U, ic:"chia", t:"Đặt lại mật khẩu cho khách", d:"Khách quên mật khẩu", mui:true })}
+    ${dongHtml({ the:"button", act:"cap", data:`${U} data-app="sono_qr"`, ic:"cua", t:"Gói Bán online: " + esc(tt(licCua(uid, "sono_qr")).ten), d:"Hết hạn hoặc khoá gói này là link cửa hàng online + mã QR bàn NGƯNG hiển thị, khách không đặt được", mui:true })}
+  </div>`;
+  if(o.loi) return nhanh + `<div class="bao xau">Chưa đọc được phần còn lại: ${esc(o.loi)}</div><button class="nut rong" data-act="v4-ks-tai">Thử lại</button>`;
+  if(!o.san) return nhanh + trong("Đang đọc…", "Khoá hộp thư dùng thử · đơn khách đặt · hội thoại · phép chuyển");
+  /* dùng thử */
+  const giuKhac = o.khoa && o.khoa.uid && o.khoa.uid !== uid, giuToi = o.khoa && o.khoa.uid === uid;
+  const daThu = k.lic.filter(x => x.trialUsed === true || x.trial === true).map(x => tenApp(x.app));
+  const khacGiu = (o.giu || []).filter(x => x.id !== o.hop);
+  const thu = `${mucHtml("Dùng thử")}<div class="the">
+    <div class="kv"><span>Hộp thư thật</span><span>${esc(o.hop || "— (tài khoản không có email)")}</span></div>
+    <div class="kv"><span>Khoá hộp thư dùng thử</span><span>${!o.hop ? "—" : giuToi ? "Tài khoản NÀY đang giữ" + (ngay(o.khoa.at) ? " · từ " + esc(ngayVN(o.khoa.at)) : "")
+      : giuKhac ? `Tài khoản KHÁC đang giữ: <button class="nut nho" style="min-height:26px;padding:2px 8px" data-act="mo-khach" data-uid="${esc(o.khoa.uid)}">${esc(emailCua(o.khoa.uid) || String(o.khoa.uid).slice(0, 10))}</button>`
+      : "Chưa ai giữ"}</span></div>
+    <div class="kv"><span>Gói đã dùng thử</span><span>${esc(daThu.join(", ") || "chưa gói nào")}</span></div>
+    ${khacGiu.length ? `<div class="kv"><span>Còn giữ khoá của hộp thư khác</span><span>${esc(khacGiu.map(x => x.id).join(", "))}</span></div>` : ""}</div>
+    <p class="nho" style="margin:6px 2px 8px">Mỗi hộp thư thật chỉ một tài khoản được dùng thử các gói Sổ Nợ + Bán hàng. Gỡ khoá = hộp thư này được dùng thử lại bằng tài khoản khác; giao khoá = cho ĐÚNG tài khoản này quyền mở dùng thử (gói nào đã thử rồi thì vẫn không thử lại được).</p>
+    ${o.hop ? `<div class="hang-nut">${o.khoa ? `<button class="nut nguy" data-act="v4-khoa-thu" data-viec="go" ${U}>Gỡ khoá hộp thư</button>` : ""}
+      ${!giuToi ? `<button class="nut" data-act="v4-khoa-thu" data-viec="giao" ${U}>Giao khoá cho tài khoản này</button>` : ""}</div>` : ""}`;
+  /* đơn khách đặt qua link + hội thoại */
+  const don = o.don || [], demTT = {}; don.forEach(x => { const s = String(x.tt || "cho"); demTT[s] = (demTT[s] || 0) + 1; });
+  const banOnl = `${mucHtml("Đơn khách đặt qua link / mã QR", `${don.length}${don.length >= 80 ? "+" : ""} đơn còn trên máy chủ`)}
+    ${don.length ? `<p class="nho" style="margin:0 2px 8px">${esc(Object.keys(demTT).map(s => `${demTT[s]} ${TEN_TT_DON[s] || s}`).join(" · "))} · đơn bàn được nhận là chuyển thẳng vào bàn; đơn online cũ shop tự dọn sau 3 ngày</p>` : ""}
+    <div class="nhom">${don.length ? don.slice(0, 20).map(x => dongHtml({ the:"button", act:"v4-doc", data:`data-p="${esc("qr_don/" + x.id)}"`, ic:"don", lop: (x.tt || "cho") === "cho" ? "dong-c" : "",
+        t:`${tienD(x.tong)} · ${esc(x.kieu === "online" ? "Online" : "Tại bàn")}${x.khach ? " · " + esc(x.khach) : ""}`,
+        d: esc([TEN_TT_DON[x.tt || "cho"] || x.tt, x.sdt, gioVN(x.taoLuc || x.tsClient)].filter(Boolean).join(" · ")), mui:true })).join("")
+      : trong("Không có đơn nào", "Chưa ai đặt qua link, hoặc shop đã xử lý + dọn hết")}</div>
+    ${mucHtml("Hội thoại với khách (nhắn tin trên link)", `${(o.chat || []).length} cuộc`)}
+    <div class="nhom">${(o.chat || []).length ? o.chat.slice(0, 20).map(x => dongHtml({ the:"button", act:"v4-chat", data:`data-id="${esc(x.id)}"`, ic:"tin",
+        t: esc(x.ten || x.sdt || "Khách " + String(x.khachUid || "").slice(0, 6)) + (x.banTen ? " · " + esc(x.banTen) : ""),
+        d: esc([(x.cuoiTu === "c" ? "Shop: " : "Khách: ") + String(x.cuoiNd || "").slice(0, 80), lauRoi(x.cuoi), x.chan === true ? "shop đã chặn khách này" : ""].filter(Boolean).join(" · ")),
+        ph: num(x.soK) > 0 ? chip(num(x.soK) + " tin shop chưa đọc", "canh") : "", mui:true })).join("")
+      : trong("Chưa có cuộc trò chuyện nào", "")}</div>`;
+  /* phép chuyển dữ liệu */
+  const phep = `${mucHtml("Phép chuyển dữ liệu")}<div class="nhom">
+    ${o.phep ? dongHtml({ ic:"chuyen", lop:"dong-c", t:`Tài khoản NÀY được nạp file sao lưu của ${esc(o.phep.tuEmail || emailCua(o.phep.tuUid) || o.phep.tuUid || "?")}`,
+        d: esc(`Cấp ${gioVN(o.phep.capLuc || o.phep.capLucMs)}${o.phep.capBoi ? " · " + o.phep.capBoi : ""}${o.phep.lyDo ? " · " + (LY_CHUYEN[o.phep.lyDo] || o.phep.lyDo) : ""}`),
+        ph:`<button class="nut nho nguy" data-act="v4-phep-thu" data-id="${esc(uid)}">Thu hồi</button>` }) : ""}
+    ${(o.phepDi || []).map(x => dongHtml({ ic:"chuyen", t:`File của tài khoản này được phép nạp vào ${esc(emailCua(x.id) || x.id)}`,
+        d: esc(`Cấp ${gioVN(x.capLuc || x.capLucMs)}${x.capBoi ? " · " + x.capBoi : ""}`), ph:`<button class="nut nho nguy" data-act="v4-phep-thu" data-id="${esc(x.id)}">Thu hồi</button>` })).join("")}
+    ${!o.phep && !(o.phepDi || []).length ? trong("Không có phép chuyển nào", "File sao lưu của tài khoản nào chỉ nạp được vào đúng tài khoản đó") : ""}</div>`;
+  const kho = `${mucHtml("Kho dữ liệu của shop", "xem 100%")}<div class="nhom">
+    ${dongHtml({ the:"button", act:"v4-kho", data:U, ic:"so", t:"Mở kho dữ liệu", d:"Mọi kho của shop (khách nợ, hàng, đơn, thẻ kho, phiếu nhập, ca, sổ quỹ, két ngành, cài đặt…) — xem từng bản ghi; sửa / xoá phải nhập lại mật khẩu", mui:true })}</div>
+    <div class="hang-nut" style="margin-top:10px"><button class="nut" data-act="v4-ks-tai">${ic("tai")}Đọc lại</button></div>`;
+  return nhanh + thu + banOnl + phep + kho;
+}
+
+/* ─────────── KHO DỮ LIỆU: mọi kho của 1 shop ─────────── */
+const v4Duong = segs => segs.join("/");
+const v4RefDoc = p => doc(fdb, ...String(p).split("/"));
+const v4RefCol = p => collection(fdb, ...String(p).split("/"));
+async function v4Dem(q){
+  const m = await import("https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js");
+  if(!m || typeof m.getCountFromServer !== "function") throw new Error("máy chưa đếm được");
+  const s = await m.getCountFromServer(q); return Number(s.data().count) || 0;
+}
+function v4MoKho(uid){
+  const t = moTam({ tieuDe:"Kho dữ liệu của shop", lamMoi: () => v4VeKho(t) });
+  t.S = { v4Kho:true, uid, br:"main", brs:null, dem:{}, dangDem:false, loi:"" };
+  v4VeKho(t);
+  getDocs(collection(fdb,"users",uid,"branches")).then(s => { t.S.brs = v4Ds(s); }).catch(e => { t.S.brs = []; t.S.loi = maLoi(e); }).finally(() => { if(TAM.includes(t)) v4VeKho(t); });
+  return t;
+}
+const v4KhoCol = (uid, br, n) => br === "main" ? `users/${uid}/${n}` : `users/${uid}/branches/${br}/${n}`;
+function v4VeKho(t){
+  const S = t.S, uid = S.uid, brs = S.brs || [], ids = ["main"].concat(brs.map(b => b.id).filter(x => x !== "main"));
+  if(!ids.includes(S.br)) S.br = "main";
+  const tenBr = b => b === "main" ? "Cửa hàng chính" : ((brs.find(x => x.id === b) || {}).name || b);
+  const hang = (p, tn) => dongHtml({ the:"button", act:"v4-kho-ds", data:`data-p="${esc(p)}" data-ten="${esc(tn)}"`, ic:"so", t:esc(tn), d:`<span class="ma">${esc(p.split("/").slice(2).join("/"))}</span>`,
+    ph: S.dem[p] != null ? chip(typeof S.dem[p] === "number" ? S.dem[p].toLocaleString("vi-VN") + " bản ghi" : String(S.dem[p]), S.dem[p] ? "" : "ok") : "", mui:true });
+  t.than.innerHTML = `<div class="bao ngoc" style="margin-top:0"><b>${esc(emailCua(uid) || uid)}</b> — đọc thẳng máy chủ lúc bấm. Xem thì thoải mái; sửa / xoá từng bản ghi phải nhập lại mật khẩu quản trị và luôn ghi nhật ký.</div>
+    ${S.loi ? `<div class="bao xau">Chưa đọc được danh sách cửa hàng: ${esc(S.loi)}</div>` : ""}
+    ${mucHtml("Kho chung của tài khoản")}<div class="nhom">${V4_KHO_GOC.map(([n, tn]) => hang(`users/${uid}/${n}`, tn)).join("")}</div>
+    ${mucHtml("Kho của từng cửa hàng", S.brs ? `${ids.length} cửa hàng` : "đang đọc…")}
+    ${ids.length > 1 ? `<div class="loc">${ids.map(b => `<button data-act="v4-kho-br" data-b="${esc(b)}" class="${S.br === b ? "on" : ""}">${esc(tenBr(b))}</button>`).join("")}</div>` : ""}
+    <div class="nhom">${V4_KHO_CN.map(([n, tn]) => hang(v4KhoCol(uid, S.br, n), tn)).join("")}</div>`;
+  t.chan.innerHTML = `<button class="nut" data-act="v4-kho-dem">${S.dangDem ? "Đang đếm…" : "Đếm số bản ghi từng kho"}</button>`;
+}
+async function v4DemKho(t){
+  const S = t.S; if(S.dangDem) return; S.dangDem = true; v4VeKho(t);
+  const ds = V4_KHO_GOC.map(([n]) => `users/${S.uid}/${n}`).concat(V4_KHO_CN.map(([n]) => v4KhoCol(S.uid, S.br, n)));
+  await Promise.all(ds.map(async p => { try{ S.dem[p] = await v4Dem(v4RefCol(p)); }catch(e){ S.dem[p] = "?"; } }));
+  S.dangDem = false; if(TAM.includes(t)) v4VeKho(t);
+}
+/* danh sách bản ghi của 1 kho — 30 dòng 1 lần, bấm Xem tiếp */
+function v4MoDs(p, tn){
+  const t = moTam({ tieuDe: tn || "Bản ghi" });
+  t.S = { v4Ds:true, p, ten: tn || "", ds:[], cuoi:null, het:false, dang:false, loi:"" };
+  v4VeDs(t); v4NapDs(t);
+  return t;
+}
+async function v4NapDs(t){
+  const S = t.S; if(S.dang || S.het) return; S.dang = true; S.loi = ""; v4VeDs(t);
+  try{
+    const c = v4RefCol(S.p);
+    const s = await getDocs(S.cuoi ? query(c, startAfter(S.cuoi), limit(V4.TRANG)) : query(c, limit(V4.TRANG)));
+    s.forEach(d => S.ds.push({ id:d.id, d:d.data() || {} }));
+    if(s.docs.length) S.cuoi = s.docs[s.docs.length - 1];
+    if(s.docs.length < V4.TRANG) S.het = true;
+  }catch(e){ S.loi = maLoi(e); }
+  S.dang = false; if(TAM.includes(t)) v4VeDs(t);
+}
+const V4_O_TEN = ["name","ten","title","customerName","khach","staffName","who","email","quan"];
+const V4_O_PHU = ["total","tong","amount","debt","stock","price","status","tt","method","type","kind","note","ghiChu","sdt","phone"];
+function v4Tom(d){
+  const tenO = V4_O_TEN.map(k => d[k]).find(v => typeof v === "string" && v.trim());
+  const phu = V4_O_PHU.filter(k => d[k] != null && typeof d[k] !== "object").slice(0, 4).map(k => `${k}: ${typeof d[k] === "number" ? d[k].toLocaleString("vi-VN") : String(d[k]).slice(0, 40)}`);
+  const luc = ngay(d.createdAt) || ngay(d.at) || ngay(d.createdAtMs) || ngay(d.updatedAt) || ngay(d.taoLuc) || ngay(d.openAtMs);
+  if(luc) phu.push(gioVN(luc));
+  return { ten: tenO ? String(tenO).slice(0, 80) : "", phu: phu.join(" · ") };
+}
+function v4VeDs(t){
+  const S = t.S;
+  t.than.innerHTML = `<p class="nho" style="margin:0 2px 8px"><span class="ma">${esc(S.p)}</span> · xếp theo mã bản ghi</p>
+    ${S.loi ? `<div class="bao xau">Chưa đọc được: ${esc(S.loi)}</div>` : ""}
+    <div class="nhom">${S.ds.length ? S.ds.map(x => { const tm = v4Tom(x.d);
+        return dongHtml({ the:"button", act:"v4-doc", data:`data-p="${esc(S.p + "/" + x.id)}"`, t: tm.ten ? esc(tm.ten) + ` <span class="ma">${esc(x.id.slice(0, 14))}</span>` : `<span class="ma">${esc(x.id)}</span>`, d: esc(tm.phu || Object.keys(x.d).slice(0, 6).join(", ")), mui:true }); }).join("")
+      : (S.dang ? trong("Đang đọc…", "") : trong("Kho này trống", ""))}</div>`;
+  t.chan.innerHTML = S.het ? `<span class="nho" style="align-self:center">Đã hết · ${S.ds.length} bản ghi</span>` : `<button class="nut chinh" data-act="v4-ds-tiep">${S.dang ? "Đang đọc…" : `Xem tiếp (${S.ds.length} đã đọc)`}</button>`;
+}
+/* 1 bản ghi: xem đủ mọi ô · chép / tải JSON · sửa 1 ô · xoá */
+function v4MoDoc(p){
+  const t = moTam({ tieuDe:"Bản ghi" });
+  t.S = { v4Doc:true, p, d:undefined, loi:"" };
+  v4VeDoc(t);
+  getDoc(v4RefDoc(p)).then(s => { t.S.d = s.exists() ? (s.data() || {}) : null; }).catch(e => { t.S.loi = maLoi(e); }).finally(() => { if(TAM.includes(t)) v4VeDoc(t); });
+  return t;
+}
+const v4Don = v => v === null || ["string","number","boolean"].includes(typeof v);
+function v4HienO(v){
+  if(v === null || v === undefined) return `<i>(trống)</i>`;
+  if(typeof v === "string") return esc(v.length > 400 ? v.slice(0, 400) + "…" : v);
+  if(typeof v === "number") return esc(v.toLocaleString("vi-VN", { maximumFractionDigits: 6 }));
+  if(typeof v === "boolean") return v ? "true" : "false";
+  if(typeof v.toDate === "function" || v instanceof Date) return esc(gioVN(v));
+  let s = ""; try{ s = JSON.stringify(cdlSach(v)); }catch(e){ s = String(v); }
+  return `<span class="nho">${esc(s.length > 400 ? s.slice(0, 400) + "…" : s)}</span>`;
+}
+function v4VeDoc(t){
+  const S = t.S, sg = S.p.split("/");
+  const laShop = sg[0] === "users" && sg.length >= 4, laKhach = laShop && sg.length === 4 && sg[2] === "customers";
+  if(S.loi){ t.than.innerHTML = `<div class="bao xau">Chưa đọc được: ${esc(S.loi)}</div>`; t.chan.innerHTML = ""; return; }
+  if(S.d === undefined){ t.than.innerHTML = trong("Đang đọc…", S.p); t.chan.innerHTML = ""; return; }
+  if(S.d === null){ t.than.innerHTML = trong("Bản ghi không còn trên máy chủ", S.p); t.chan.innerHTML = ""; return; }
+  const ks = Object.keys(S.d).sort();
+  t.than.innerHTML = `<p class="nho" style="margin:0 2px 8px"><span class="ma">${esc(S.p)}</span></p>
+    <div class="the">${ks.length ? ks.map(k => `<div class="kv"><span>${esc(k)}</span><span>${v4HienO(S.d[k])}${laShop && v4Don(S.d[k]) ? ` <button class="nut nho" style="min-height:26px;padding:2px 8px;margin-left:6px" data-act="v4-sua" data-o="${esc(k)}">Sửa</button>` : ""}</span></div>`).join("") : `<div class="nho">Bản ghi không có ô nào.</div>`}</div>
+    ${laKhach ? `<div class="nhom" style="margin-top:10px">${dongHtml({ the:"button", act:"v4-kho-ds", data:`data-p="${esc(S.p + "/transactions")}" data-ten="Giao dịch của khách này"`, ic:"so", t:"Giao dịch của khách này", d:"Từng lần mua / trả", mui:true })}</div>` : ""}
+    ${laShop ? `<p class="nho" style="margin-top:12px">Sửa chỉ áp cho ô chữ / số / đúng-sai, giữ nguyên kiểu dữ liệu. Sửa / xoá đều phải nhập lại mật khẩu, ghi nhật ký kèm giá trị cũ; xoá thì app tự tải bản sao .json về máy trước.${laKhach ? " Xoá khách ở đây KHÔNG xoá các giao dịch bên trong." : ""}</p>` : `<p class="nho" style="margin-top:12px">Bản ghi này chỉ để xem.</p>`}`;
+  t.chan.innerHTML = `<button class="nut" data-act="v4-doc-chep">${ic("chep")}Chép JSON</button><button class="nut" data-act="v4-doc-tai">${ic("taive")}Tải .json</button>
+    ${laShop ? `<button class="nut nguy" data-act="v4-xoa">Xoá bản ghi</button>` : ""}`;
+}
+const v4Json = S => JSON.stringify({ duong: S.p, luc: new Date().toISOString(), duLieu: cdlSach(S.d) }, null, 2);
+const v4TenFile = p => "ban-ghi-" + String(p).replace(/[^a-zA-Z0-9._-]/g, "_").slice(-90) + "-" + hnay() + ".json";
+async function v4SuaO(t, o){
+  const S = t.S, cu = S.d[o]; if(!v4Don(cu)) return bao("Ô này không sửa tay được", 1);
+  const kieu = cu === null ? "chữ" : typeof cu === "number" ? "số" : typeof cu === "boolean" ? "đúng-sai (true / false)" : "chữ";
+  const v = await nhap({ tieuDe:`Sửa ô “${o}”`, noiDung:`${S.p}\n\nGiá trị đang lưu: ${cu === null ? "(trống)" : String(cu)}\nKiểu: ${kieu}`, macDinh: cu === null ? "" : String(cu), nutOk:"Tiếp" });
+  if(v == null) return;
+  let moi;
+  if(typeof cu === "number"){ const s = String(v).trim().replace(/\s/g,""); moi = Number(s); if(s === "" || !isFinite(moi)) return bao("Ô này là SỐ — gõ số (dùng dấu chấm cho phần lẻ)", 1); }
+  else if(typeof cu === "boolean"){ const s = String(v).trim().toLowerCase(); if(s !== "true" && s !== "false") return bao("Ô này chỉ nhận true hoặc false", 1); moi = s === "true"; }
+  else moi = String(v);
+  if(moi === cu) return bao("Giá trị không đổi");
+  if(!(await v4XacNhanMK(`SỬA TAY DỮ LIỆU SHOP\n${S.p}\nÔ “${o}”: ${cu === null ? "(trống)" : String(cu).slice(0, 120)} → ${String(moi).slice(0, 120)}`))) return;
+  await setDoc(v4RefDoc(S.p), { [o]: moi }, { merge:true });
+  await ghiChung("sua_du_lieu", { ghi: `${S.p} · ${o}: ${cu === null ? "(trống)" : String(cu).slice(0, 150)} → ${String(moi).slice(0, 150)}` }, S.p.split("/")[1]);
+  S.d[o] = moi; if(TAM.includes(t)) v4VeDoc(t);
+  bao("Đã sửa — máy khách nhận ngay khi có mạng");
+}
+async function v4XoaDoc(t){
+  const S = t.S;
+  if(!(await v4XacNhanMK(`XOÁ HẲN 1 BẢN GHI CỦA SHOP\n${S.p}\n\nApp sẽ tải bản sao .json về máy trước khi xoá. Không tự lấy lại được trên máy chủ.`))) return;
+  try{ taiFile(v4Json(S), v4TenFile(S.p)); }catch(e){ return bao("Chưa tải được bản sao — KHÔNG xoá", 1); }
+  await deleteDoc(v4RefDoc(S.p));
+  let tom = ""; try{ tom = JSON.stringify(cdlSach(S.d)).slice(0, 600); }catch(e){}
+  await ghiChung("xoa_du_lieu", { ghi: `${S.p} · ${tom}` }, S.p.split("/")[1]);
+  dongTam(t); bao("Đã xoá bản ghi (bản sao đã tải về máy)");
+}
+/* hội thoại với khách: chỉ xem */
+function v4MoChat(uid, c){
+  const t = moTam({ tieuDe:"Hội thoại · " + (c.ten || c.sdt || "khách") });
+  t.S = { v4Chat:true };
+  t.than.innerHTML = trong("Đang đọc…", "");
+  getDocs(query(collection(fdb,"qr_chat",c.id,"tin"), limit(200))).then(s => {
+    const ds = v4Ds(s).sort((a, b) => (ngay(a.luc) || 0) - (ngay(b.luc) || 0));
+    if(!TAM.includes(t)) return;
+    t.than.innerHTML = `<div class="bao ngoc" style="margin-top:0">Chỉ xem — ${ds.length} tin${ds.length >= 200 ? " (đọc tối đa 200)" : ""}.</div>
+      <div class="nhom">${ds.length ? ds.map(m => dongHtml({ ic: m.tu === "c" ? "cua" : "khach", lop: m.tu === "c" ? "la-c" : "",
+          t: esc(m.loai === "chot" ? `📋 Chốt đơn${m.tong != null ? " " + tienD(m.tong) : ""}: ${m.nd || ""}` : m.loai === "ok" ? `✅ Khách đồng ý: ${m.nd || ""}` : m.loai === "don" ? `🧾 ${m.nd || ""}` : (m.nd || "(tin không có chữ)")),
+          d: esc(`${m.tu === "c" ? "Cửa hàng" : "Khách"} · ${gioVN(m.luc)}`) })).join("") : trong("Chưa có tin nào", "")}</div>`;
+  }).catch(e => { if(TAM.includes(t)) t.than.innerHTML = `<div class="bao xau">Chưa đọc được: ${esc(maLoi(e))}</div>`; });
+  return t;
+}
+
+/* ─────────── 4. CÀI ĐẶT: bản đồ kiểm soát · khoá két & an toàn · phép chuyển ─────────── */
+function v4DongCaiDat(){
+  try{
+    const l = v4TKLech();
+    return dongHtml({ the:"button", act:"v4-ban-do", ic:"radar", t:"Bản đồ kiểm soát 100% app Sổ Nợ", d:"Từng phần của app khách: bảng này xem được gì, khoá được gì, bấm ở đâu", mui:true })
+      + dongHtml({ the:"button", act:"v4-an-toan", ic:"khoa", lop: l ? "do-c" : "", t:"Khoá két & an toàn", d: (l ? "⚠️ Tài khoản nhận tiền đã đổi ở nơi khác · " : "") + `Tự khoá màn: ${v4TuKhoaBat() ? "bật (" + V4.PHUT + " phút)" : "tắt trên máy này"} · đổi tài khoản nhận tiền phải nhập lại mật khẩu`, mui:true })
+      + dongHtml({ the:"button", act:"v4-phep", ic:"chuyen", t:"Phép chuyển dữ liệu đang còn hiệu lực", d:"Tài khoản nào đang được nạp file sao lưu của tài khoản khác — thu hồi khi đã chuyển xong", mui:true });
+  }catch(e){ console.warn("v4 cài đặt:", e); return ""; }
+}
+function v4MoBanDo(){
+  const t = moTam({ tieuDe:"Bản đồ kiểm soát 100% app Sổ Nợ" });
+  const nut = (act, chu, data) => `<button class="nut nho" data-act="${act}" ${data || ""}>${esc(chu)}</button>`;
+  const R = radar().filter(x => x.items.length);
+  const hang = [
+    ["Giấy phép 16 gói", "Cấp · gia hạn & ghi sổ · khoá / mở · vĩnh viễn · số suất chi nhánh · giá riêng từng khách", "Khách → hồ sơ → Giấy phép", nut("nav", "Khách", `data-v="khach"`)],
+    ["Dùng thử", "Bật / tắt · số ngày · chặn email bí danh · mỗi máy 1 lần · mỗi hộp thư 1 lần · XÁC MINH EMAIL · khoá gói đang thử · gỡ / giao khoá hộp thư", "Cài đặt → Công tắc · hồ sơ → Kiểm soát", nut("nav", "Công tắc", `data-v="caidat"`)],
+    ["Thu tiền", "Bảng giá · khuyến mãi · tài khoản nhận tiền (đổi phải nhập lại mật khẩu, có bẫy báo đổi lạ) · duyệt đơn · đối soát sao kê · điều chỉnh sổ", "Hôm nay · Tiền · Cài đặt → Bảng giá", nut("mo-bang-gia", "Bảng giá") + nut("mo-doi-soat", "Đối soát")],
+    ["Máy chủ chặn thật khi hết hạn", "Bắt buộc giấy phép · thu phí chi nhánh · thu phí gói ngành · ân hạn có hạn chót", "Cài đặt → Công tắc", nut("nav", "Công tắc", `data-v="caidat"`)],
+    ["Cửa hàng & chi nhánh", "Luật từng cửa hàng đúng như máy chủ xét · miễn trừ · duyệt mã cũ · suất biếu · quét ai sẽ bị chặn", "Hồ sơ → Cửa hàng · Radar → Quét sâu", nut("quet-cn", "Quét chi nhánh")],
+    ["Nhân viên & ca bán", "Đặt lại PIN · xoá nhân viên · bật / tắt hỏi PIN · gỡ máy nhân viên · ép chốt ca treo · quét liên kết máy lạ", "Hồ sơ → Cửa hàng / Hỗ trợ", nut("quet-nv", "Quét máy nhân viên")],
+    ["Sổ nợ · hàng hoá · đơn bán", "Xem từng khách, từng giao dịch, tự đối chiếu số nợ · hàng + tồn kho · đơn + chi tiết · khoá sửa sổ nợ · KHO DỮ LIỆU: xem 100% mọi kho, sửa / xoá từng bản ghi (nhập lại mật khẩu)", "Hồ sơ → Sổ shop · Kiểm soát → Kho dữ liệu", ""],
+    ["Bán online & mã QR tại bàn", "Khoá / mở gói Bán online (hết hạn hoặc khoá là link ngưng hiển thị, khách không đặt được) · xem đơn khách đặt · xem hội thoại · thu hồi link", "Hồ sơ → Kiểm soát / Hỗ trợ", ""],
+    ["Link chia sẻ", "Link nhắc nợ · hoá đơn · thực đơn QR · tra cứu tài xế · định vị xe: xem + thu hồi", "Hồ sơ → Hỗ trợ", ""],
+    ["App trên máy khách", "Phiên bản đang chạy · nhắn tin thẳng vào app · bật thanh “Có bản mới” · buộc đăng xuất mọi máy · thông báo toàn hệ", "Hồ sơ → Hỗ trợ · Cài đặt", nut("mo-ban-tin", "Thông báo toàn hệ") + nut("quet-ban", "Quét phiên bản")],
+    ["Tài khoản đăng nhập", "Đặt lại mật khẩu khách · chuyển dữ liệu sang tài khoản mới (giữ nguyên hạn) · phép chuyển: xem / thu hồi", "Hồ sơ → Hỗ trợ · Cài đặt", nut("mo-chuyen", "Chuyển dữ liệu") + nut("v4-phep", "Phép chuyển")],
+    ["Dữ liệu", "Tải toàn bộ về máy · nạp file · dọn rác hộ shop đang dùng · dọn shop đã nghỉ (có sao lưu)", "Hồ sơ → Hỗ trợ · Cài đặt → Công cụ", nut("mo-don-rac", "Dọn rác hộ") + nut("mo-don-nghi", "Dọn shop nghỉ")],
+    ["An toàn của chính bảng quản trị", "Tự khoá màn · bẫy đổi tài khoản nhận tiền · nhật ký không sửa xoá được · đổi mật khẩu", "Cài đặt", nut("v4-an-toan", "Khoá két & an toàn") + nut("mo-nhat-ky", "Nhật ký")],
+    ["Radar tự soát", `${radar().length} mục soát mỗi lần tải số liệu · đang có ${R.length} mục cần xem (${R.filter(x => x.muc === "nang").length} nặng) · 3 bộ quét sâu · lỗi app`, "Radar", nut("nav", "Radar", `data-v="radar"`)]
+  ];
+  t.than.innerHTML = `<div class="bao tot" style="margin-top:0"><b>Mọi thứ app Sổ Nợ + Bán hàng cho khách làm đều có chỗ xem và chỗ khoá ở bảng này.</b> Hết hạn / bị khoá là MÁY CHỦ chặn thật (Firestore Rules) — không phụ thuộc app khách đang chạy bản nào.</div>
+    <div class="nhom">${hang.map(h => `<div class="dong" style="flex-wrap:wrap"><span class="gi"><span class="t" style="display:block">${esc(h[0])}</span><span class="d" style="display:block">${esc(h[1])}</span>
+      <span class="d" style="display:block;opacity:.8">Ở đâu: ${esc(h[2])}</span></span>${h[3] ? `<span class="hang-nut" style="width:100%;margin-top:8px">${h[3]}</span>` : ""}</div>`).join("")}</div>
+    ${mucHtml("Phải làm ở Firebase Console (app này cố ý không làm)")}
+    <div class="the"><div class="kv"><span>Xoá hẳn một tài khoản đăng nhập</span><span>Authentication → Users</span></div>
+      <div class="kv"><span>Xem email khách đã xác minh chưa</span><span>Authentication → Users</span></div>
+      <div class="kv"><span>Sửa luật máy chủ</span><span>Firestore → Rules</span></div></div>`;
+}
+function v4MoAnToan(){
+  const t = moTam({ tieuDe:"Khoá két & an toàn", lamMoi: () => v4VeAnToan(t) });
+  t.S = { v4At:true };
+  v4VeAnToan(t);
+}
+function v4VeAnToan(t){
+  const l = v4TKLech(), n = v4TKNho(), bat = v4TuKhoaBat(), u = auth.currentUser;
+  const nk = AUD.filter(x => x && ["doi_tk_nhan_tien","xac_nhan_tk_nhan_tien","doi_gia","cong_tac"].includes(x.viec)).sort((a, b) => (ngay(b.at) || 0) - (ngay(a.at) || 0)).slice(0, 12);
+  t.than.innerHTML = `
+    ${mucHtml("Tài khoản nhận tiền")}
+    <div class="the"><div class="kv"><span>Đang lưu trên máy chủ</span><span>${esc(v4MoTaTK(BILL))}</span></div>
+      <div class="kv"><span>So với lần trước máy này thấy</span><span>${l ? `<b style="color:var(--do)">ĐÃ ĐỔI</b> — trước là ${esc(l.cu)}` : "Khớp" + (n && n.luc ? " · ghi nhớ " + esc(lauRoi(n.luc)) : "")}</span></div></div>
+    <p class="nho" style="margin:6px 2px 0">Muốn đổi tài khoản nhận tiền: Cài đặt → Bảng giá, app hỏi lại mật khẩu rồi mới lưu, và ghi một dòng nhật ký riêng “Đổi tài khoản nhận tiền”. Bị đổi ở nơi khác (máy khác, hoặc kẻ gian sửa thẳng máy chủ) thì lần mở kế tiếp máy này báo đỏ ngay ở Hôm nay.</p>
+    ${l ? `<div class="hang-nut" style="margin-top:10px"><button class="nut nguy" data-act="mo-bang-gia">Xem / sửa lại</button><button class="nut" data-act="v4-tk-ok">Đúng là tôi đổi</button></div>` : ""}
+    ${mucHtml("Tự khoá màn")}
+    <div class="nhom"><div class="cong"><div class="gi"><div class="t">Tự khoá sau ${V4.PHUT} phút không thao tác</div><div class="d">Để quên máy đang mở, người khác cầm lên cũng phải biết mật khẩu mới làm tiếp được. Cài đặt này nhớ theo TỪNG MÁY.</div></div>
+      <button class="gat ${bat ? "on" : ""}" role="switch" aria-checked="${bat}" aria-label="Tự khoá màn" data-act="v4-tu-khoa"></button></div></div>
+    ${mucHtml("Phiên đăng nhập này")}
+    <div class="the"><div class="kv"><span>Tài khoản</span><span>${esc((u && u.email) || "—")}</span></div>
+      <div class="kv"><span>Đăng nhập lần cuối</span><span>${esc(u && u.metadata && u.metadata.lastSignInTime ? gioVN(new Date(u.metadata.lastSignInTime)) : "—")}</span></div></div>
+    <div class="hang-nut" style="margin-top:10px"><button class="nut" data-act="doi-mk-admin">${ic("chia")}Đổi mật khẩu quản trị</button><button class="nut" data-act="mo-nhat-ky">${ic("so")}Nhật ký thao tác</button></div>
+    ${mucHtml("Lần đổi giá · tài khoản · công tắc gần đây", `${nk.length} dòng`)}
+    <div class="nhom">${nk.length ? nk.map(x => dongHtml({ ic: x.viec === "doi_tk_nhan_tien" ? "canh" : "so", lop: x.viec === "doi_tk_nhan_tien" ? "do-c" : "", t: esc(tenViec(x.viec)), d: esc(gioVN(x.at)) + (x.boi ? " · " + esc(x.boi) : "") + (x.ghi ? " · " + esc(String(x.ghi).slice(0, 220)) : "") })).join("") : trong("Chưa có dòng nào", "")}</div>`;
+  t.chan.innerHTML = "";
+}
+function v4MoPhep(){
+  const t = moTam({ tieuDe:"Phép chuyển dữ liệu" });
+  t.S = { v4Phep:true, ds:null, loi:"" };
+  v4VePhep(t);
+  getDocs(query(collection(fdb,"chuyen_dl"), limit(300))).then(s => { t.S.ds = v4Ds(s).sort((a, b) => (ngay(b.capLuc) || ngay(b.capLucMs) || 0) - (ngay(a.capLuc) || ngay(a.capLucMs) || 0)); })
+    .catch(e => { t.S.loi = maLoi(e); }).finally(() => { if(TAM.includes(t)) v4VePhep(t); });
+}
+function v4VePhep(t){
+  const S = t.S;
+  t.than.innerHTML = `<div class="bao ngoc" style="margin-top:0">Mỗi phép cho MỘT tài khoản mới nạp được file sao lưu của MỘT tài khoản cũ (cấp lúc Chuyển dữ liệu). Phép không tự hết hạn — chuyển xong, khách đã dùng ổn thì thu hồi cho kín.</div>
+    ${S.loi ? `<div class="bao xau">Chưa đọc được: ${esc(S.loi)}</div>` : ""}
+    <div class="nhom">${!S.ds ? trong("Đang đọc…", "") : S.ds.length ? S.ds.map(x => dongHtml({ ic:"chuyen", t:`${esc(x.tuEmail || emailCua(x.tuUid) || x.tuUid || "?")} → ${esc(emailCua(x.id) || x.id)}`,
+        d: esc(`Cấp ${gioVN(x.capLuc || x.capLucMs)}${x.capBoi ? " · " + x.capBoi : ""}${x.lyDo ? " · " + (LY_CHUYEN[x.lyDo] || x.lyDo) : ""}`),
+        ph:`<button class="nut nho" data-act="mo-khach" data-uid="${esc(x.id)}">Hồ sơ</button><button class="nut nho nguy" data-act="v4-phep-thu" data-id="${esc(x.id)}">Thu hồi</button>` })).join("")
+      : trong("Không có phép chuyển nào đang còn", "")}</div>`;
+  t.chan.innerHTML = "";
+}
+
+/* ─────────── NÚT BẤM ─────────── */
+Object.assign(TEN_VIEC, { doi_tk_nhan_tien:"Đổi tài khoản nhận tiền", xac_nhan_tk_nhan_tien:"Xác nhận tài khoản nhận tiền (đúng là tôi đổi)",
+  radar_da_xem:"Radar: đã xem — bỏ qua", radar_mo_lai:"Radar: mở lại", go_khoa_thu:"Gỡ khoá hộp thư dùng thử", giao_khoa_thu:"Giao khoá hộp thư dùng thử",
+  thu_hoi_phep_chuyen:"Thu hồi phép chuyển dữ liệu", sua_du_lieu:"Sửa tay dữ liệu shop", xoa_du_lieu:"Xoá tay dữ liệu shop" });
+const v4LamMoiKS = uid => { const t = tamHoSo(uid); if(t){ t.S.ks = null; if(t.S.tab === "ks") veHoSo(t); } };
+Object.assign(ACT, {
+  "v4-tk-ok": async b => {
+    const l = v4TKLech(); if(!l) return bao("Tài khoản nhận tiền đang khớp với lần trước");
+    if(!(await v4XacNhanMK(`XÁC NHẬN: chính tôi đã đổi tài khoản nhận tiền\n${l.cu}\n→ ${l.moi}`))) return;
+    await chay(b, async () => { await ghiChung("xac_nhan_tk_nhan_tien", { ghi: `${l.cu} → ${l.moi}`.slice(0, 400) }); v4TKGhi(); bao("Đã ghi nhận — hết báo đỏ"); veTatCa(); });
+  },
+  "v4-tu-khoa": async b => {
+    const bat = v4TuKhoaBat();
+    if(bat && !(await hoi({ tieuDe:"Tắt tự khoá màn", noiDung:`Máy này sẽ KHÔNG tự khoá nữa: để quên máy đang mở là ai cầm lên cũng duyệt đơn, đổi giá được.\n\nChỉ tắt trên máy để ở nhà, chỉ mình bạn dùng.`, nutOk:"Tắt", nguy:true }))) return;
+    try{ localStorage.setItem(V4.KEY_KHOA, bat ? "0" : "1"); }catch(e){ return bao("Máy không cho lưu cài đặt này", 1); }
+    _v4Cham = Date.now(); bao(bat ? "Đã tắt tự khoá màn trên máy này" : `Đã bật: tự khoá sau ${V4.PHUT} phút`);
+    const t = tamCua(b); if(t && t.S && t.S.v4At) v4VeAnToan(t); if(VIEW === "caidat") veCaiDat();
+  },
+  "v4-ban-do": () => v4MoBanDo(),
+  "v4-an-toan": () => v4MoAnToan(),
+  "v4-phep": () => v4MoPhep(),
+  "v4-da-xem": async b => {
+    const t = tamCua(b), k = String(b.dataset.k || ""), ma = k.split(":")[0];
+    const x = radar().find(y => y.ma === ma), it = x ? x.items.find(i => i.k === k) : null;
+    if(!it){ if(t) veMucRadar(t); return bao("Dòng này không còn trong danh sách"); }
+    await chay(b, async () => { await v4GhiXem("radar_da_xem", k, it.uid, it.app, `${it.t} · ${it.d}`);
+      if(t && TAM.includes(t)) veMucRadar(t); veView(VIEW); veHuyHieu(); bao("Đã xem: " + it.t); }, "Đang ghi…");
+  },
+  "v4-mo-lai": async b => {
+    const t = tamCua(b), k = String(b.dataset.k || ""), e = v4DaXem().get(k);
+    if(!e || e.viec !== "radar_da_xem"){ if(t) veMucRadar(t); return; }
+    await chay(b, async () => { await v4GhiXem("radar_mo_lai", k, e.uid, e.app, v4MoTaGhi(e.ghi));
+      if(t && TAM.includes(t)) veMucRadar(t); veView(VIEW); veHuyHieu(); bao("Đã mở lại — dòng này tính lại vào radar"); }, "Đang ghi…");
+  },
+  "v4-xem-an": b => { const t = tamCua(b); if(!t || !t.S) return; t.S.xemAn = !t.S.xemAn; veMucRadar(t); },
+  "v4-ks-tai": b => { const t = tamCua(b); if(!t || !t.S) return; t.S.ks = null; veHoSo(t); },
+  "v4-khoa-thu": async b => {
+    const uid = b.dataset.uid, viec = b.dataset.viec, t = tamHoSo(uid), o = t && t.S.ks; if(!o || !o.hop) return;
+    const mail = emailCua(uid) || uid;
+    if(viec === "go"){
+      if(!(await hoi({ tieuDe:"Gỡ khoá hộp thư dùng thử", noiDung:`Hộp thư ${o.hop}\nĐang giữ: ${emailCua(o.khoa && o.khoa.uid) || (o.khoa && o.khoa.uid) || "?"}\n\nGỡ xong, tài khoản KHÁC cùng hộp thư này lại mở dùng thử được. Chỉ gỡ khi khách thật sự đổi sang tài khoản mới hợp lệ.`, nutOk:"Gỡ khoá", nguy:true }))) return;
+      await chay(b, async () => { await deleteDoc(doc(fdb,"trialKeys",o.hop)); await ghiChung("go_khoa_thu", { ghi: `${o.hop} · đang giữ: ${(o.khoa && o.khoa.uid) || "?"}` }, uid); bao("Đã gỡ khoá hộp thư"); v4LamMoiKS(uid); });
+    } else {
+      if(!(await hoi({ tieuDe:"Giao khoá hộp thư", noiDung:`Giao khoá của hộp thư ${o.hop} cho ${mail}?\n\n${o.khoa && o.khoa.uid ? `Tài khoản đang giữ (${emailCua(o.khoa.uid) || o.khoa.uid}) sẽ không mở dùng thử gói mới được nữa.\n\n` : ""}Tài khoản này sẽ tự mở dùng thử được các gói CHƯA từng thử.`, nutOk:"Giao khoá" }))) return;
+      await chay(b, async () => { await setDoc(doc(fdb,"trialKeys",o.hop), { uid, at: serverTimestamp() }); await ghiChung("giao_khoa_thu", { ghi: `${o.hop}${o.khoa && o.khoa.uid ? " · trước: " + o.khoa.uid : ""}` }, uid); bao("Đã giao khoá cho tài khoản này"); v4LamMoiKS(uid); });
+    }
+  },
+  "v4-phep-thu": async b => {
+    const id = String(b.dataset.id || ""); if(!id) return;
+    if(!(await hoi({ tieuDe:"Thu hồi phép chuyển", noiDung:`${emailCua(id) || id} sẽ KHÔNG nạp được file sao lưu của tài khoản cũ nữa (dữ liệu đã nạp vẫn còn nguyên).`, nutOk:"Thu hồi", nguy:true }))) return;
+    await chay(b, async () => { await deleteDoc(doc(fdb,"chuyen_dl",id)); await ghiChung("thu_hoi_phep_chuyen", { ghi: emailCua(id) || id }, id); bao("Đã thu hồi phép chuyển");
+      const t = tamCua(b); if(t && t.S && t.S.v4Phep && t.S.ds){ t.S.ds = t.S.ds.filter(x => x.id !== id); v4VePhep(t); }
+      TAM.forEach(x => { if(x.S && x.S.ks && "tab" in x.S){ x.S.ks = null; if(x.S.tab === "ks") veHoSo(x); } }); });
+  },
+  "v4-kho": b => v4MoKho(b.dataset.uid),
+  "v4-kho-br": b => { const t = tamCua(b); if(!t || !t.S || !t.S.v4Kho) return; t.S.br = b.dataset.b; v4VeKho(t); },
+  "v4-kho-dem": b => { const t = tamCua(b); if(t && t.S && t.S.v4Kho) return v4DemKho(t); },
+  "v4-kho-ds": b => v4MoDs(b.dataset.p, b.dataset.ten),
+  "v4-ds-tiep": b => { const t = tamCua(b); if(t && t.S && t.S.v4Ds) return v4NapDs(t); },
+  "v4-doc": b => v4MoDoc(b.dataset.p),
+  "v4-doc-chep": b => { const t = tamCua(b); if(t && t.S && t.S.v4Doc && t.S.d) copy(v4Json(t.S)); },
+  "v4-doc-tai": b => { const t = tamCua(b); if(t && t.S && t.S.v4Doc && t.S.d){ taiFile(v4Json(t.S), v4TenFile(t.S.p)); bao("Đã tải bản ghi về máy"); } },
+  "v4-sua": b => { const t = tamCua(b); if(t && t.S && t.S.v4Doc && t.S.d) return chay(null, () => v4SuaO(t, b.dataset.o)); },
+  "v4-xoa": b => { const t = tamCua(b); if(t && t.S && t.S.v4Doc && t.S.d) return chay(b, () => v4XoaDoc(t), "Đang xoá…"); },
+  "v4-chat": b => { const t = tamCua(b), o = t && t.S && t.S.ks, c = o ? (o.chat || []).find(x => x.id === b.dataset.id) : null; if(c) v4MoChat(t.S.uid, c); }
+});
+/* Lưu bảng giá: ĐỔI tài khoản nhận tiền thì hỏi mật khẩu TRƯỚC, lưu xong ghi một dòng nhật ký riêng (cũ → mới). Hàm gốc giữ nguyên. */
+(function(){
+  const goc = ACT["luu-gia"]; if(typeof goc !== "function") return;
+  ACT["luu-gia"] = async (b, x) => {
+    const t = tamCua(b); if(!t) return goc(b, x);
+    const g = k => String(($(`[data-g="${k}"]`, t.than) || {}).value || "").trim();
+    const bin = g("bin").replace(/\s/g,""), acc = g("account").replace(/\s/g,"");
+    if((bin && !/^\d{6}$/.test(bin)) || (acc && !/^[0-9A-Za-z]{4,25}$/.test(acc))) return goc(b, x);   /* nhập sai: để hàm gốc báo lỗi, chưa cần hỏi mật khẩu */
+    const cu = v4VanTayTK(BILL), cuMoTa = v4MoTaTK(BILL), doi = [bin, acc, g("accName").toUpperCase()].join("|") !== cu;
+    if(doi && !(await v4XacNhanMK(`ĐỔI TÀI KHOẢN NHẬN TIỀN\n${cuMoTa}\n→ ${[g("bankName"), bin, acc, g("accName")].filter(Boolean).join(" · ") || "(để trống)"}`))) return;
+    _v4TuDoi = doi;                        /* chính máy này đang đổi ⇒ trong lúc lưu không báo "đổi lạ" */
+    try{ await goc(b, x); }
+    finally{
+      const daDoi = doi && v4VanTayTK(BILL) !== cu;   /* số liệu vừa nạp lại đã mang tài khoản mới ⇒ lưu thật */
+      if(daDoi) v4TKGhi();
+      _v4TuDoi = false;
+      if(daDoi){
+        await ghiChung("doi_tk_nhan_tien", { ghi: `${cuMoTa} → ${v4MoTaTK(BILL)}`.slice(0, 400) });
+        try{ await taiLai(true); }catch(e){}
+      }
+    }
+  };
+})();
 </script>
 <!-- ===== BỘ THU LỖI · tự chạy, không đụng code cũ · app=admin ===== -->
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "3.8.0";
+const APP_ID = "admin", APP_VERSION = "4.0.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
