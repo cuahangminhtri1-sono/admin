@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"4.0.0"
+  ver:"4.0.1"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -1902,12 +1902,12 @@ const CONG_TAC = [
   ["choThu","Cho dùng thử miễn phí","Tắt khi có người lập nick hàng loạt ăn dùng thử. Người đang thử dở không bị ảnh hưởng. Số ngày thử đặt trong Bảng giá.", v => v !== false, false],
   ["choLog","Nhận nhật ký lỗi từ máy khách","Tắt khi bị bơm rác cho tốn tiền Firestore. Tắt chỉ mất log, app khách vẫn chạy.", v => v !== false, false],
   ["enforceRef","Khoá gắn người giới thiệu muộn","Bật: chỉ gắn người giới thiệu được lúc tạo tài khoản, chặn mở nick rồi gắn ngược để ăn hoa hồng.", v => v === true, true],
-  ["chanBiDanh","Chặn dùng thử bằng email bí danh","Email có dấu + (ten+1@gmail.com…) về chung hộp thư với email gốc: không cho mở dùng thử gói Sổ Nợ + Bán hàng (vẫn mua gói bình thường).", v => v !== false, true],
+  ["chanBiDanh","Chặn dùng thử bằng email bí danh","Email có dấu + (ten+1@gmail.com…) về chung hộp thư với email gốc: không cho mở dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ) — vẫn mua gói bình thường.", v => v !== false, true],
   ["chanChuKyCu","Chặn chữ ký kiểu cũ (ảnh nhúng)","Chữ ký nay nằm ở kho ảnh. Chặn kiểu nhúng thẳng tới 950KB mỗi chữ ký để kẻ phá không bơm rác vào link nợ công khai cho tốn tiền Firestore.", v => v !== false, true],
   ["thu1May","Mỗi máy chỉ dùng thử 1 tài khoản","Điện thoại đã có tài khoản chủ shop khác đăng nhập thì tài khoản mới KHÔNG tự mở dùng thử Sổ Nợ (app báo đăng nhập lại tài khoản cũ hoặc gọi mua gói). Chặn đổi email ăn dùng thử trên cùng máy.", v => v !== false, true],
-  ["motThuMoiHop","Mỗi hộp thư chỉ dùng thử 1 lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư. Bật: chỉ tài khoản ĐẦU TIÊN của hộp thư đó được dùng thử các gói Sổ Nợ + Bán hàng — máy chủ chặn thật, đổi máy hay xoá dữ liệu trình duyệt cũng không lách được. Nick phụ vẫn mua gói bình thường.", v => v !== false, true],
+  ["motThuMoiHop","Mỗi hộp thư chỉ dùng thử 1 lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư. Bật: chỉ tài khoản ĐẦU TIÊN của hộp thư đó được dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ) — máy chủ chặn thật, đổi máy hay xoá dữ liệu trình duyệt cũng không lách được. Nick phụ vẫn mua gói bình thường.", v => v !== false, true],
   /* [4.0] MẶC ĐỊNH TẮT (y như trước giờ). Bật = khách mới phải bấm link trong thư xác minh rồi mới dùng thử được. */
-  ["thuXacMinh","Xác minh email trước khi dùng thử","Bật: tài khoản mới phải bấm link trong thư xác minh rồi mới mở được dùng thử các gói Sổ Nợ + Bán hàng ⇒ mỗi lần dùng thử cần một hộp thư CÓ THẬT, hết đường gõ bừa email để thử mãi. Khách đang dùng / đã giữ khoá hộp thư KHÔNG bị hỏi lại; MUA gói không bao giờ cần xác minh. Chỉ bật SAU KHI app Sổ Nợ bản 2026-10-09-SN6 trở lên đã lên GitHub (bản cũ hơn vẫn chặn đúng nhưng báo sai lý do cho khách).", v => v === true, false]
+  ["thuXacMinh","Xác minh email trước khi dùng thử","Bật: tài khoản mới phải bấm link trong thư xác minh rồi mới mở được dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ) ⇒ mỗi lần dùng thử cần một hộp thư CÓ THẬT, hết đường gõ bừa email để thử mãi. Khách đang dùng / đã giữ khoá hộp thư KHÔNG bị hỏi lại; MUA gói không bao giờ cần xác minh. Chỉ bật SAU KHI app Sổ Nợ bản 2026-10-09-SN6 và 4 app Cafe · TrọSafe · NhàXe · Xe HĐ bản 2026-10-15 đã lên GitHub (bản cũ hơn vẫn chặn đúng nhưng báo sai lý do cho khách).", v => v === true, false]
 ];
 function veCaiDat(){
   const bank = [BILL.bankName, BILL.account, BILL.accName].filter(Boolean).join(" · ");
@@ -3084,10 +3084,11 @@ function moDatLaiMK(uid){
     <div id="mkKq"></div>`;
   t.chan.innerHTML = `<button class="nut chinh" data-act="mk-ok">Đặt lại mật khẩu</button>`;
 }
-function giaiThichLoiMK(ma){
+function giaiThichLoiMK(ma, e){
   if(/not-?found|unimplemented/i.test(ma)) return "Máy chủ chưa có Cloud Function tên datLaiMKKhach (vùng us-central1). Chưa deploy thì chỉ riêng nút này không dùng được.";
   if(/unauthenticated/i.test(ma)) return "Phiên đăng nhập đã hết hạn. Đăng xuất rồi vào lại.";
   if(/permission-denied/i.test(ma)) return "Cloud Function không công nhận tài khoản đang đăng nhập là admin.";
+  if(/failed-precondition|invalid-argument/i.test(ma) && e && e.message) return String(e.message).slice(0, 300);   /* [4.0.1] lý do Cloud Function gửi về (email lệch, tài khoản ẩn danh / bị vô hiệu hoá…) */
   if(/deadline|unavailable|network|internal/i.test(ma)) return "Không gọi được máy chủ (mạng chập chờn hoặc hàm đang khởi động). Thử lại sau vài giây.";
   return "Không rõ nguyên nhân.";
 }
@@ -3315,7 +3316,7 @@ const ACT = {
       t.chan.innerHTML = `<button class="nut chinh" data-act="chep" data-v="${esc(`Đăng nhập app:\nEmail: ${S.email || S.uid}\nMật khẩu: ${mk}`)}">${ic("chep")}Chép email + mật khẩu</button>`;
     }catch(e){
       b.disabled = false; b.textContent = "Đặt lại mật khẩu";
-      const ma = maLoi(e); $("#mkKq", t.than).innerHTML = `<div class="bao xau"><b>Chưa đặt lại được.</b> ${esc(giaiThichLoiMK(ma))}<br><span class="nho">Mã lỗi: ${esc(ma)}</span></div>`;
+      const ma = maLoi(e); $("#mkKq", t.than).innerHTML = `<div class="bao xau"><b>Chưa đặt lại được.</b> ${esc(giaiThichLoiMK(ma, e))}<br><span class="nho">Mã lỗi: ${esc(ma)}</span></div>`;
     } },
   "thuong-tay": async b => { const uid = b.dataset.uid, rf = REF[uid] || {};
     if(!(await hoi({ tieuDe:"Cộng thưởng giới thiệu", noiDung:`Cộng ${THANG_THUONG} tháng ${tenApp(rf.appJoined)} cho ${emailCua(rf.referredByUid) || rf.referredByUid} vì đã giới thiệu ${emailCua(uid) || uid}?\n\nMỗi người được giới thiệu chỉ thưởng 1 lần — bấm lại cũng không cộng trùng.`, nutOk:"Cộng thưởng" }))) return;
@@ -5482,7 +5483,7 @@ Object.assign(ACT, {
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "4.0.0";
+const APP_ID = "admin", APP_VERSION = "4.0.1";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
