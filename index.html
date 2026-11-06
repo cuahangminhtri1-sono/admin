@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"4.0.1"
+  ver:"5.1.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -5478,12 +5478,2233 @@ Object.assign(ACT, {
     }
   };
 })();
+
+/* ══════════════════════════ [5.0] 🩺 SỨC KHOẺ APP — PHÒNG KHÁM CỦA CHỦ PHẦN MỀM ══════════════════════════
+   Một mình trông cả hệ ⇒ bảng này làm thay việc của cả đội kỹ thuật:
+   1) BẮT LỖI CHÍNH XÁC — gom lỗi theo VÂN TAY (cùng một chỗ hỏng mà Chrome, iPhone báo chữ khác nhau vẫn về MỘT nhóm) ·
+      tự phân loại (lỗi code · cấu hình máy chủ · bị chối quyền · mạng · máy/trình duyệt · thao tác người dùng · tải hỏng · nhiễu ngoài) ·
+      giải nghĩa tiếng Việt + nên làm gì · chấm điểm nghiêm trọng (mấy khách gặp, có khách đang trả tiền không, đang bùng hay đã lắng,
+      có TÁI PHÁT sau khi đã đánh dấu xử lý không).
+   2) SOI MÃ NGUỒN — tải đúng file app đang chạy trên GitHub (cùng nhà github.io), chỉ ra DÒNG · CỘT · HÀM · KHỐI · dấu vá [SNxx] gây lỗi,
+      tự ĐỐI CHIẾU dòng đó có đúng thứ lỗi nhắc tới không (lệch bản thì tự dò dòng gần nhất), dựng lại cả chuỗi gọi hàm.
+      Giữ sẵn mã nguồn các bản đã thấy (tối đa 4 bản mỗi app, trong máy này) để lỗi của bản cũ vẫn soi đúng bản cũ.
+   3) "📋 Chép báo cáo" MỘT CHẠM — đủ lỗi, vị trí, mã quanh chỗ lỗi, chuỗi gọi, máy, bản, bối cảnh ⇒ dán cho Claude là sửa được ngay.
+   4) KHÁM TỔNG QUÁT — máy chủ Firestore · từng app trên GitHub (sống/chết, số bản, CÚ PHÁP từng khối script, bộ thu lỗi, service worker,
+      trang khách) · máy chủ chức năng (Cloud Functions: chỉ GÕ CỬA, không chạy việc) · AI online (thử thật khi bấm) · giờ máy ·
+      máy khách chạy bản nào · radar tiền · nhật ký lỗi · chính máy quản trị này.
+   5) CANH LỖI TRỰC TIẾP — lỗi mới từ máy khách hiện ngay, không phải bấm Tải lại; lỗi code thật thì báo nổi.
+   6) Hồ sơ khách → Hỗ trợ có thêm "Lỗi máy khách này gặp"; Radar → bấm một lỗi là mở thẳng bản phân tích mới; Hôm nay báo đúng
+      "N lỗi code cần sửa" (không còn đếm lẫn lỗi mạng).
+   CHỈ THÊM. Không đổi Firestore Rules, không ghi gì vào dữ liệu khách. Ghi duy nhất: dấu "đã xử lý" trên error_logs (y như nút cũ)
+   và dòng nhật ký audit (loi_xu_ly · loi_bo_qua · loi_bo_bo_qua). Mọi móc vào code cũ đều bọc try/catch: hỏng gì thì phần cũ chạy y 4.0.1. */
+const Q5 = { GOC:"https://cuahangminhtri1-sono.github.io", KEY_CANH:"qt5_canh_v1", KEY_BAN:"qt5_ban_v1", KEY_KHAM:"qt5_kham_v1",
+  NGAY:14, BAN_LUU:4, VIEC:["loi_xu_ly","loi_bo_qua","loi_bo_bo_qua"], IDB:"qt5_nguon" };
+try{ Q5.VIEC.forEach(v => { if(!DC_VIEC.includes(v)) DC_VIEC.push(v); }); }catch(e){ console.warn("q5:", e); }   /* đọc riêng như dấu radar, không bị trần 3000 dòng */
+try{ Object.assign(TEN_VIEC, { loi_xu_ly:"Lỗi app: đã xử lý", loi_bo_qua:"Lỗi app: bỏ qua (nhiễu)", loi_bo_bo_qua:"Lỗi app: theo dõi lại" }); }catch(e){}
+const q5Goc = () => /(^|\.)github\.io$/.test(location.hostname) ? location.origin : Q5.GOC;
+const q5ReEsc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const q5Lay = (k, mac) => { try{ const v = JSON.parse(localStorage.getItem(k) || "null"); return v == null ? mac : v; }catch(e){ return mac; } };
+const q5Ghi = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e){ return false; } };
+
+/* ─────────── 1. ĐỌC MỘT DÒNG LỖI ─────────── */
+const q5Chuan = m => String(m == null ? "" : m).replace(/^\s*Uncaught\s+(?:\(in promise\)\s+)?/i, "").trim();
+/* tên cuối của một biểu thức: skq('#sk-cart-sheet').classList ⇒ classList · a["b"] ⇒ b */
+function q5IdCuoi(ex){
+  let s = String(ex || "").replace(/\s*[^=!<>]=[^=].*$/, "").replace(/\[\s*['"]([^'"]+)['"]\s*\]\s*$/, ".$1").replace(/\(\s*\)\s*$/, "").trim();
+  const m = /([A-Za-z_$][\w$]*)\s*$/.exec(s); return m ? m[1] : "";
+}
+/* Nhận dạng lỗi theo NGHĨA, không theo chữ của từng trình duyệt (Chrome · Safari · Firefox) */
+function q5PhanTich(msg){
+  const s0 = q5Chuan(msg), s = s0.replace(/^(?:(?:[A-Z][A-Za-z]*)?Error|DOMException|FirebaseError)(?:\s*\[[^\]]*\])?\s*:\s*/, ""); let m;
+  if((m = /Cannot read propert(?:y|ies) of (null|undefined)(?:\s*\(reading ['"]([^'"]+)['"]\))?/i.exec(s))) return { kind: m[1] === "null" ? "doc-null" : "doc-undef", id: m[2] || "" };
+  if((m = /Cannot read property ['"]([^'"]+)['"] of (null|undefined)/i.exec(s))) return { kind: m[2] === "null" ? "doc-null" : "doc-undef", id: m[1] };
+  if((m = /Cannot set propert(?:y|ies) of (null|undefined)(?:\s*\(setting ['"]([^'"]+)['"]\))?/i.exec(s))) return { kind:"ghi-null", id: m[2] || "" };
+  if((m = /^(null|undefined) is not an object \(evaluating ['"](.+)['"]\)/i.exec(s))){ const ex = m[2]; const gan = /[^=!<>]=[^=]/.test(ex);
+    return { kind: gan ? "ghi-null" : (m[1] === "null" ? "doc-null" : "doc-undef"), id: q5IdCuoi(ex) }; }
+  if((m = /can't access property ["']?([\w$]+)["']?,? .*? is (null|undefined)/i.exec(s))) return { kind: m[2] === "null" ? "doc-null" : "doc-undef", id: m[1] };
+  if((m = /^([\w$.]+(?:\[[^\]]+\])?) is (null|undefined)$/i.exec(s))) return { kind: m[2] === "null" ? "doc-null" : "doc-undef", id: q5IdCuoi(m[1]) };
+  if((m = /^([\w$]+) is not defined/i.exec(s)) || (m = /Can't find variable: ([\w$]+)/i.exec(s))) return { kind:"chua-dinh", id: m[1] };
+  if((m = /Cannot access ['"]([\w$]+)['"] before initialization/i.exec(s)) || (m = /can't access lexical declaration ['"]?([\w$]+)/i.exec(s))) return { kind:"chua-khoi-tao", id: m[1] };
+  if((m = /Identifier ['"]([\w$]+)['"] has already been declared/i.exec(s)) || (m = /redeclaration of (?:let|const|class) ([\w$]+)/i.exec(s)) || (m = /Cannot declare a (?:let|const) variable twice: ['"]([\w$]+)['"]/i.exec(s))) return { kind:"trung-ten", id: m[1] };
+  if((m = /^(.+?) is not a function/i.exec(s)) || (m = /^(.+?) is not a constructor/i.exec(s))) return { kind:"khong-ham", id: q5IdCuoi(m[1].replace(/\s*\(In .*$/, "")) };
+  if(/Maximum call stack size exceeded|too much recursion/i.test(s)) return { kind:"de-quy", id:"" };
+  if(/Assignment to constant variable|invalid assignment to const|Attempted to assign to readonly property/i.test(s)) return { kind:"gan-const", id:"" };
+  if(/Invalid time value|Invalid Date/i.test(s)) return { kind:"ngay-hong", id:"" };
+  if(/JSON\.parse|in JSON at position|is not valid JSON|JSON Parse error|unexpected character at line \d+ column \d+ of the JSON/i.test(s)) return { kind:"json-hong", id:"" };
+  if(/^SyntaxError\b/.test(s0) || /Unexpected (?:token|identifier|end of input|string|number|keyword)|Invalid or unexpected token|missing \) after|Invalid regular expression|Unexpected EOF/i.test(s)) return { kind:"cu-phap", id:"" };
+  if((m = /Failed to execute ['"]([\w$]+)['"] on ['"]([\w$]+)['"]/i.exec(s))) return { kind:"dom", id: m[1], dt: m[2] };
+  return { kind:"khac", id:"" };
+}
+/* Trình duyệt quá cũ: thiếu cú pháp / hàm đời mới là do máy, không phải code sai */
+function q5TrinhCu(ua){
+  ua = String(ua || ""); let m;
+  if(/MSIE|Trident/i.test(ua)) return true;
+  if((m = /Chrome\/(\d+)/.exec(ua)) && Number(m[1]) < 80) return true;
+  if((m = /OS (\d+)_\d+(?:_\d+)? like Mac OS X/.exec(ua)) && Number(m[1]) < 14) return true;
+  if((m = /Version\/(\d+)[.\d]* (?:Mobile\/\w+ )?Safari/.exec(ua)) && !/Chrome|CriOS|Android/.test(ua) && Number(m[1]) < 14) return true;
+  return false;
+}
+const Q5_HAM_MOI = /^(?:at|replaceAll|structuredClone|hasOwn|findLast|findLastIndex|randomUUID|any|allSettled|flat|flatMap|fromEntries|timeout|toSorted|toReversed|toSpliced|with|groupBy|matchAll|requestIdleCallback|replaceChildren|showPicker|canShare|share|closest|append|prepend|scrollTo|scrollIntoView|startViewTransition|withResolvers)$/;
+const Q5_RE = {
+  nhieu: /zalojsv2|zalojavascriptinterface|zalojs|jsbridge|fbquacamera|fb_?native|fb_?iab|reactnativewebview|webkit\.messagehandlers|__gcrweb|instantsearchsdkjsbridge|resizeobserver loop|-extension:\/\/|_autofillcallbackhandler|java object is gone|object not found matching id|webkit-masked-url|non-error promise rejection|tampermonkey|greasemonkey|translate\.googleapis|google_translate|__firefox__|ucbrowser|mibrowser|heytapbrowser|coccocbrowser:\/\/|failed to (?:register|update|install) a serviceworker|when fetching the script/i,
+  cauhinh: /requires an index|create_composite|functions\/not-found|app ?check|api[- ]key not valid|api_key_invalid|auth\/(?:configuration-not-found|operation-not-allowed|unauthorized-domain|invalid-api-key|admin-restricted-operation)|billing (?:account|not enabled|is disabled)|has not been used in project|is disabled\. enable it|cloud firestore api has not been used|service_disabled/i,
+  quyen: /permission[-_ ]denied|missing or insufficient permissions|insufficient permission|\bunauthenticated\b|auth\/requires-recent-login|auth\/user-token-expired|auth\/user-disabled|request had insufficient authentication/i,
+  mang: /failed to fetch|networkerror|network ?error|\bload failed\b|network-request-failed|net::err_|err_internet|err_network|\bunavailable\b|could not reach cloud firestore|client is offline|\boffline\b|deadline[- ]exceeded|timed? ?out\b|\btimeout\b|network connection was lost|internet connection appears to be offline|network request failed|webchannel|transport errored|err_connection|connection (?:reset|refused|closed)|fetch is aborted|aborted due to timeout|failed to get document from cache|xhr error|status code 0/i,
+  thietbi: /quota ?exceeded|exceeded the quota|out of memory|indexed ?db|idbdatabase|idbobjectstore|\bunknownerror\b|notreadableerror|notsupportederror|securityerror|the operation is insecure|bluetooth|\bgatt\b|requestdevice|getusermedia|wake ?lock|could not start video source|internal assertion failed|play\(\) failed because the user didn't interact|notallowederror: (?:play|the request is not allowed)|database deleted by request|connection is closing|storage (?:quota|full)|no space left|disk is full|insufficient resources|webgl|cannot allocate|memory access out of bounds/i,
+  nguoi: /user cancell?ed|user aborted|aborterror: (?:share|the user)|share cancell?ed|auth\/(?:wrong-password|invalid-credential|user-not-found|too-many-requests|email-already-in-use|invalid-email|weak-password|missing-password|invalid-login-credentials|popup-closed-by-user|cancelled-popup-request)|the play\(\) request was interrupted|cancelled by (?:the )?user|chooser was cancell?ed|người dùng (?:hủy|huỷ)/i,
+  tainguyen: /^tải hỏng:|failed to load module script|importing a module script failed|error loading dynamically imported module|failed to fetch dynamically imported module|chunkloaderror|loading chunk \S+ failed|failed to load resource|load script failed/i
+};
+const Q5_LOP = {
+  that:     { ten:"Lỗi code — cần sửa", ngan:"Lỗi code", lop:"xau", ic:"loi", nang:3 },
+  cauhinh:  { ten:"Cấu hình máy chủ — cần làm ở Firebase", ngan:"Cấu hình", lop:"xau", ic:"canh", nang:3 },
+  quyen:    { ten:"Máy chủ chối quyền", ngan:"Bị chối", lop:"canh", ic:"khoa", nang:0.8 },
+  thietbi:  { ten:"Do máy / trình duyệt của khách", ngan:"Do máy", lop:"canh", ic:"may", nang:0.8 },
+  tainguyen:{ ten:"Tải thư viện / ảnh hỏng", ngan:"Tải hỏng", lop:"canh", ic:"taive", nang:0.7 },
+  mang:     { ten:"Mạng của khách chập chờn", ngan:"Mạng", lop:"", ic:"tai", nang:0.3 },
+  nguoi:    { ten:"Khách tự huỷ / nhập sai", ngan:"Thao tác", lop:"", ic:"khach", nang:0.15 },
+  nhieu:    { ten:"Nhiễu ngoài app (không phải code mình)", ngan:"Nhiễu", lop:"", ic:"radar", nang:0 }
+};
+const Q5_THU_TU = ["that","cauhinh","quyen","thietbi","tainguyen","mang","nguoi","nhieu"];
+function q5Lop(e, pt, khung){
+  const msg = q5Chuan(e.message), stk = String(e.stack || ""), s = (msg + " " + stk).toLowerCase(), m = msg.toLowerCase();
+  if(e.type === "resource" || Q5_RE.tainguyen.test(msg)) return "tainguyen";
+  if(Q5_RE.nhieu.test(s) || m === "script error." || m === "script error" || (/<anonymous>:1:\d+/.test(stk) && s.indexOf(".html") < 0 && s.indexOf(".js") < 0)) return "nhieu";
+  if(Q5_RE.cauhinh.test(s)) return "cauhinh";
+  if(Q5_RE.nguoi.test(m)) return "nguoi";
+  if(Q5_RE.quyen.test(m)) return "quyen";
+  if(/\bgatt\b|bluetooth/i.test(s)) return "thietbi";
+  if(Q5_RE.mang.test(m)) return "mang";
+  if(Q5_RE.thietbi.test(s)) return "thietbi";
+  if(pt.kind === "cu-phap" && q5TrinhCu(e.ua)) return "thietbi";
+  if(pt.kind === "khong-ham" && Q5_HAM_MOI.test(pt.id) && q5TrinhCu(e.ua)) return "thietbi";
+  /* lỗi chỉ nằm trong thư viện ngoài (không có khung nào của app) mà không rõ nghĩa ⇒ vẫn tính là lỗi (có thể do cách app gọi) */
+  return "that";
+}
+
+/* ─────────── 2. CHUỖI GỌI (stack) ─────────── */
+const Q5_NGOAI = /^(?:https?:\/\/)?(?:www\.gstatic\.com|[\w.-]*googleapis\.com|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com|code\.jquery\.com|[\w.-]*firebaseio\.com|apis\.google\.com)\//i;
+function q5Khung(stack){
+  const out = [];
+  String(stack || "").split("\n").forEach(raw => {
+    const s = raw.trim(); if(!s) return; let m;
+    if((m = /^at\s+(?:async\s+)?(?:(.*?)\s+\()?((?:https?|file|blob):\/\/[^\s)]+?|\/[^\s):]+?):(\d+):(\d+)\)?$/.exec(s))) out.push({ fn:(m[1] || "").trim(), url:m[2], line:+m[3], col:+m[4], raw:s });
+    else if((m = /^(.*?)@((?:https?|file|blob):\/\/[^\s]+?|\/[^\s:]+?):(\d+):(\d+)$/.exec(s))) out.push({ fn:(m[1] || "").trim(), url:m[2], line:+m[3], col:+m[4], raw:s });
+  });
+  return out;
+}
+const q5LaApp = u => { u = String(u || ""); if(!u || Q5_NGOAI.test(u) || /^blob:|<anonymous>|\[native code\]/.test(u)) return false;
+  try{ const x = new URL(u, q5Goc() + "/"); return /(^|\.)github\.io$/.test(x.hostname) || x.origin === location.origin; }catch(e){ return false; } };
+/* tên hàm trên stack ⇒ tên gọn (Object.skClose ⇒ skClose · HTMLButtonElement.onclick ⇒ "") */
+function q5TenGon(fn){
+  let s = String(fn || "").replace(/^async\s+/, "").replace(/^new\s+/, "").replace(/\s*\[as [^\]]+\]$/, "").trim();
+  if(!s || /^(?:<anonymous>|anonymous|global code|eval code|module code|eval|Function|Promise\.\w+|Array\.\w+|\(anonymous function\))$/i.test(s) || /(?:^|\.)<anonymous>$/.test(s)) return "";
+  if(/^(?:HTML\w*Element|Window|Document|EventTarget|XMLHttpRequest|IDB\w+)\.on\w+$/.test(s) || /^on\w+$/.test(s)) return "";
+  s = s.split(".").pop().replace(/[<>]/g, "");
+  return /^[A-Za-z_$][\w$]*$/.test(s) ? s : "";
+}
+const q5DuongNgan = u => { try{ const x = new URL(u, q5Goc() + "/"); return x.pathname.replace(/\/index\.html$/i, "/"); }catch(e){ return String(u || "").slice(0, 80); } };
+
+/* ─────────── 3. MÁY · TRÌNH DUYỆT ─────────── */
+function q5May(ua){
+  ua = String(ua || ""); let os = "Máy tính", tr = "trình duyệt khác", m;
+  if((m = /Android (\d+(?:\.\d+)?)/.exec(ua))) os = "Android " + m[1];
+  else if((m = /(iPhone|iPad|iPod).*? OS (\d+)_(\d+)/.exec(ua))) os = m[1] + " iOS " + m[2] + "." + m[3];
+  else if(/Windows/.test(ua)) os = "Windows"; else if(/Macintosh/.test(ua)) os = "Mac"; else if(/Linux/.test(ua)) os = "Linux";
+  if(/Zalo/i.test(ua)) tr = "Zalo"; else if(/FBAN|FBAV|FB_IAB|FBIOS/i.test(ua)) tr = "Facebook"; else if(/TikTok|musical_ly|BytedanceWebview/i.test(ua)) tr = "TikTok";
+  else if(/coc_coc|CocCoc/i.test(ua)) tr = "Cốc Cốc"; else if(/SamsungBrowser\/(\d+)/.test(ua)) tr = "Samsung " + /SamsungBrowser\/(\d+)/.exec(ua)[1];
+  else if((m = /Edg(?:A|iOS)?\/(\d+)/.exec(ua))) tr = "Edge " + m[1]; else if((m = /(?:Firefox|FxiOS)\/(\d+)/.exec(ua))) tr = "Firefox " + m[1];
+  else if((m = /CriOS\/(\d+)/.exec(ua))) tr = "Chrome " + m[1] + " (iOS)"; else if(/; wv\)/.test(ua)) tr = "WebView" + ((m = /Chrome\/(\d+)/.exec(ua)) ? " " + m[1] : "");
+  else if((m = /Chrome\/(\d+)/.exec(ua))) tr = "Chrome " + m[1]; else if((m = /Version\/(\d+(?:\.\d+)?).*Safari/.exec(ua))) tr = "Safari " + m[1];
+  return { os, tr, ngan: os.split(" ")[0] + " · " + tr.split(" ")[0], cu: q5TrinhCu(ua) };
+}
+const q5BoSo = s => String(s || "").replace(/https?:\/\/[^\s'")]+/g, u => { try{ const x = new URL(u); return x.origin + x.pathname; }catch(e){ return "‹url›"; } })
+  .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "‹email›").replace(/\b[A-Za-z0-9_-]{20,}\b/g, "‹mã›").replace(/\d{3,}/g, "#").replace(/\s+/g, " ").trim();
+
+/* ─────────── 4. GIẢI NGHĨA · NÊN LÀM GÌ ─────────── */
+function q5TieuDe(x){
+  const pt = x.pt || q5PhanTich(x.message), id = pt.id ? "“" + pt.id + "”" : "", m = q5Chuan(x.message);
+  const ten = ({
+    "doc-null": `Đọc .${pt.id || "?"} của thứ KHÔNG CÓ (null)`, "doc-undef": `Đọc .${pt.id || "?"} của giá trị CHƯA CÓ (undefined)`,
+    "ghi-null": `Gán .${pt.id || "?"} vào thứ KHÔNG CÓ`, "chua-dinh": `Gọi ${id} mà trang chưa có`, "chua-khoi-tao": `Dùng ${id} trước khi khai báo`,
+    "trung-ten": `Khai báo trùng tên ${id}`, "khong-ham": `${id || "Thứ được gọi"} không phải là hàm`, "de-quy": "Hàm gọi lại chính nó không dừng (tràn ngăn xếp)",
+    "gan-const": "Gán lại giá trị cho hằng (const)", "ngay-hong": "Ngày giờ sai định dạng", "json-hong": "Đọc dữ liệu JSON bị hỏng",
+    "cu-phap": "Lỗi cú pháp — cả khối script không chạy", "dom": `Trình duyệt từ chối thao tác ${id}`
+  })[pt.kind];
+  if(ten) return ten;
+  const cls = x.cls || "that";
+  if(cls === "cauhinh" && /requires an index|create_composite/i.test(m)) return "Thiếu chỉ mục (index) Firestore — truy vấn bị chặn";
+  if(cls === "tainguyen") return "Tải hỏng: " + (q5BoSo(m.replace(/^tải hỏng:\s*/i, "")).replace(/^https?:\/\//, "").slice(0, 70) || "tài nguyên");
+  if(cls === "quyen") return "Máy chủ chối: " + q5BoSo(m).slice(0, 70);
+  if(cls === "mang") return "Mạng: " + q5BoSo(m).slice(0, 70);
+  return q5BoSo(m).slice(0, 96) || "(lỗi không có nội dung)";
+}
+function q5GiaiNghia(g){
+  const pt = g.pt, id = pt.id, ham = g.ham ? ` (trong hàm ${g.ham})` : "";
+  const N = {
+    "doc-null": [`Code đọc “.${id}” từ một thứ đang TRỐNG (null)${ham}. Thường là tìm phần tử trên màn hình (getElementById / querySelector) mà không thấy — bảng hoặc nút đó chưa vẽ, đã bị đóng / xoá, hoặc đang ở màn khác.`,
+      `Ở dòng mã bên dưới, chỗ lấy thứ đứng TRƯỚC “.${id}” phải kiểm có tồn tại rồi mới dùng (vd: const el = …; if(!el) return;).`],
+    "doc-undef": [`Code đọc “.${id}” từ một giá trị CHƯA CÓ (undefined)${ham}. Hay gặp khi bản ghi cũ thiếu trường, danh sách rỗng, dữ liệu chưa tải xong, hoặc gõ sai tên biến.`,
+      `Kiểm giá trị trước “.${id}” (dùng ?. hoặc giá trị mặc định), và xem bản ghi của khách có thiếu trường đó không.`],
+    "ghi-null": [`Code gán “.${id || "…"} = …” vào một thứ không tồn tại${ham} — thường là phần tử trên màn hình không tìm thấy.`, `Kiểm phần tử có thật trước khi gán.`],
+    "chua-dinh": [`Code gọi tên “${id}” mà lúc đó trang chưa có${ham}: gõ sai tên, khối mã định nghĩa “${id}” bị lỗi / không chạy, hoặc gọi trước khi khối đó nạp xong.`,
+      `Tìm chỗ định nghĩa “${id}” — có còn trong bản đang chạy không, có lỗi nào khác chặn khối đó chạy không (xem các lỗi cùng thời điểm).`],
+    "chua-khoi-tao": [`Dùng “${id}” trước dòng khai báo let/const của nó${ham}.`, `Đưa phần khai báo lên trước chỗ dùng, hoặc dời lệnh gọi xuống sau.`],
+    "trung-ten": [`Hai khối script cùng khai báo let/const/class “${id}” ⇒ khối thứ hai KHÔNG CHẠY (mất trọn tính năng của khối đó).`, `Đổi tên ở một khối, hoặc bọc khối trong (function(){ … })().`],
+    "khong-ham": [`Code gọi “${id || "…"}(…)” nhưng thứ đó không phải hàm${ham}: sai tên, thư viện / khối định nghĩa chưa nạp xong${g.cu ? ", hoặc trình duyệt của khách quá cũ chưa có hàm này" : ""}.`,
+      `Kiểm “${id}” đã có trước khi gọi; nếu là hàm đời mới của trình duyệt thì thêm đường lùi.`],
+    "de-quy": [`Một hàm tự gọi lại chính nó (hoặc 2 hàm gọi qua lại) không có điểm dừng${ham} ⇒ trình duyệt dừng cưỡng bức. Có thể làm treo cả màn.`, `Xem chuỗi gọi bên dưới — hàm lặp lại nhiều lần là thủ phạm; thêm điều kiện dừng / cờ chặn gọi lặp.`],
+    "gan-const": [`Gán lại giá trị cho biến khai báo const${ham}.`, `Đổi const ⇒ let ở chỗ khai báo, hoặc dùng biến khác.`],
+    "ngay-hong": [`Đổi một ngày giờ không hợp lệ sang chữ / ISO${ham} — dữ liệu ngày của khách bị hỏng hoặc rỗng.`, `Kiểm isNaN(date) trước khi định dạng; xem bản ghi khách có ngày lạ.`],
+    "json-hong": [`Đọc chuỗi JSON hỏng${ham}: dữ liệu lưu trong máy khách (localStorage) bị hỏng, hoặc máy chủ trả trang lỗi thay vì dữ liệu.`, `Bọc JSON.parse trong try/catch và có giá trị mặc định.`],
+    "cu-phap": [g.cu ? `Trình duyệt của khách quá cũ, không hiểu cú pháp JavaScript đời mới ⇒ cả khối script đó không chạy trên máy này.` : `Lỗi cú pháp ⇒ CẢ KHỐI script không chạy (mất trọn mọi tính năng trong khối). Rất nặng nếu xảy ra trên trình duyệt mới.`,
+      g.cu ? `Khuyên khách cập nhật Chrome / iOS. Nếu nhiều khách dùng máy cũ thì tránh cú pháp quá mới.` : `Chạy Khám tổng quát ⇒ mục “Cú pháp từng khối script” chỉ ra khối hỏng.`],
+    "dom": [`Trình duyệt từ chối lệnh “${id}”${pt.dt ? " trên " + pt.dt : ""}${ham}.`, `Xem điều kiện gọi lệnh này (phần tử đã gắn vào trang chưa, giá trị truyền vào có hợp lệ không).`]
+  };
+  if(N[pt.kind]) return N[pt.kind];
+  const m = q5Chuan(g.mau.message);
+  if(g.cls === "cauhinh"){
+    if(/requires an index|create_composite/i.test(m)) return ["Truy vấn Firestore cần một CHỈ MỤC (index) chưa được tạo ⇒ máy chủ chặn truy vấn đó, phần màn hình dùng nó trống / báo lỗi.", "Bấm đường link trong nội dung lỗi (đăng nhập Firebase bằng tài khoản chủ) ⇒ Create index ⇒ chờ vài phút là chạy. Không cần sửa app."];
+    if(/functions\/not-found/i.test(m)) return ["App gọi một máy chủ chức năng (Cloud Function) chưa được cài / đã bị gỡ.", "Cài lại máy chủ đó (xem Khám tổng quát ⇒ Máy chủ chức năng)."];
+    return ["Cấu hình dự án Firebase chặn yêu cầu này (dịch vụ chưa bật / khoá API / App Check…).", "Đọc nội dung lỗi để biết dịch vụ nào, bật trong Firebase / Google Cloud Console."];
+  }
+  if(g.cls === "quyen") return ["Máy chủ (Firestore Rules) chối yêu cầu. Thường là ĐÚNG LUẬT: khách hết hạn / bị khoá / nhân viên bị gỡ — app đã có màn khoá cho các ca này.", "Chỉ cần lo khi khách CÒN HẠN mà vẫn bị chối: mở hồ sơ khách xem giấy phép; nhiều khách cùng lúc ⇒ xem lại Rules vừa đổi."];
+  if(g.cls === "mang") return ["Mạng của khách chập chờn / mất sóng đúng lúc app gửi hoặc nhận dữ liệu. Không phải lỗi code.", "Không cần sửa. Chỉ đáng xem khi một khách bị liên tục (mạng quán yếu) hoặc tăng vọt cùng lúc nhiều khách (GitHub / Firebase gặp sự cố)."];
+  if(g.cls === "thietbi") return ["Do máy / trình duyệt của khách: bộ nhớ đầy, trình duyệt cũ, chưa cho quyền camera / micro / Bluetooth, hoặc lỗi nội bộ của trình duyệt.", "Thường hướng dẫn khách: cập nhật trình duyệt, xoá bớt dữ liệu, cấp quyền. Nhiều khách cùng loại máy ⇒ cân nhắc thêm đường lùi trong app."];
+  if(g.cls === "tainguyen") return ["Tải một thư viện / ảnh / tệp bị hỏng (mạng yếu, CDN chặn, đường dẫn sai). Nếu là thư viện chính (Firebase) thì cả app không chạy trên máy đó.", "Mở thử đường dẫn trong lỗi. Lỗi lẻ tẻ = mạng khách; nhiều khách cùng lúc = đường dẫn chết, phải sửa."];
+  if(g.cls === "nguoi") return ["Khách tự bấm huỷ / nhập sai (huỷ chọn máy in, sai mật khẩu…). Không phải lỗi app.", "Không cần làm gì."];
+  if(g.cls === "nhieu") return ["Mã lạ do trình duyệt-trong-app (Zalo, Facebook…), tiện ích, hoặc trình dịch chèn vào trang. Không phải code của mình.", "Bấm “Bỏ qua (nhiễu)”. Gặp nhiễu mới hay lặp lại thì thêm dấu hiệu vào bộ lọc nhiễu của app."];
+  return ["Lỗi JavaScript trong app.", "Xem dòng mã và chuỗi gọi bên dưới; chép báo cáo gửi Claude để sửa."];
+}
+
+/* ─────────── 5. MÃ NGUỒN APP ĐANG CHẠY (soi đúng dòng) ───────────
+   Tải thẳng file trên GitHub Pages (cùng nhà github.io ⇒ không vướng CORS). Lần sau trình duyệt hỏi lại bằng ETag ⇒ không đổi thì
+   0 byte. Bản nào đọc được số bản (APP_BUILD) thì cất vào kho trong máy (IndexedDB, tối đa 4 bản / app) để soi lỗi của bản cũ.   */
+const Q5NG = new Map(), Q5NG_DANG = new Map();
+let Q5NG_V = 0;
+function q5KhoaTrang(u){
+  try{ const x = new URL(String(u || ""), q5Goc() + "/"); if(!/^https?:$/.test(x.protocol)) return "";
+    return x.origin + x.pathname.replace(/\/index\.html$/i, "/"); }catch(e){ return ""; }
+}
+/* số bản ghi trong mã: APP_BUILD (Sổ Nợ) · ver:"…" (Quản trị) · các tên hay dùng khác */
+function q5DocBan(t){
+  const P = [/\bAPP_BUILD\s*=\s*["'`]([^"'`\r\n]{1,80})["'`]/, /\bconst\s+BUILD\s*=\s*["'`]([^"'`\r\n]{1,60})["'`]/, /\b(?:APP_VER|PHIEN_BAN|VERSION)\s*=\s*["'`]([^"'`\r\n]{1,60})["'`]/,
+             /\bver\s*:\s*["']([0-9][^"'\r\n]{0,30})["']/, /\bvar\s+BUILD\s*=\s*["'`]([^"'`\r\n]{1,60})["'`]/];
+  for(const re of P){ const m = re.exec(t); if(m) return m[1].trim(); }
+  return "";
+}
+/* md5 trên đúng các byte tải về — so với md5 ghi trong ghi chú giao bản ⇒ biết file trên GitHub trùng từng byte bản đã giao */
+function q5Md5(b){
+  const S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
+  const K = new Int32Array(64); for(let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) | 0;
+  const n = b.length, nb = ((n + 8) >> 6) + 1, W = new Int32Array(nb * 16);
+  for(let i = 0; i < n; i++) W[i >> 2] |= b[i] << ((i & 3) << 3);
+  W[n >> 2] |= 0x80 << ((n & 3) << 3);
+  W[nb * 16 - 2] = (n * 8) | 0; W[nb * 16 - 1] = Math.floor(n / 536870912) | 0;
+  let a0 = 0x67452301, b0 = 0xefcdab89 | 0, c0 = 0x98badcfe | 0, d0 = 0x10325476;
+  for(let j = 0; j < W.length; j += 16){
+    let A = a0, B = b0, C = c0, D = d0;
+    for(let i = 0; i < 64; i++){
+      let F, g;
+      if(i < 16){ F = (B & C) | (~B & D); g = i; } else if(i < 32){ F = (D & B) | (~D & C); g = (5 * i + 1) & 15; }
+      else if(i < 48){ F = B ^ C ^ D; g = (3 * i + 5) & 15; } else { F = C ^ (B | ~D); g = (7 * i) & 15; }
+      const t = D; D = C; C = B; const x = (A + F + K[i] + W[j + g]) | 0;
+      B = (B + ((x << S[i]) | (x >>> (32 - S[i])))) | 0; A = t;
+    }
+    a0 = (a0 + A) | 0; b0 = (b0 + B) | 0; c0 = (c0 + C) | 0; d0 = (d0 + D) | 0;
+  }
+  const hx = v => { let s = ""; for(let i = 0; i < 4; i++) s += ((v >>> (i * 8)) & 255).toString(16).padStart(2, "0"); return s; };
+  return hx(a0) + hx(b0) + hx(c0) + hx(d0);
+}
+function q5NgMoi(k, text, meta){
+  return Object.assign({ k, text, build: q5DocBan(text), buildApp: /\bAPP_BUILD\s*=\s*["'`]/.test(text), hash: cyrb53(text), off:null, scripts:null, hamNho:new Map(), luc: Date.now() }, meta || {});
+}
+async function q5Tai(u, moi){
+  const k = q5KhoaTrang(u); if(!k) throw new Error("đường dẫn lạ");
+  const cu = Q5NG.get(k);
+  if(cu && !moi && Date.now() - cu.luc < 10 * 60e3) return cu;
+  if(Q5NG_DANG.has(k)) return Q5NG_DANG.get(k);
+  const p = (async () => {
+    const ac = typeof AbortController === "function" ? new AbortController() : null;
+    const hen = setTimeout(() => { try{ ac && ac.abort(); }catch(e){} }, 45000);
+    try{
+      const r = await fetch(moi ? k + (k.indexOf("?") < 0 ? "?" : "&") + "qt5=" + Date.now() : k, { cache: moi ? "no-store" : "no-cache", credentials:"omit", signal: ac ? ac.signal : undefined });
+      if(!r.ok) throw new Error("GitHub trả mã " + r.status);
+      const buf = new Uint8Array(await r.arrayBuffer());
+      let md5 = ""; try{ md5 = q5Md5(buf); }catch(z){}
+      const text = new TextDecoder("utf-8").decode(buf).replace(/\r\n?/g, "\n");
+      const e = q5NgMoi(k, text, { lm: r.headers.get("last-modified") || "", etag: r.headers.get("etag") || "", hDate: r.headers.get("date") || "", nguon:"mang", bytes: buf.length, md5 });
+      Q5NG.set(k, e); Q5NG_V++; q5NhoMoi = null;
+      q5GhiBan(e); q5KhoLuu(e).catch(() => {});
+      return e;
+    } finally { clearTimeout(hen); }
+  })();
+  Q5NG_DANG.set(k, p);
+  try{ return await p; } finally { Q5NG_DANG.delete(k); }
+}
+/* lịch sử bản đã lên mà máy này từng thấy (để biết bản mới lên lúc nào, lỗi còn sau bản mới không) */
+function q5GhiBan(e){
+  try{ const o = q5Lay(Q5.KEY_BAN, {}); const p = q5DuongNgan(e.k); const ds = Array.isArray(o[p]) ? o[p] : [];
+    const h = e.md5 || e.hash;
+    if(!ds.length || ds[0].h !== h){ ds.unshift({ h, b: e.build || "", lm: Date.parse(e.lm) || 0, thay: Date.now(), n: e.bytes || e.text.length }); o[p] = ds.slice(0, 20); q5Ghi(Q5.KEY_BAN, o); } }catch(x){}
+}
+const q5LichBan = p => { const o = q5Lay(Q5.KEY_BAN, {}); return Array.isArray(o[p]) ? o[p] : []; };
+/* kho mã nguồn trong máy (IndexedDB) */
+function q5Idb(){
+  return new Promise((ok, hong) => {
+    if(typeof indexedDB === "undefined") return hong(new Error("không có IndexedDB"));
+    const r = indexedDB.open(Q5.IDB, 1);
+    r.onupgradeneeded = () => { try{ const d = r.result; if(!d.objectStoreNames.contains("ban")) d.createObjectStore("ban", { keyPath:"id" }); }catch(e){} };
+    r.onsuccess = () => ok(r.result); r.onerror = () => hong(r.error || new Error("IndexedDB lỗi")); r.onblocked = () => hong(new Error("IndexedDB bị chặn"));
+  });
+}
+const q5IdbXong = rq => new Promise((ok, hong) => { rq.onsuccess = () => ok(rq.result); rq.onerror = () => hong(rq.error); });
+async function q5KhoLuu(e){
+  if(!e || !e.build || !e.text || !e.buildApp) return;   /* chỉ cất app có APP_BUILD (Sổ Nợ) — đủ để soi bản cũ, khỏi đầy máy */
+  const d = await q5Idb();
+  try{
+    const id = e.k + "|" + e.build;
+    const co = await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").count(id));
+    if(co) return;
+    const st = d.transaction("ban", "readwrite").objectStore("ban");
+    await q5IdbXong(st.put({ id, k: e.k, build: e.build, text: e.text, lm: e.lm || "", md5: e.md5 || "", bytes: e.bytes || 0, luc: Date.now() }));
+    const ks = (await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").getAllKeys())) || [];
+    const cua = ks.filter(x => String(x).indexOf(e.k + "|") === 0);
+    if(cua.length > Q5.BAN_LUU){
+      const ds = [];
+      for(const id of cua){ const v = await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").get(id)); if(v) ds.push({ id, luc: v.luc || 0 }); }
+      ds.sort((a, b) => b.luc - a.luc);
+      const st2 = d.transaction("ban", "readwrite").objectStore("ban");
+      for(const x of ds.slice(Q5.BAN_LUU)) await q5IdbXong(st2.delete(x.id));
+    }
+  } finally { try{ d.close(); }catch(x){} }
+}
+async function q5KhoLay(k, build){
+  try{ const d = await q5Idb(); try{ const v = await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").get(k + "|" + build));
+    return v && v.text ? q5NgMoi(k, v.text, { lm: v.lm || "", nguon:"kho", md5: v.md5 || "", bytes: v.bytes || 0 }) : null; } finally { try{ d.close(); }catch(x){} } }catch(e){ return null; }
+}
+async function q5KhoDs(k){
+  try{ const d = await q5Idb(); try{ const ks = (await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").getAllKeys())) || [];
+    return ks.filter(x => String(x).indexOf(k + "|") === 0).map(x => String(x).slice(k.length + 1)); } finally { try{ d.close(); }catch(x){} } }catch(e){ return []; }
+}
+/* dòng thứ n (đếm từ 1) */
+function q5Off(e){ if(!e.off){ const o = [0]; const t = e.text; for(let i = t.indexOf("\n"); i >= 0; i = t.indexOf("\n", i + 1)) o.push(i + 1); e.off = o; } return e.off; }
+function q5Dong(e, n){ const o = q5Off(e); if(!(n >= 1 && n <= o.length)) return null; const a = o[n - 1], b = n < o.length ? o[n] - 1 : e.text.length; return e.text.slice(a, b); }
+function q5DongCuaOff(e, off){ const o = q5Off(e); let lo = 0, hi = o.length - 1; while(lo < hi){ const mid = (lo + hi + 1) >> 1; if(o[mid] <= off) lo = mid; else hi = mid - 1; } return lo + 1; }
+function q5OffCua(e, line, col){ const o = q5Off(e); if(!(line >= 1 && line <= o.length)) return -1; return o[line - 1] + Math.max(0, (col || 1) - 1); }
+/* các khối <script> (bỏ qua chú thích HTML; chữ "<script" nằm trong mã JS không bị tính nhầm) */
+function q5Scripts(e){
+  if(e.scripts) return e.scripts;
+  /* đúng luật trình duyệt: "<script" / "</script" chỉ là thẻ khi theo sau là khoảng trắng, "/" hoặc ">" (chuỗi '</script' trong mã JS KHÔNG đóng khối) */
+  const t = e.text, out = [], re = /<!--|<script(?=[\s\/>])[^>]*>/gi, het = /<\/script(?=[\s\/>])/gi; let m;
+  while((m = re.exec(t))){
+    if(m[0] === "<!--"){ const j = t.indexOf("-->", m.index + 4); if(j < 0) break; re.lastIndex = j + 3; continue; }
+    const tag = m[0], s = m.index + tag.length; het.lastIndex = s; const h = het.exec(t); const j = h ? h.index : t.length;
+    out.push({ i: out.length, tag, s, e: j, dong: q5DongCuaOff(e, s), dongCuoi: q5DongCuaOff(e, j), mod: /\btype\s*=\s*["']?module\b/i.test(tag), src: /\bsrc\s*=/i.test(tag),
+      json: /\btype\s*=\s*["']?(?:application\/(?:ld\+)?json|importmap|text\/template|text\/html)/i.test(tag), dau: m.index });
+    re.lastIndex = j + 9;
+  }
+  e.scripts = out; return out;
+}
+const q5KhoiCua = (e, off) => q5Scripts(e).find(s => off >= s.s && off <= s.e) || null;
+/* tên khối: dòng đầu của chú thích HTML ngay trên <script>, hoặc chú thích đầu khối */
+const q5DongNghia = s => String(s || "").split("\n").map(x => x.replace(/[═=─━*#~]{2,}/g, " ").replace(/^[\s•·\-–—>|]+/, "").replace(/\s{2,}/g, " ").trim()).filter(x => x && /[\p{L}\p{N}]/u.test(x))[0] || "";
+function q5TenKhoi(e, k){
+  if(!k) return "";
+  if(k.ten != null) return k.ten;
+  const t = e.text; let j = k.dau; while(j > 0 && /\s/.test(t[j - 1])) j--;
+  let ten = "";
+  if(t.slice(j - 3, j) === "-->"){ const a = t.lastIndexOf("<!--", j - 3); if(a >= 0 && j - a < 30000) ten = q5DongNghia(t.slice(a + 4, j - 3)); }
+  if(!ten){ const dau = t.slice(k.s, Math.min(k.e, k.s + 900)); const m = /(?:^|\n)[ \t]*(?:\/\*+([\s\S]*?)\*\/|\/\/+[ \t]*([^\n]+))/.exec(dau); if(m) ten = q5DongNghia(m[1] != null ? m[1] : m[2]); }
+  if(!ten && k.dongCuoi - k.dong > 2000) ten = "khối chính của app";
+  k.ten = ten.slice(0, 110);
+  return k.ten;
+}
+/* dấu vá gần nhất: [SN27] [QT7] [BV4] [4.0] … trên dòng lỗi hoặc tối đa 80 dòng phía trên */
+function q5DauVa(e, line){
+  const re = /\[((?:SN|QT|BV|QM|Z)\d+[a-z]?|\d+\.\d+(?:\.\d+)?)\]/;
+  for(let n = line; n >= Math.max(1, line - 80); n--){ const s = q5Dong(e, n); if(s == null) break; const m = re.exec(s); if(m) return { dau: m[1], dong: n }; }
+  return null;
+}
+/* ── Tìm HÀM bao quanh một vị trí: đọc mã từ đầu khối tới vị trí lỗi, theo dõi ngoặc { } (bỏ qua chuỗi, chú thích, regex, template) ── */
+const Q5_KW = /^(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+const q5IdDau = c => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36 || c >= 0xC0;
+const q5IdTiep = c => q5IdDau(c) || (c >= 48 && c <= 57);
+/* đọc mã t[a..b) MỘT lượt, trả các ngoặc { đang mở tại b (kèm đoạn chữ đứng ngay trước mỗi ngoặc = "đầu hàm").
+   onW(chữ, vịTrí, độSâu) — nếu có — được gọi cho mỗi từ (dùng để soi khai báo trùng tên ở tầng ngoài). */
+function q5NgoacMo(t, a, b, onW){
+  const st = []; let i = a, bien = a, last = 1, pd = 0;   /* last: 1 = vừa gặp dấu ⇒ "/" mở regex · 0 = vừa gặp giá trị ⇒ "/" là phép chia */
+  const tplTiep = j => { while(j < b){ const c = t.charCodeAt(j); if(c === 92){ j += 2; continue; } if(c === 96) return { j: j + 1, mo: false }; if(c === 36 && t.charCodeAt(j + 1) === 123) return { j: j + 2, mo: true }; j++; } return { j: b, mo: false }; };
+  while(i < b){
+    const c = t.charCodeAt(i);
+    if(c === 47){
+      const n = t.charCodeAt(i + 1);
+      if(n === 47){ const e2 = t.indexOf("\n", i); i = e2 < 0 || e2 > b ? b : e2; continue; }
+      if(n === 42){ const e2 = t.indexOf("*/", i + 2); i = e2 < 0 || e2 + 2 > b ? b : e2 + 2; continue; }
+      if(last === 0){ i++; last = 1; continue; }
+      let j = i + 1, lop = false;
+      while(j < b){ const d = t.charCodeAt(j); if(d === 92){ j += 2; continue; } if(d === 10) break; if(lop){ if(d === 93) lop = false; } else if(d === 91) lop = true; else if(d === 47) break; j++; }
+      j++; while(j < b && q5IdTiep(t.charCodeAt(j))) j++;
+      i = j; last = 0; continue;
+    }
+    if(c === 34 || c === 39){ let j = i + 1; while(j < b){ const d = t.charCodeAt(j); if(d === c || d === 10) break; if(d === 92) j++; j++; } i = j + 1; last = 0; continue; }
+    if(c === 96){ const r = tplTiep(i + 1); if(r.mo){ st.push({ k:"tpl" }); last = 1; } else last = 0; i = r.j; continue; }
+    if(c === 123){ st.push({ k:"{", hd: t.slice(Math.max(bien, i - 400), i), pos: i }); i++; bien = i; last = 1; continue; }
+    if(c === 125){ const top = st.pop(); if(top && top.k === "tpl"){ const r = tplTiep(i + 1); if(r.mo){ st.push({ k:"tpl" }); last = 1; } else last = 0; i = r.j; continue; }
+      i++; bien = i; last = 1; continue; }
+    if(q5IdDau(c)){ let j = i + 1; while(j < b && q5IdTiep(t.charCodeAt(j))) j++; const w = t.slice(i, j); if(onW) onW(w, i, st.length, pd); last = Q5_KW.test(w) ? 1 : 0; i = j; continue; }
+    if(c >= 48 && c <= 57){ let j = i + 1; while(j < b && (q5IdTiep(t.charCodeAt(j)) || t.charCodeAt(j) === 46)) j++; i = j; last = 0; continue; }
+    if(c === 40){ pd++; last = 1; i++; continue; }
+    if(c === 41 || c === 93){ if(c === 41 && pd > 0) pd--; last = 0; i++; continue; }
+    if(c === 32 || c === 9 || c === 10 || c === 13){ i++; continue; }
+    last = 1; i++;
+  }
+  return st;
+}
+const Q5_KHONG_HAM = /^(?:if|for|while|switch|catch|with|function|return|typeof|else|do|try|finally|new|await|yield|case)$/;
+function q5TenTuDau(hd){
+  hd = String(hd || "").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1 ").replace(/\s+/g, " ").trim(); let m;
+  const TS = "\\((?:[^()]|\\([^()]*\\))*\\)";
+  if((m = new RegExp("(?:^|[^\\w$.])function\\s*\\*?\\s*([A-Za-z_$][\\w$]*)\\s*" + TS + "\\s*$").exec(hd))) return { ten: m[1], kieu:"ham" };
+  if((m = new RegExp("([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*)\\s*(?:=|:)\\s*(?:async\\s+)?function\\s*\\*?\\s*(?:[A-Za-z_$][\\w$]*)?\\s*" + TS + "\\s*$").exec(hd))) return { ten: m[1], kieu:"ham" };
+  if((m = new RegExp("([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*|\"[^\"]+\"|'[^']+')\\s*(?:=|:)\\s*(?:async\\s*)?(?:" + TS + "|[A-Za-z_$][\\w$]*)\\s*=>\\s*$").exec(hd))) return { ten: m[1].replace(/["']/g, ""), kieu:"ham" };
+  if((m = new RegExp("addEventListener\\(\\s*[\"'`]([\\w:-]+)[\"'`]\\s*,\\s*(?:async\\s+)?(?:function\\s*[\\w$]*\\s*" + TS + "|" + TS + "\\s*=>|[\\w$]+\\s*=>)\\s*$").exec(hd))) return { ten:"", su: m[1], kieu:"su-kien" };
+  if((m = new RegExp("(?:^|[\\s;{},(])(?:async\\s+)?(?:static\\s+)?(?:get\\s+|set\\s+)?([A-Za-z_$][\\w$]*)\\s*" + TS + "\\s*$").exec(hd)) && !Q5_KHONG_HAM.test(m[1])) return { ten: m[1], kieu:"ham" };
+  if(new RegExp("(?:function\\s*\\*?\\s*" + TS + "|" + TS + "\\s*=>|[A-Za-z_$][\\w$]*\\s*=>)\\s*$").test(hd)) return { ten:"", kieu:"an-danh" };
+  return null;
+}
+/* ⇒ { ten, chuoi:"a ⟵ b", su, dongHam, ngoai, khoi, khoiTen } */
+function q5HamTai(e, off){
+  if(off < 0) return null;
+  if(e.hamNho.has(off)) return e.hamNho.get(off);
+  const k = q5KhoiCua(e, off);
+  let kq;
+  if(!k || k.src || k.json){
+    /* ngoài khối script: thường là thuộc tính onclick="…" của một thẻ HTML ⇒ nói rõ thẻ nào */
+    const t = e.text, a = t.lastIndexOf("<", off), b = t.indexOf(">", off), the = a >= 0 && b > a && b - a < 2000 ? t.slice(a, b + 1) : "";
+    const tn = (/^<([a-z][\w-]*)/i.exec(the) || [])[1], id = (/\bid\s*=\s*["']([^"']+)["']/i.exec(the) || [])[1], evs = [...the.slice(0, off - a + 1).matchAll(/\bon([a-z]+)\s*=/gi)];
+    kq = tn ? { ngoai: true, html: true, ten: "", moTa: `thẻ HTML <${tn}${id ? ` id="${id}"` : ""}>${evs.length ? " — thuộc tính on" + evs[evs.length - 1][1] : ""}` } : { ngoai: true, moTa: "ngoài khối script" };
+  }
+  else {
+    const st = q5NgoacMo(e.text, k.s, off), ds = [];
+    for(let i = st.length - 1; i >= 0; i--){ const x = st[i]; if(x.k !== "{") continue; const f = q5TenTuDau(x.hd); if(f) ds.push({ ...f, pos: x.pos }); }
+    const dau = ds.find(x => x.ten) || null, gan = ds[0] || null;
+    const ten = dau ? dau.ten : "";
+    const moTa = !gan ? "phần chạy ngay khi mở trang (ngoài mọi hàm)"
+      : gan.ten ? gan.ten + "()" : gan.kieu === "su-kien" ? `hàm nghe sự kiện “${gan.su}”${dau ? " trong " + dau.ten + "()" : ""}` : `hàm ẩn danh${dau ? " trong " + dau.ten + "()" : ""}`;
+    kq = { ten, moTa, chuoi: ds.filter(x => x.ten).slice(0, 4).map(x => x.ten).join(" ⟵ "), dongHam: gan ? q5DongCuaOff(e, gan.pos) : 0, khoi: k.i + 1, khoiTen: q5TenKhoi(e, k), khoiDong: k.dong, mod: k.mod };
+  }
+  if(e.hamNho.size > 400) e.hamNho.clear();
+  e.hamNho.set(off, kq);
+  return kq;
+}
+/* ĐỐI CHIẾU: dòng lỗi có đúng thứ lỗi nhắc tới không — lệch thì dò quanh ±400 dòng */
+function q5ReId(pt){
+  const id = pt && pt.id; if(!id) return null; const I = q5ReEsc(id);
+  if(["chua-dinh","chua-khoi-tao","trung-ten"].includes(pt.kind)) return new RegExp("(^|[^\\w$.])" + I + "(?![\\w$])");
+  if(pt.kind === "khong-ham") return new RegExp("(^|[^\\w$])" + I + "\\s*\\(|\\.\\s*" + I + "(?![\\w$])|[\"']" + I + "[\"']");
+  if(pt.kind === "dom") return new RegExp("\\b" + I + "\\b");
+  return new RegExp("\\.\\s*" + I + "(?![\\w$])|\\[\\s*[\"'`]" + I + "[\"'`]\\s*\\]|(^|[^\\w$])" + I + "\\s*[:=](?!=)");
+}
+function q5DoiChieu(e, line, col, pt){
+  const re = q5ReId(pt), L = q5Dong(e, line);
+  if(L == null) return { muc:"ngoai", ghi:`File chỉ có ${q5Off(e).length} dòng — lỗi chỉ dòng ${line}: mã nguồn đã khác hẳn bản bị lỗi.` };
+  if(!re) return { muc:"khong", ghi:"Lỗi không nêu tên để đối chiếu — tin theo số dòng." };
+  if(col){ const a = Math.max(0, col - 1 - 90); if(re.test(L.slice(a, col - 1 + 90))) return { muc:"khop", dong: line, ghi:`Dòng ${line} có đúng “${pt.id}” ngay tại cột ${col} như lỗi báo.` }; }
+  if(re.test(L)) return { muc:"khop", dong: line, ghi:`Dòng ${line} có đúng “${pt.id}” như lỗi báo.` };
+  for(let d = 1; d <= 400; d++) for(const n of [line - d, line + d]){ if(n < 1) continue; const s = q5Dong(e, n); if(s != null && re.test(s)) return { muc:"lech", dong: n, cach: n - line, ghi:`Dòng ${line} KHÔNG có “${pt.id}”. Gần nhất ở dòng ${n} (${n > line ? "dưới" : "trên"} ${Math.abs(n - line)} dòng) — mã nguồn đã đổi kể từ lúc lỗi.` }; }
+  return { muc:"khongthay", ghi:`Không tìm thấy “${pt.id}” quanh dòng ${line} — bản đang chạy có thể đã sửa / bỏ chỗ này.` };
+}
+/* đoạn mã quanh dòng lỗi (dòng dài thì cắt cửa sổ quanh cột) */
+function q5Doan(e, line, col, vong){
+  vong = vong == null ? 5 : vong; const W = 200, rows = [];
+  for(let n = Math.max(1, line - vong); n <= line + vong; n++){
+    let s = q5Dong(e, n); if(s == null) break;
+    const loi = n === line; let c = -1, a = 0;
+    if(loi && col) c = col - 1;
+    if(s.length > W){ a = c >= 0 ? Math.max(0, Math.min(c - 80, s.length - W)) : Math.max(0, s.search(/\S/)); }
+    const truoc = a > 0, sau = a + W < s.length;
+    rows.push({ n, s: s.slice(a, a + W), loi, c: c >= 0 ? c - a : -1, truoc, sau });
+  }
+  return rows;
+}
+function q5DoanHtml(rows){
+  return `<div class="q5-ma">${rows.map(r => {
+    let code = esc(r.s);
+    if(r.loi && r.c >= 0 && r.c <= r.s.length){ const m = /^[\w$]+|^./.exec(r.s.slice(r.c)) || [""]; const a = r.s.slice(0, r.c), b = r.s.slice(r.c, r.c + Math.max(1, m[0].length)), z = r.s.slice(r.c + Math.max(1, m[0].length));
+      code = esc(a) + `<mark>${esc(b) || " "}</mark>` + esc(z); }
+    return `<div class="q5-d${r.loi ? " loi" : ""}"><span class="q5-so">${r.n}</span><span class="q5-c">${r.truoc ? "<i>…</i>" : ""}${code}${r.sau ? "<i>…</i>" : ""}</span></div>`; }).join("")}</div>`;
+}
+const q5DoanChu = rows => rows.map(r => `${r.loi ? ">" : " "} ${String(r.n).padStart(6)} | ${r.truoc ? "…" : ""}${r.s}${r.sau ? "…" : ""}` + (r.loi && r.c >= 0 ? `\n${" ".repeat(10 + (r.truoc ? 1 : 0) + r.c)}^` : "")).join("\n");
+/* KIỂM CÚ PHÁP từng khối script (chỉ PHÂN TÍCH bằng new Function — KHÔNG chạy mã) */
+function q5KiemCuPhap(e){
+  const kq = [];
+  q5Scripts(e).forEach(k => {
+    if(k.src || k.json) return;
+    let code = e.text.slice(k.s, k.e); if(!code.trim()) return;
+    try{
+      if(k.mod){
+        code = code.replace(/^[ \t]*import\s*(?:[\w$]+\s*,?\s*)?(?:\{[^}]*\}|\*\s*as\s+[\w$]+)?\s*(?:from\s*)?["'][^"'\n]+["']\s*;?/gm, x => x.replace(/[^\n]/g, " "))
+                   .replace(/^[ \t]*export\s+default\s+/gm, "void ").replace(/^[ \t]*export\s+(?=(?:async\s+)?function|const|let|var|class)/gm, "").replace(/^[ \t]*export\s*\{[^}]*\}\s*(?:from\s*["'][^"']+["'])?\s*;?/gm, x => x.replace(/[^\n]/g, " "))
+                   .replace(/\bimport\.meta\b/g, "({})");
+        new Function("'use strict';return (async function(){\n" + code + "\n});");
+      } else new Function(code);
+      kq.push({ k, ok: true });
+    }catch(x){ kq.push({ k, ok: false, loi: String((x && x.message) || x) }); }
+  });
+  return kq;
+}
+/* Khai báo let/const/class TRÙNG TÊN giữa các khối script thường ⇒ khối sau không chạy (lỗi nặng, dễ lọt). Đọc MỘT lượt mỗi khối. */
+function q5TrungTen(e){
+  const ten = new Map(), trung = [];
+  q5Scripts(e).forEach(k => {
+    if(k.src || k.json || k.mod) return;
+    let truoc = "", daThay = new Set();
+    q5NgoacMo(e.text, k.s, k.e, (w, pos, sau, pd) => {
+      if(sau === 0 && pd === 0 && (truoc === "let" || truoc === "const" || truoc === "class") && !Q5_KW.test(w) && w !== "of" && w !== "in"){
+        if(!daThay.has(w)){ daThay.add(w);
+          if(ten.has(w) && ten.get(w) !== k.i + 1) trung.push({ ten: w, k1: ten.get(w), k2: k.i + 1, dong: q5DongCuaOff(e, pos) }); else ten.set(w, k.i + 1); }
+      }
+      truoc = w;
+    });
+  });
+  return trung;
+}
+
+/* ─────────── 6. GOM NHÓM THEO VÂN TAY ─────────── */
+const Q5DOC = new Map();
+let q5NhoMoi = null;            /* bộ nhớ kết quả gom nhóm — xoá khi số liệu / mã nguồn / dấu đổi */
+let Q5_MOI = [];                /* dấu bỏ qua / xử lý vừa ghi ở phiên này (chưa nạp lại) */
+const q5Ms = x => { const d = ngay(x.tsClient) || ngay(x.ts); return d ? d.getTime() : 0; };
+function q5Doc(x){
+  const c = Q5DOC.get(x.id);
+  if(c && c.v === Q5NG_V && c.m === x.message && c.s === x.stack) return c;
+  const pt = q5PhanTich(x.message), kh = q5Khung(x.stack), appK = kh.filter(f => q5LaApp(f.url));
+  let top = appK[0] || null;
+  if(!top && x.line && q5LaApp(x.source) && /^https?:/.test(String(x.source))) top = { fn:"", url: String(x.source), line: Number(x.line) || 0, col: Number(x.col) || 0, raw:"(dòng/cột do trình duyệt báo)" };
+  const cls = q5Lop(x, pt, top);
+  /* tên hàm: lấy trên stack; stack không có tên (Safari / hàm gán) thì đọc từ mã nguồn đã tải (nếu có) */
+  let tenK = "", tenNg = "";
+  for(const f of appK){ const t = q5TenGon(f.fn); if(t){ tenK = t; break; } }
+  if(!tenK && top){ const e = Q5NG.get(q5KhoaTrang(top.url)); if(e && top.line){ try{ const h = q5HamTai(e, q5OffCua(e, top.line, top.col)); if(h && h.ten) tenNg = String(h.ten).split(".").pop(); }catch(z){} } }
+  const ten = tenK || tenNg;
+  const msg = q5Chuan(x.message);
+  let cot, loc = "";
+  if(cls === "cauhinh") cot = msg.slice(0, 300);
+  else if(cls === "that" || cls === "thietbi") cot = pt.kind !== "khac" ? pt.kind + ":" + pt.id : q5BoSo(msg).slice(0, 160);
+  else cot = q5BoSo(msg).slice(0, 120);
+  const viTri = t => t ? "f:" + t : top ? "l:" + q5DuongNgan(top.url) + ":" + top.line : "";
+  if(cls === "that") loc = viTri(ten);
+  const app = x.app || "?";
+  const fp = [app, cls, cot, loc].join("|"), fp1 = [app, cls, cot, cls === "that" ? viTri(tenK) : ""].join("|");
+  const r = { v: Q5NG_V, m: x.message, s: x.stack, pt, cls, kh, appK, top, ten, fp, fp1, may: q5May(x.ua), ms: q5Ms(x) };
+  Q5DOC.set(x.id, r);
+  if(Q5DOC.size > 6000) Q5DOC.clear();
+  return r;
+}
+const q5Key = fp => "G" + cyrb53(String(fp));
+/* dấu "bỏ qua / theo dõi lại / đã xử lý" trong nhật ký audit (mới nhất thắng) */
+function q5Dau(){
+  const m = new Map();
+  const ds = [...(DC_LOG || []), ...(AUD || []).filter(x => x && Q5.VIEC.includes(x.viec)), ...Q5_MOI];
+  const thay = new Set();
+  ds.filter(x => x && Q5.VIEC.includes(x.viec)).sort((a, b) => (ngay(a.at) || 0) - (ngay(b.at) || 0)).forEach(x => {
+    const id = x.id || (x.viec + "|" + x.ghi + "|" + (ngay(x.at) || 0)); if(thay.has(id)) return; thay.add(id);
+    const k = (/#(G[0-9a-z]+)\s*$/i.exec(String(x.ghi || "")) || [])[1]; if(!k) return;
+    const o = m.get(k) || {}; if(x.viec === "loi_xu_ly") o.xuLy = x; else o.boQua = x.viec === "loi_bo_qua" ? x : null; m.set(k, o);
+  });
+  return m;
+}
+/* khách đang TRẢ TIỀN cho app đó (không tính dùng thử) */
+function q5Tra(uid, app){
+  if(!uid) return false;
+  return LIC.some(l => l.uid === uid && (app === "sono" ? String(l.app).indexOf("sono") === 0 : l.app === app) && l.trial !== true && ["tra","vv"].includes(tt(l).ma));
+}
+/* bản app lúc lỗi: SN28 trở đi ghi thẳng trong lỗi (chắc chắn) · bản cũ: suy từ nhịp báo về của máy (gần đúng) */
+let _q5MayBan = { k: null, m: new Map() };
+function q5MayBan(){
+  const q = QUET.ban; if(_q5MayBan.k === q) return _q5MayBan.m;
+  const m = new Map(); try{ (q && q.rows || []).forEach(r => { if(r && r.uid && r.m && r.m.build) m.set(r.uid, r.m); }); }catch(e){}
+  _q5MayBan = { k: q, m }; return m;
+}
+function q5BanCua(x, ms){
+  if(x.build) return { b: String(x.build).slice(0, 60), chac: true };
+  if(x.app === "admin" && x.version) return { b: "Quản trị " + x.version, chac: true };
+  const m = q5MayBan().get(x.uid); if(!m) return null;
+  const at = Number(m.atMs) || 0;
+  if(at && at <= ms + 60e3 && ms - at < 7 * 864e5) return { b: m.build, chac: false };
+  return null;
+}
+function q5Nhom(){
+  const sig = [ERR, ERR.length, Q5NG_V, LIC, DC_LOG, AUD, Q5_MOI.length, QUET.ban];
+  if(q5NhoMoi && q5NhoMoi.sig.length === sig.length && q5NhoMoi.sig.every((v, i) => v === sig[i])) return q5NhoMoi.ds;
+  const now = Date.now(), d0 = dauNgay().getTime(), dau = q5Dau(), G = new Map(), traNho = new Map();
+  const tra = (u, a) => { const k = u + "|" + a; if(!traNho.has(k)) traNho.set(k, q5Tra(u, a)); return traNho.get(k); };
+  for(const x of ERR){
+    if(!x || !x.id) continue;
+    let a; try{ a = q5Doc(x); }catch(e){ console.warn("q5 đọc lỗi:", e); continue; }
+    let g = G.get(a.fp);
+    if(!g){ g = { fp: a.fp, key: q5Key(a.fp), alias: new Set(), app: x.app || "?", cls: a.cls, pt: a.pt, items: [], users: new Map(), users7: new Set(), tra7: new Set(),
+      may: new Map(), tr: new Map(), bans: new Map(), ngay: new Array(Q5.NGAY).fill(0), n24: 0, n7: 0, chua: 0, dau: 0, cuoi: 0, xuLyCuoi: 0, cu: 0 }; G.set(a.fp, g); }
+    g.alias.add(q5Key(a.fp1));
+    g.items.push(x);
+    const ms = a.ms;
+    if(x.resolved !== true) g.chua++;
+    else { const r = ngay(x.resolvedAt); if(r && r.getTime() > g.xuLyCuoi) g.xuLyCuoi = r.getTime(); }
+    if(ms){ if(!g.dau || ms < g.dau) g.dau = ms; if(ms > g.cuoi) g.cuoi = ms;
+      if(now - ms < 864e5) g.n24++;
+      if(now - ms < 7 * 864e5){ g.n7++; if(x.uid){ g.users7.add(x.uid); if(tra(x.uid, x.app)) g.tra7.add(x.uid); } }
+      const di = Q5.NGAY - 1 - Math.floor((d0 - new Date(ms).setHours(0, 0, 0, 0)) / 864e5); if(di >= 0 && di < Q5.NGAY) g.ngay[di]++; }
+    if(x.uid) g.users.set(x.uid, (g.users.get(x.uid) || 0) + 1);
+    g.may.set(a.may.os.split(" ")[0], (g.may.get(a.may.os.split(" ")[0]) || 0) + 1);
+    g.tr.set(a.may.tr.split(" ")[0], (g.tr.get(a.may.tr.split(" ")[0]) || 0) + 1);
+    if(a.may.cu) g.cu++;
+    const b = q5BanCua(x, ms); if(b) g.bans.set((b.chac ? "" : "≈") + b.b, (g.bans.get((b.chac ? "" : "≈") + b.b) || 0) + 1);
+  }
+  const ds = [...G.values()].map(g => {
+    g.items.sort((p, q) => q5Ms(q) - q5Ms(p));
+    g.mau = g.items[0]; const a = q5Doc(g.mau);
+    g.count = g.items.length; g.top = a.top; g.ham = a.ten;
+    g.nguoiTra = [...g.users.keys()].filter(u => tra(u, g.app)).length;
+    g.cu = g.cu > g.count / 2;
+    /* TÁI PHÁT: đã bấm "Đã xử lý" mà sau đó lại có lần mới chưa xử lý */
+    g.taiPhat = !!(g.xuLyCuoi && g.items.some(x => x.resolved !== true && q5Ms(x) > g.xuLyCuoi));
+    /* ĐANG BÙNG: 24 giờ qua nhiều gấp đôi trung bình 6 ngày trước đó */
+    const truoc = (g.n7 - g.n24) / 6; g.bung = g.n24 >= 3 && g.n24 > 2 * Math.max(0.5, truoc);
+    const d = dau.get(g.key) || [...g.alias].map(k => dau.get(k)).find(Boolean) || {};
+    g.boQua = !!d.boQua; g.daXuLy = d.xuLy || null;
+    g.tieuDe = q5TieuDe({ pt: g.pt, message: g.mau.message, cls: g.cls });
+    const L = Q5_LOP[g.cls] || Q5_LOP.that;
+    const tuoi = now - g.cuoi, gan = tuoi < 864e5 ? 1.6 : tuoi < 3 * 864e5 ? 1.25 : tuoi < 7 * 864e5 ? 1 : tuoi < 30 * 864e5 ? 0.45 : 0.15;
+    let s = L.nang * (1 + Math.log2(1 + g.n7 + (g.n7 ? 0 : 0.3 * g.count))) * (1 + g.users7.size + 1.5 * g.tra7.size) * gan;
+    if(g.taiPhat) s *= 1.5; if(g.bung) s *= 1.3; if(!g.chua) s *= 0.05; if(g.boQua) s *= 0.02;
+    g.diem = Math.round(s * 10) / 10;
+    return g;
+  }).sort((p, q) => (q.diem - p.diem) || (q.cuoi - p.cuoi));
+  q5NhoMoi = { sig, ds };
+  return ds;
+}
+const q5CanSua = g => (g.cls === "that" || g.cls === "cauhinh") && g.chua > 0 && !g.boQua && Date.now() - g.cuoi < 14 * 864e5;
+const q5NhomTheoKey = k => q5Nhom().find(g => g.key === k || g.alias.has(k)) || null;
+const q5NhomCuaDoc = id => q5Nhom().find(g => g.items.some(x => x.id === id)) || null;
+const q5DaDoi = () => { q5NhoMoi = null; };
+
+/* ─────────── 7. GIAO DIỆN ─────────── */
+try{
+  const st = document.createElement("style"); st.id = "q5-css";
+  st.textContent = `@media (max-width:979.98px){.nav{grid-template-columns:repeat(6,1fr)}.nav button{font-size:10.5px}}
+.nav button span{white-space:nowrap}
+.q5-diem{position:relative;overflow:hidden;border-radius:var(--r3);padding:16px 18px 14px;margin:8px 0 12px;color:#fff;background:linear-gradient(135deg,#127a4a,#0a5553)}
+.q5-diem.canh{background:linear-gradient(135deg,#a3561a,#6f3a10)}.q5-diem.xau{background:linear-gradient(135deg,#b3261e,#78170f)}
+.q5-diem::after{content:"";position:absolute;right:-50px;top:-50px;width:180px;height:180px;border-radius:50%;border:1px solid rgba(255,255,255,.22);box-shadow:0 0 0 14px rgba(255,255,255,.05);pointer-events:none}
+.q5-diem .nhan{font-size:13px;opacity:.88;font-weight:500}.q5-diem .to{font-size:46px;font-weight:700;letter-spacing:-.03em;line-height:1.05;margin:2px 0}
+.q5-diem .to i{font-style:normal;font-size:.4em;opacity:.8;margin-left:3px}.q5-diem .phu{font-size:13px;opacity:.92}
+.q5-diem .ba{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.22)}
+.q5-diem .ba b{display:block;font-size:16.5px;font-weight:700;word-break:break-word}.q5-diem .ba span{font-size:11.5px;opacity:.85}
+.q5-ly{font-size:12px;color:var(--muc2);margin:-4px 2px 10px;line-height:1.55}
+.q5-ma{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.6;background:var(--mat2);border:1px solid var(--vach);border-radius:12px;padding:6px 0;overflow-x:auto;margin:8px 0;-webkit-overflow-scrolling:touch}
+.q5-d{display:flex;white-space:pre;min-width:max-content}.q5-d.loi{background:var(--donhat)}
+.q5-so{flex:none;width:54px;text-align:right;padding-right:10px;color:var(--muc3);user-select:none;-webkit-user-select:none}
+.q5-c{padding-right:14px}.q5-c mark{background:var(--do);color:#fff;border-radius:3px;padding:0 1px}.q5-c i{color:var(--muc3);font-style:normal}
+.q5-spark{display:flex;align-items:flex-end;gap:2px;height:36px;margin:6px 0 2px}.q5-spark span{flex:1;background:var(--vach);border-radius:2px 2px 0 0;min-height:2px}
+.q5-spark span.co{background:var(--do)}.q5-spark span.nay{outline:1px solid var(--muc3)}
+.q5-bd{display:flex;align-items:flex-end;gap:4px;height:120px;padding:12px 10px 6px}.q5-bd>div{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;min-width:0}
+.q5-bd .cot{width:100%;max-width:22px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:5px 5px 2px 2px;overflow:hidden;min-height:2px;background:var(--mat2)}
+.q5-bd .cot b{display:block;background:var(--do)}.q5-bd .cot s{display:block;background:var(--ngocnhat);text-decoration:none}
+.q5-bd .x{font-size:9.5px;color:var(--muc3)}.q5-bd .n{font-size:9.5px;color:var(--muc2);font-weight:700}
+.q5-tt{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;flex:none;font-size:13px;font-weight:700}
+.q5-tt.ok{background:var(--lanhat);color:var(--la)}.q5-tt.canh{background:var(--dongnhat);color:var(--dong)}.q5-tt.xau{background:var(--donhat);color:var(--do)}.q5-tt.bo{background:var(--mat2);color:var(--muc3)}
+.q5-chi{font-size:12.5px;color:var(--muc2);line-height:1.5;margin-top:2px;word-break:break-word}
+.q5-buoc{display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-top:1px solid var(--vach)}.q5-buoc:first-child{border-top:0}
+.q5-buoc .gi{flex:1;min-width:0}.q5-buoc .t{font-weight:600;font-size:14px}
+.q5-buoc .nut{margin-top:8px}
+.q5-ten{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;font-weight:700;word-break:break-all}
+#v-suckhoe .tim{margin-top:2px}`;
+  document.head.appendChild(st);
+}catch(e){ console.warn("q5 css:", e); }
+ICP.suckhoe = '<path d="M20.4 6.7a4.9 4.9 0 0 0-8.4-2 4.9 4.9 0 0 0-8.4 2C2.7 11 7.4 15.6 12 19.6c4.6-4 9.3-8.6 8.4-12.9z"/><path d="M3.6 11.6h4.2l1.7-2.5 2.6 5 1.9-2.5h6.4"/>';
+TEN_VIEW.suckhoe = "Sức khoẻ app";
+const q5TenApp = a => a === "admin" ? "Quản trị" : tenApp(a);
+const Q5S = { loc:"can", app:"", tim:"", kham:null, dangKham:false, td:"" };
+/* thêm nút + màn "Sức khoẻ" (ngay trước Cài đặt) — dựng bằng mã, HTML gốc không đổi */
+try{
+  const nav = $("#nav"), cd = nav && nav.querySelector('button[data-v="caidat"]');
+  if(nav && !nav.querySelector('button[data-v="suckhoe"]')){
+    const b = document.createElement("button"); b.dataset.v = "suckhoe"; b.innerHTML = ic("suckhoe") + "<span>Sức khoẻ</span>"; b.setAttribute("aria-label", "Sức khoẻ app");
+    if(cd) nav.insertBefore(b, cd); else nav.appendChild(b);
+  }
+  const mn = $("#main"), vc = $("#v-caidat");
+  if(mn && !$("#v-suckhoe")){ const s = document.createElement("section"); s.className = "view"; s.id = "v-suckhoe"; if(vc) mn.insertBefore(s, vc); else mn.appendChild(s); }
+}catch(e){ console.warn("q5 nav:", e); }
+
+function q5Diem(N, K){
+  let d = 100, truLoi = 0; const ly = [];
+  N.filter(q5CanSua).forEach(g => { const t = Math.min(22, 6 + 3 * g.users7.size + 4 * g.tra7.size + (g.taiPhat ? 4 : 0) + (g.cls === "cauhinh" ? 4 : 0));
+    const con = Math.max(0, Math.min(t, 55 - truLoi)); if(con){ truLoi += con; ly.push(`−${con} ${g.tieuDe}`); } });
+  d -= truLoi;
+  let nang = []; try{ nang = radarNang(); }catch(e){}
+  if(nang.length){ const t = Math.min(16, 4 * nang.length); d -= t; ly.push(`−${t} Radar: ${nang.length} lỗ thất thoát nặng`); }
+  if(K && Date.now() - K.luc < 36 * 3600e3){
+    const x = K.K.filter(k => k.tt === "xau").length, c = K.K.filter(k => k.tt === "canh").length, t = Math.min(30, 8 * x + 2 * c);
+    if(t){ d -= t; ly.push(`−${t} Khám: ${x} đỏ · ${c} vàng`); }
+  }
+  const pb = q5PhanBan(); if(pb && pb.tong >= 3 && pb.moi / pb.tong < 0.7){ d -= 5; ly.push(`−5 Chỉ ${Math.round(pb.moi / pb.tong * 100)}% máy chạy bản mới nhất`); }
+  d = Math.max(0, Math.min(100, Math.round(d)));
+  return { d, ly, muc: d >= 85 ? "tot" : d >= 60 ? "canh" : "xau", chu: d >= 85 ? "Khoẻ mạnh" : d >= 60 ? "Cần chú ý" : "Đang có bệnh" };
+}
+/* máy khách chạy bản nào so với bản đang ở GitHub */
+function q5PhanBan(){
+  const q = QUET.ban, e = Q5NG.get(q5KhoaTrang("/SO---NO/"));
+  if(!q || !q.bans) return e && e.build ? { tong: 0, moi: 0, ban: e.build, tuGit: true } : null;
+  const moi = (e && e.build) || q.moiNhat || "";
+  const tong = Object.values(q.bans).reduce((s, n) => s + n, 0);
+  return { tong, moi: q.bans[moi] || 0, ban: moi, tuGit: !!(e && e.build) };
+}
+function q5DongNhom(g){
+  const L = Q5_LOP[g.cls] || Q5_LOP.that, dang = g.chua && !g.boQua;
+  const chips = [chip(L.ngan, dang ? L.lop : "")];
+  if(g.taiPhat) chips.push(chip("🔁 tái phát", "xau")); if(g.bung) chips.push(chip("🔥 đang bùng", "xau"));
+  if(g.boQua) chips.push(chip("đã bỏ qua")); else if(!g.chua) chips.push(chip("đã xử lý", "ok"));
+  return dongHtml({ the:"button", act:"q5-nhom", data:`data-k="${esc(g.key)}"`, ic: L.ic, lop: dang ? (L.lop === "xau" ? "do-c" : L.lop === "canh" ? "dong-c" : "") : "la-c",
+    t: `<span class="loi-msg">${esc(g.tieuDe)}${g.ham ? ` <span class="nhat">· ${esc(g.ham)}()</span>` : ""}</span>`,
+    d: `${esc(q5TenApp(g.app))} · ${g.n7 ? g.n7 + " lần / 7 ngày" : g.count + " lần"} · ${g.users.size} khách${g.nguoiTra ? ` (${g.nguoiTra} trả tiền)` : ""} · ${esc(lauRoi(g.cuoi))}<span class="chips">${chips.join("")}</span>`,
+    ph: chip("×" + g.count, dang ? (L.lop || "") : "ok"), mui:true });
+}
+function q5BieuDo(N){
+  const can = new Array(Q5.NGAY).fill(0), khac = new Array(Q5.NGAY).fill(0);
+  N.forEach(g => g.ngay.forEach((n, i) => { if(g.cls === "that" || g.cls === "cauhinh") can[i] += n; else khac[i] += n; }));
+  const max = Math.max(1, ...can.map((n, i) => n + khac[i]));
+  const d0 = dauNgay();
+  return `<div class="nhom"><div class="q5-bd">${can.map((n, i) => { const tg = n + khac[i], h = Math.round(tg / max * 100);
+    const d = new Date(d0.getTime() - (Q5.NGAY - 1 - i) * 864e5);
+    return `<div title="${esc(ngayVN(d))}: ${n} lỗi code · ${khac[i]} khác"><span class="n">${tg || ""}</span><span class="cot" style="height:${Math.max(2, h)}%"><b style="height:${tg ? Math.round(n / tg * 100) : 0}%"></b><s style="height:${tg ? 100 - Math.round(n / tg * 100) : 0}%"></s></span><span class="x">${i === Q5.NGAY - 1 ? "nay" : d.getDate()}</span></div>`; }).join("")}</div>
+    <div class="nho" style="padding:0 14px 12px">Đỏ = lỗi code / cấu hình · xanh nhạt = mạng, máy khách, nhiễu</div></div>`;
+}
+const Q5_LOC = [["can","Cần sửa"],["chua","Chưa xử lý"],["may","Máy chủ · quyền"],["mang","Mạng · máy khách"],["nhieu","Nhiễu · bỏ qua"],["xong","Đã xử lý"],["tat","Tất cả"]];
+function q5LocNhom(N){
+  const L = Q5S.loc, q = String(Q5S.tim || "").trim().toLowerCase();
+  return N.filter(g => {
+    if(Q5S.app && g.app !== Q5S.app) return false;
+    if(L === "can" && !q5CanSua(g)) return false;
+    if(L === "chua" && !(g.chua && !g.boQua)) return false;
+    if(L === "may" && !["quyen","cauhinh"].includes(g.cls)) return false;
+    if(L === "mang" && !["mang","thietbi","tainguyen","nguoi"].includes(g.cls)) return false;
+    if(L === "nhieu" && !(g.cls === "nhieu" || g.boQua)) return false;
+    if(L === "xong" && g.chua) return false;
+    if(q){ const s = (g.tieuDe + " " + g.mau.message + " " + (g.ham || "") + " " + [...g.users.keys()].map(u => emailCua(u)).join(" ")).toLowerCase(); if(s.indexOf(q) < 0) return false; }
+    return true;
+  });
+}
+function q5VeTab(giuTim){
+  const el = $("#v-suckhoe"); if(!el) return;
+  if(!DA_NAP){ el.innerHTML = trong("Đang lấy số liệu…", ""); return; }
+  let N = [];
+  try{ N = q5Nhom(); }catch(e){ console.warn("q5 nhóm:", e); el.innerHTML = `<div class="bao xau" style="margin-top:12px">Chưa phân tích được nhật ký lỗi: ${esc(maLoi(e))}</div>`; return; }
+  const K = q5KhamNho(), D = q5Diem(N, K), can = N.filter(q5CanSua), pb = q5PhanBan();
+  const kh = new Set(), tr = new Set(); can.forEach(g => { g.users7.forEach(u => kh.add(u)); g.tra7.forEach(u => tr.add(u)); });
+  const apps = [...new Set(N.map(g => g.app))].sort();
+  const hien = q5LocNhom(N);
+  const canh = q5CanhBat();
+  el.innerHTML = `
+    <div class="q5-diem ${D.muc}">
+      <div class="nhan">Sức khoẻ cả hệ app</div>
+      <div class="to so">${D.d}<i>/100</i></div>
+      <div class="phu">${esc(D.chu)} · ${K ? "khám lần cuối " + esc(lauRoi(K.luc)) : "chưa khám tổng quát phiên này"}</div>
+      <div class="ba"><div><b class="so">${can.length}</b><span>Lỗi code cần sửa</span></div>
+        <div><b class="so">${kh.size}${tr.size ? ` <small style="font-size:12px;opacity:.85">(${tr.size} trả tiền)</small>` : ""}</b><span>Khách gặp lỗi 7 ngày</span></div>
+        <div><b class="so" style="font-size:13.5px">${esc(pb && pb.ban ? pb.ban.replace(/^\d{4}-\d\d-\d\d-/, "") : "—")}</b><span>${pb && pb.tong ? `${Math.round(pb.moi / pb.tong * 100)}% máy đã lên` : "Bản Sổ Nợ mới nhất"}</span></div></div>
+    </div>
+    ${D.ly.length ? `<div class="q5-ly">${D.ly.slice(0, 6).map(esc).join(" · ")}${D.ly.length > 6 ? " · …" : ""}</div>` : ""}
+    <div class="hang-nut"><button class="nut chinh" data-act="q5-kham">${ic("suckhoe")}Khám tổng quát</button>
+      <button class="nut" data-act="q5-chep-tong">${ic("chep")}Chép báo cáo</button>
+      <button class="nut" data-act="q5-canh">${ic("chuong")}Canh lỗi: ${canh ? "BẬT" : "tắt"}</button></div>
+    ${mucHtml("Cần sửa ngay", can.length ? `${can.length} nhóm` : "")}
+    <div class="nhom">${can.length ? can.slice(0, 8).map(q5DongNhom).join("") : trong("Không có lỗi code nào cần sửa", "14 ngày qua máy khách không gặp lỗi code chưa xử lý (lỗi mạng / máy khách vẫn xem ở dưới).")}</div>
+    ${mucHtml("Lỗi 14 ngày qua", `${N.reduce((s, g) => s + g.ngay.reduce((a, b) => a + b, 0), 0)} lần`)}
+    ${q5BieuDo(N)}
+    ${mucHtml("Tất cả nhóm lỗi", `${hien.length}/${N.length} nhóm · ${ERR.length} lần ghi`)}
+    <div class="loc">${Q5_LOC.map(([k, t]) => `<button data-act="q5-loc" data-k="${k}" class="${Q5S.loc === k ? "on" : ""}">${esc(t)}</button>`).join("")}</div>
+    ${apps.length > 1 ? `<div class="loc"><button data-act="q5-app" data-k="" class="${!Q5S.app ? "on" : ""}">Mọi app</button>${apps.map(a => `<button data-act="q5-app" data-k="${esc(a)}" class="${Q5S.app === a ? "on" : ""}">${esc(q5TenApp(a))}</button>`).join("")}</div>` : ""}
+    <label class="tim">${ic("tim")}<input id="q5Tim" placeholder="Tìm theo nội dung lỗi, tên hàm, email khách" value="${esc(Q5S.tim)}" autocomplete="off"></label>
+    <div class="nhom">${hien.length ? hien.slice(0, 150).map(q5DongNhom).join("") : trong("Không có nhóm lỗi nào ở bộ lọc này", "")}</div>
+    ${hien.length > 150 ? `<p class="nho">Đang hiện 150 / ${hien.length} nhóm — gõ ô tìm để lọc.</p>` : ""}
+    ${q5KhamTom(K)}
+    ${q5BanTom()}
+    <p class="nho" style="text-align:center;margin-top:16px">Phân tích ${ERR.length} lần ghi lỗi mới nhất (tối đa 1.500) · ${canh ? "đang canh lỗi trực tiếp" : "canh lỗi trực tiếp đang tắt"}</p>`;
+  if(giuTim){ const i = $("#q5Tim"); if(i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
+  try{ q5NapNen(); }catch(e){}
+}
+function q5KhamTom(K){
+  if(!K) return `${mucHtml("Khám tổng quát")}<div class="nhom">${dongHtml({ the:"button", act:"q5-kham", ic:"suckhoe", t:"Chưa khám phiên này", d:"Soát máy chủ, từng app trên GitHub (cú pháp từng khối), máy chủ chức năng, máy khách, radar tiền — khoảng 10–30 giây", mui:true })}</div>`;
+  const x = K.K.filter(k => k.tt === "xau"), c = K.K.filter(k => k.tt === "canh");
+  return `${mucHtml("Khám tổng quát", `${esc(lauRoi(K.luc))} · ${K.K.length} mục`, `<button class="lk" data-act="q5-kham-xem">Xem</button>`)}
+    <div class="nhom">${[...x, ...c].slice(0, 6).map(k => q5DongKham(k)).join("") || dongHtml({ ic:"xong", lop:"la-c", t:`Tất cả ${K.K.length} mục đều ổn`, d:"Không có mục đỏ hay vàng" })}</div>`;
+}
+function q5BanTom(){
+  const T = [];
+  Q5_TRANG.forEach(p => { const k = q5KhoaTrang(q5DuongTrang(p)); const e = Q5NG.get(k); const ls = q5LichBan(q5DuongNgan(k));
+    if(e || ls.length) T.push(dongHtml({ ic:"may", t: esc(p.ten), d: esc(`${(e && e.build) || (ls[0] && ls[0].b) || "không ghi số bản"}${ls[0] && ls[0].lm ? " · đưa lên " + lauRoi(ls[0].lm) : ""}${e && e.md5 ? " · md5 " + e.md5 : ""}${ls.length > 1 ? ` · máy này đã thấy ${ls.length} lần đổi` : ""}`) })); });
+  const pb = q5PhanBan();
+  if(pb && pb.tong) T.push(dongHtml({ the:"button", act:"quet-ban", ic:"khach", lop: pb.moi / pb.tong < 0.7 ? "dong-c" : "la-c", t:`Máy khách Sổ Nợ: ${pb.moi}/${pb.tong} máy chạy ${esc(pb.ban || "bản mới nhất")}`,
+    d: pb.tuGit ? "So với bản đang ở GitHub" : "So với bản mới nhất máy khách báo về (chưa đọc được GitHub)", mui:true }));
+  if(!T.length) return "";
+  return `${mucHtml("Bản đang chạy")}<div class="nhom">${T.join("")}</div>`;
+}
+/* nạp nền (không chặn màn): mã nguồn Sổ Nợ để gộp đúng nhóm + soi nhanh */
+let _q5Nen = 0;
+function q5NapNen(){
+  if(Date.now() - _q5Nen < 10 * 60e3) return; _q5Nen = Date.now();
+  q5Tai("/SO---NO/").then(() => { q5DaDoi(); if(VIEW === "suckhoe" && !TAM.length && !(document.activeElement && document.activeElement.id === "q5Tim")) q5VeTab(); veHuyHieu(); }).catch(e => console.warn("q5 mã nguồn:", maLoi(e)));
+}
+
+/* ─────────── 8. TẤM "PHÂN TÍCH LỖI" ─────────── */
+function q5MoNhom(k){
+  const g0 = q5NhomTheoKey(k); if(!g0){ bao("Nhóm lỗi này không còn trong số liệu", 1); return null; }
+  const t = moTam({ tieuDe:"Phân tích lỗi", lamMoi: () => q5VeNhom(t) });
+  t.S = { q5Nhom: true, key: g0.key, soi: null, dangSoi: false, loiSoi: "", xemKhung: false, xemLan: 25 };
+  q5VeNhom(t); q5SoiNhom(t);
+  return t;
+}
+const q5NhomCuaTam = t => q5NhomTheoKey(t.S.key) || q5Nhom().find(g => [...g.alias].some(a => a === t.S.key)) || null;
+function q5Spark(ng){ const max = Math.max(1, ...ng); return `<div class="q5-spark">${ng.map((n, i) => `<span class="${n ? "co" : ""}${i === ng.length - 1 ? " nay" : ""}" style="height:${n ? Math.max(12, Math.round(n / max * 100)) : 6}%" title="${n} lần"></span>`).join("")}</div>`; }
+const q5Dem = m => [...m.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(" · ");
+function q5TinhTrangKhach(uid, app){
+  const ls = LIC.filter(l => l.uid === uid && (app === "sono" ? String(l.app).indexOf("sono") === 0 : l.app === app));
+  if(!ls.length) return { t:"chưa có gói", lop:"" };
+  if(q5Tra(uid, app)) return { t:"đang trả tiền", lop:"ok" };
+  if(ls.some(l => tt(l).ma === "thu")) return { t:"dùng thử", lop:"canh" };
+  if(ls.some(l => tt(l).ma === "khoa")) return { t:"đang khoá", lop:"xau" };
+  return { t:"hết hạn", lop:"xau" };
+}
+function q5VeNhom(t){
+  const g = q5NhomCuaTam(t);
+  if(!g){ t.than.innerHTML = trong("Nhóm lỗi đã thay đổi", "Số liệu vừa tải lại — đóng tấm này rồi mở lại từ danh sách."); t.chan.innerHTML = ""; return; }
+  t.S.key = g.key;
+  const L = Q5_LOP[g.cls] || Q5_LOP.that, [nghia, lam] = q5GiaiNghia(g), x = g.mau, a = q5Doc(x), S = t.S;
+  const users = [...g.users.entries()].sort((p, q) => q[1] - p[1]);
+  const lsBan = g.top ? q5LichBan(q5DuongNgan(g.top.url)) : [];
+  const moiNhat = lsBan[0] || null, lmMoi = moiNhat ? (moiNhat.lm || moiNhat.thay) : 0;
+  let sauBan = "";
+  if(lmMoi && moiNhat.b) sauBan = g.cuoi > lmMoi ? `<div class="bao xau"><b>Vẫn xảy ra sau khi bản ${esc(moiNhat.b)} lên</b> (${esc(gioVN(lmMoi))}) — lần cuối ${esc(lauRoi(g.cuoi))}. ${[...g.bans.keys()].some(b => b === moiNhat.b) ? "Có lần ghi CHẮC CHẮN từ bản này." : "Có thể máy khách chưa cập nhật — xem cột Bản ở danh sách lần ghi."}</div>`
+    : `<div class="bao tot"><b>Chưa thấy lại từ khi bản ${esc(moiNhat.b)} lên</b> (${esc(gioVN(lmMoi))}). Lần cuối ${esc(gioVN(g.cuoi))} — có thể bản mới đã hết lỗi này.</div>`;
+  const bc = g.items.find(y => Array.isArray(y.bc) || (y.ctx && typeof y.ctx === "object"));
+  t.than.innerHTML = `
+    <div class="chips" style="margin:0 0 8px">${chip(L.ten, L.lop)}${chip(q5TenApp(g.app), "ngoc")}${g.taiPhat ? chip("🔁 TÁI PHÁT sau khi đã xử lý", "xau") : ""}${g.bung ? chip("🔥 đang bùng", "xau") : ""}${g.boQua ? chip("đã bỏ qua (nhiễu)") : ""}${!g.chua ? chip("đã xử lý hết", "ok") : ""}</div>
+    <div style="font-weight:700;font-size:16px;line-height:1.35">${esc(g.tieuDe)}</div>
+    <div class="nhatky" style="max-height:none;margin:8px 0">${esc(q5Chuan(x.message))}</div>
+    <div class="bao ngoc"><b>Vì sao:</b> ${esc(nghia)}<br><b>Nên làm:</b> ${esc(lam)}${/requires an index|create_composite/i.test(x.message) ? `<div style="margin-top:8px"><a class="nut nho chinh" href="${esc((/https:\/\/console\.firebase\.google\.com\/[^\s"']+/.exec(x.message) || [""])[0])}" target="_blank" rel="noopener">Mở trang tạo index</a></div>` : ""}</div>
+    ${sauBan}
+    <div class="the">
+      <div class="kv"><span>Số lần</span><span>${g.count} lần · ${g.n24} trong 24 giờ · ${g.n7} trong 7 ngày · ${g.chua} chưa xử lý</span></div>
+      <div class="kv"><span>Khách gặp</span><span>${g.users.size} khách${g.nguoiTra ? ` · <b style="color:var(--do)">${g.nguoiTra} đang trả tiền</b>` : ""}</span></div>
+      <div class="kv"><span>Lần đầu · lần cuối</span><span>${esc(gioVN(g.dau))} · ${esc(gioVN(g.cuoi))}</span></div>
+      <div class="kv"><span>Loại máy</span><span>${esc(q5Dem(g.may))}</span></div>
+      <div class="kv"><span>Trình duyệt</span><span>${esc(q5Dem(g.tr))}${g.cu ? " · phần lớn là máy cũ" : ""}</span></div>
+      <div class="kv"><span>Bản app lúc lỗi</span><span>${g.bans.size ? esc(q5Dem(g.bans)) + (([...g.bans.keys()].some(b => b[0] === "≈")) ? `<br><small class="nhat">≈ = suy từ nhịp báo về của máy (Sổ Nợ SN28 trở đi ghi chắc chắn)</small>` : "") : "chưa rõ (máy khách chạy bộ thu lỗi cũ)"}</span></div>
+      <div class="kv"><span>Điểm nghiêm trọng</span><span>${g.diem}</span></div>
+      ${g.daXuLy ? `<div class="kv"><span>Đã xử lý lúc</span><span>${esc(gioVN(g.daXuLy.at))}${g.daXuLy.ghi ? " · " + esc(String(g.daXuLy.ghi).replace(/\s*·?\s*#G[0-9a-z]+\s*$/i, "")) : ""}</span></div>` : ""}
+    </div>
+    <div class="nho" style="margin:10px 2px 0">14 ngày qua (cột cuối = hôm nay)</div>${q5Spark(g.ngay)}
+    ${mucHtml("📍 Vị trí trong mã nguồn")}
+    <div id="q5Soi">${q5SoiHtml(t, g)}</div>
+    ${bc ? q5BoiCanhHtml(bc) : ""}
+    ${mucHtml("Khách gặp lỗi", `${users.length} khách`)}
+    <div class="nhom">${users.length ? users.slice(0, 30).map(([u, n]) => { const s = q5TinhTrangKhach(u, g.app);
+      return dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(u)}"`, ic:"khach", lop: s.lop === "ok" ? "do-c" : "", t: esc(emailCua(u) || u), d: `${n} lần`, ph: chip(s.t, s.lop), mui:true }); }).join("")
+      : trong("Không rõ khách nào", g.app === "sono" ? "Sổ Nợ bản trước SN28 không ghi mã khách vào log lỗi (từ SN28 trở đi có). Hoặc lỗi lúc chưa đăng nhập / ở trang khách (link nợ, cửa hàng online)." : "Lỗi ghi lúc chưa đăng nhập, hoặc từ trang khách (link nợ / cửa hàng online).")}</div>
+    ${mucHtml("Các lần ghi nhận", `${g.count} lần`)}
+    <div class="nhom">${g.items.slice(0, S.xemLan).map(y => { const ay = q5Doc(y), b = q5BanCua(y, ay.ms);
+      return dongHtml({ the:"button", act:"q5-lan", data:`data-id="${esc(y.id)}"`, ic: y.resolved === true ? "xong" : "lich", lop: y.resolved === true ? "la-c" : "",
+        t: esc(gioVN(ay.ms)) + " · " + esc(emailCua(y.uid) || (y.uid ? y.uid.slice(0, 10) + "…" : "chưa đăng nhập")), d: esc(`${ay.may.os} · ${ay.may.tr}${b ? " · " + (b.chac ? "" : "≈") + b.b : ""}${ay.top ? " · dòng " + ay.top.line : ""}`), mui:true }); }).join("")}</div>
+    ${g.count > S.xemLan ? `<button class="nut rong" style="margin-top:8px" data-act="q5-them-lan">Xem thêm ${Math.min(50, g.count - S.xemLan)} lần</button>` : ""}`;
+  t.chan.innerHTML = `<button class="nut chinh" data-act="q5-chep-bc">${ic("chep")}Chép báo cáo gửi Claude</button>
+    ${g.chua ? `<button class="nut" data-act="q5-xu-ly">${ic("xong")}Đã xử lý</button>` : `<button class="nut" data-act="q5-mo-lai">Mở lại</button>`}
+    <button class="nut" data-act="q5-bo-qua">${g.boQua ? "Theo dõi lại" : "Bỏ qua (nhiễu)"}</button>`;
+}
+function q5BoiCanhHtml(y){
+  const c = y.ctx && typeof y.ctx === "object" ? y.ctx : {}, bc = Array.isArray(y.bc) ? y.bc.map(String) : [];
+  const kv = [];
+  if(c.man) kv.push(["Màn đang mở", String(c.man)]);
+  if(c.on != null) kv.push(["Mạng lúc lỗi", c.on ? "có mạng" : "MẤT MẠNG"]);
+  if(c.up != null) kv.push(["Mở app được", Math.round(Number(c.up) || 0) >= 120 ? Math.round(c.up / 60) + " phút" : Math.round(Number(c.up) || 0) + " giây"]);
+  if(c.cai != null) kv.push(["Đã cài lên màn hình", c.cai ? "có" : "chưa (mở bằng trình duyệt)"]);
+  if(c.nv != null) kv.push(["Máy", c.nv ? "máy NHÂN VIÊN" : "máy chủ shop"]);
+  if(c.w) kv.push(["Màn hình", `${c.w}×${c.h || "?"}`]);
+  if(c.mem) kv.push(["RAM máy", c.mem + " GB"]);
+  if(y.k === "console") kv.push(["Nguồn", "lỗi app tự bắt rồi ghi console.error (bị nuốt, khách không thấy báo)"]);
+  return `${mucHtml("🧭 Bối cảnh lúc lỗi", "hộp đen máy khách")}<div class="the">${kv.map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>
+    ${bc.length ? `<div class="nho" style="margin:8px 2px 4px">Khách đã làm (cũ → mới):</div><div class="nhatky" style="max-height:200px">${bc.map(esc).join("\n")}</div>` : ""}`;
+}
+function q5SoiHtml(t, g){
+  const S = t.S;
+  if(S.dangSoi && !S.soi) return `<div class="the nho">Đang tải mã nguồn bản đang chạy trên GitHub và dò đúng dòng…</div>`;
+  if(S.loiSoi) return `<div class="bao canh">Chưa soi được mã nguồn: ${esc(S.loiSoi)}<div class="hang-nut" style="margin-top:8px"><button class="nut nho" data-act="q5-soi-lai">Thử lại</button></div></div>`;
+  const o = S.soi; if(!o) return `<div class="the nho">Chưa soi.</div>`;
+  if(o.khong) return `<div class="the nho">${esc(o.khong)}</div>${g.mau.stack ? `<div class="nhatky">${esc(g.mau.stack)}</div>` : ""}`;
+  const mu = { khop:["ok","✓ KHỚP"], lech:["canh","⚠ ĐÃ DỜI"], khongthay:["xau","? KHÔNG THẤY"], ngoai:["xau","? NGOÀI FILE"], khong:["","· không có tên để đối chiếu"] }[o.doi.muc] || ["",""];
+  return `<div class="the">
+      <div class="kv"><span>File</span><span>${esc(q5DuongNgan(o.url))}</span></div>
+      <div class="kv"><span>Dòng · cột</span><span>${o.line}${o.col ? " · cột " + o.col : ""}${o.doi.muc === "lech" ? ` <small class="nhat">(lỗi báo dòng ${o.line0})</small>` : ""}</span></div>
+      <div class="kv"><span>Hàm</span><span class="q5-ten">${esc(o.ham ? (o.ham.moTa || "ngoài khối script") : "—")}</span></div>
+      ${o.ham && o.ham.dongHam ? `<div class="kv"><span>Hàm bắt đầu</span><span>dòng ${o.ham.dongHam}</span></div>` : ""}
+      ${o.ham && o.ham.khoi ? `<div class="kv"><span>Khối</span><span>#${o.ham.khoi} · ${esc(o.ham.khoiTen || "(không tên)")} · từ dòng ${o.ham.khoiDong}</span></div>` : ""}
+      ${o.dauVa ? `<div class="kv"><span>Dấu vá gần nhất</span><span>[${esc(o.dauVa.dau)}] · dòng ${o.dauVa.dong}</span></div>` : ""}
+      <div class="kv"><span>Bản mã nguồn</span><span>${esc(o.ban || "không ghi số bản")} · ${o.tuKho ? "lấy từ kho trong máy" : "đang chạy trên GitHub"}${o.lm ? " · đưa lên " + esc(lauRoi(Date.parse(o.lm))) : ""}</span></div>
+      <div class="kv"><span>Đối chiếu</span><span>${mu[0] ? chip(mu[1], mu[0]) : esc(mu[1])}</span></div>
+      <div class="nho" style="padding-top:6px">${esc(o.doi.ghi || "")}${o.ghi ? " " + esc(o.ghi) : ""}</div></div>
+    ${q5DoanHtml(o.doan)}
+    ${o.khung.length > 1 ? `${mucHtml("Chuỗi gọi hàm", `${o.khung.length} bước`, `<button class="lk" data-act="q5-khung">${S.xemKhung ? "Thu gọn" : "Xem mã từng bước"}</button>`)}
+      <div class="nhom">${o.khung.map((k, i) => `<div class="dong" style="flex-wrap:wrap"><span class="ic ${i === 0 ? "do-c" : ""}" style="font-size:12px;font-weight:700">${i + 1}</span><span class="gi"><span class="t q5-ten" style="display:block">${esc(k.ham || k.fn || "(ẩn danh)")}</span>
+        <span class="d" style="display:block">${esc(q5DuongNgan(k.url))} · dòng ${k.line}${k.col ? " · cột " + k.col : ""}${k.ngoai ? " · thư viện ngoài" : ""}</span></span>
+        ${S.xemKhung && k.ma ? `<span style="width:100%">${q5DoanHtml(k.ma)}</span>` : ""}</div>`).join("")}</div>` : ""}
+    <div class="hang-nut" style="margin-top:8px"><button class="nut nho" data-act="q5-soi-lai">${ic("tai")}Tải lại mã nguồn</button></div>`;
+}
+async function q5SoiNhom(t, moi){
+  const S = t.S, g = q5NhomCuaTam(t); if(!g) return;
+  S.dangSoi = true; S.loiSoi = ""; if(moi) S.soi = null;
+  const ve = () => { if(TAM.includes(t)){ const b = $("#q5Soi", t.than); if(b){ const g2 = q5NhomCuaTam(t); if(g2) b.innerHTML = q5SoiHtml(t, g2); } } };
+  ve();
+  try{
+    /* chọn lần ghi có vị trí rõ nhất (ưu tiên lần mới nhất có khung của app) */
+    const x = g.items.find(y => q5Doc(y).top) || g.mau, a = q5Doc(x), top = a.top;
+    if(!top){ S.soi = { khong: a.kh.length ? "Lỗi chỉ nằm trong thư viện ngoài (Firebase / CDN) — không có dòng nào thuộc mã của app trên chuỗi gọi. Xem chuỗi gọi gốc bên dưới." : "Trình duyệt không báo vị trí (lỗi Promise / máy chủ thường không kèm dòng mã)." }; return; }
+    const k = q5KhoaTrang(top.url);
+    let e = await q5Tai(k, moi), ghi = "", tuKho = false;
+    const b = q5BanCua(x, a.ms);
+    if(b && b.chac && e.build && b.b !== e.build){
+      const cu = await q5KhoLay(k, b.b);
+      if(cu){ e = cu; tuKho = true; ghi = `Lỗi xảy ra ở bản ${b.b} — đang soi đúng bản đó (máy này đã lưu).`; }
+      else ghi = `Lỗi xảy ra ở bản ${b.b}, máy này chỉ có bản ${e.build} — dòng có thể lệch.`;
+    }
+    let doi = q5DoiChieu(e, top.line, top.col, g.pt);
+    if(doi.muc === "lech" || doi.muc === "khongthay" || doi.muc === "ngoai"){
+      for(const bb of await q5KhoDs(k)){ if(bb === e.build) continue; const cu = await q5KhoLay(k, bb); if(!cu) continue;
+        const d2 = q5DoiChieu(cu, top.line, top.col, g.pt);
+        if(d2.muc === "khop"){ e = cu; doi = d2; tuKho = true; ghi = `Khớp đúng bản ${bb} (máy này đã lưu) — lỗi xảy ra ở bản cũ đó.`; break; } }
+    }
+    let line = top.line, col = top.col;
+    if(doi.muc === "lech"){ line = doi.dong; const s = q5Dong(e, line) || "", re = q5ReId(g.pt), m = re ? re.exec(s) : null; col = m ? m.index + m[0].indexOf(g.pt.id) + 1 : 0; }
+    const off = q5OffCua(e, line, col || 1);
+    const ham = off >= 0 ? q5HamTai(e, off) : null;
+    const khung = [];
+    for(const f of a.kh.slice(0, 10)){
+      const kk = { fn: q5TenGon(f.fn) || f.fn, url: f.url, line: f.line, col: f.col, ngoai: !q5LaApp(f.url) };
+      if(!kk.ngoai){ try{ const ef = q5KhoaTrang(f.url) === e.k ? e : await q5Tai(f.url); const h = q5HamTai(ef, q5OffCua(ef, f.line, f.col)); if(h && h.moTa) kk.ham = h.moTa; kk.ma = q5Doan(ef, f.line, f.col, 1); }catch(z){} }
+      khung.push(kk);
+    }
+    if(!khung.length) khung.push({ fn: ham && ham.moTa, ham: ham && ham.moTa, url: top.url, line, col, ma: q5Doan(e, line, col, 1) });
+    S.soi = { url: top.url, line, col, line0: top.line, doi, ghi, tuKho, ban: e.build, lm: e.lm, ham, dauVa: q5DauVa(e, line), doan: q5Doan(e, line, col, 6), khung };
+    if(Q5DOC.size && !tuKho) q5DaDoi();
+  }catch(z){ S.loiSoi = maLoi(z) + (navigator.onLine ? "" : " (máy đang mất mạng)"); }
+  finally{ S.dangSoi = false; ve(); }
+}
+/* BÁO CÁO cho Claude — đủ để sửa mà không cần hỏi lại */
+function q5BaoCao(t){
+  const g = q5NhomCuaTam(t); if(!g) return "";
+  const o = t.S.soi, x = g.mau, [nghia, lam] = q5GiaiNghia(g), L = Q5_LOP[g.cls] || Q5_LOP.that;
+  const R = [];
+  R.push(`BÁO CÁO LỖI APP — ${q5TenApp(g.app)} (mã app: ${g.app}) · từ Quản trị ${CFG.ver} lúc ${gioVN(new Date())}`);
+  R.push(`Mã nhóm: ${g.key} · Loại: ${L.ten}${g.pt.kind !== "khac" ? " · " + g.pt.kind + (g.pt.id ? ":" + g.pt.id : "") : ""}`);
+  R.push(`Tóm tắt: ${g.tieuDe}`);
+  R.push(`Nội dung lỗi: ${q5Chuan(x.message)}`);
+  R.push(`Kiểu ghi: ${x.type || "?"}${x.k ? " (" + x.k + ")" : ""} · Số lần: ${g.count} (24 giờ: ${g.n24}, 7 ngày: ${g.n7}, chưa xử lý: ${g.chua})${g.taiPhat ? " · TÁI PHÁT sau khi đã đánh dấu xử lý" : ""}${g.bung ? " · ĐANG BÙNG" : ""}`);
+  R.push(`Khách gặp: ${g.users.size} (đang trả tiền: ${g.nguoiTra}) · Lần đầu: ${gioVN(g.dau)} · Lần cuối: ${gioVN(g.cuoi)}`);
+  R.push(`Máy: ${q5Dem(g.may)} · Trình duyệt: ${q5Dem(g.tr)}`);
+  R.push(`Bản app lúc lỗi: ${g.bans.size ? q5Dem(g.bans) : "chưa rõ"}`);
+  R.push(`Giải nghĩa: ${nghia}`);
+  R.push(`Gợi ý: ${lam}`);
+  if(o && !o.khong){
+    R.push("");
+    R.push(`VỊ TRÍ: ${o.url} · dòng ${o.line}${o.col ? " cột " + o.col : ""}${o.line0 !== o.line ? " (lỗi báo dòng " + o.line0 + ")" : ""}`);
+    R.push(`Hàm: ${o.ham ? (o.ham.moTa || "ngoài khối script") + (o.ham.dongHam ? " — bắt đầu dòng " + o.ham.dongHam : "") : "—"}`);
+    if(o.ham && o.ham.khoi) R.push(`Khối script #${o.ham.khoi}: ${o.ham.khoiTen || "(không tên)"} (từ dòng ${o.ham.khoiDong})`);
+    if(o.dauVa) R.push(`Dấu vá gần nhất: [${o.dauVa.dau}] ở dòng ${o.dauVa.dong}`);
+    R.push(`Bản mã nguồn đã soi: ${o.ban || "không ghi số bản"}${o.tuKho ? " (kho trong máy)" : " (đang chạy trên GitHub)"} · Đối chiếu: ${o.doi.muc} — ${o.doi.ghi || ""}${o.ghi ? " " + o.ghi : ""}`);
+    R.push("Mã quanh chỗ lỗi:");
+    R.push(q5DoanChu(o.doan));
+    if(o.khung.length > 1){ R.push(""); R.push("Chuỗi gọi (mới nhất trước):"); o.khung.forEach((k, i) => R.push(`  ${i + 1}. ${k.ham || k.fn || "(ẩn danh)"} — ${q5DuongNgan(k.url)}:${k.line}:${k.col || ""}${k.ngoai ? " (thư viện ngoài)" : ""}${k.ma && k.ma.find(r => r.loi) ? "\n       " + (k.ma.find(r => r.loi).s || "").trim().slice(0, 200) : ""}`)); }
+  } else if(o && o.khong) R.push("Vị trí: " + o.khong);
+  if(x.stack){ R.push(""); R.push("Stack gốc (lần mới nhất):"); R.push(String(x.stack).slice(0, 1800)); }
+  const bc = g.items.find(y => Array.isArray(y.bc) || (y.ctx && typeof y.ctx === "object"));
+  if(bc){ R.push(""); R.push("Bối cảnh (hộp đen máy khách):"); if(bc.ctx) R.push("  " + JSON.stringify(bc.ctx)); if(Array.isArray(bc.bc)) bc.bc.forEach(s => R.push("  · " + s)); }
+  R.push(""); R.push(`Máy lần mới nhất: ${x.ua || "?"}`);
+  return R.join("\n");
+}
+/* MỘT LẦN GHI: toàn bộ trường */
+function q5MoLan(id){
+  const x = ERR.find(y => y.id === id); if(!x) return bao("Không còn bản ghi này", 1);
+  const a = q5Doc(x), b = q5BanCua(x, a.ms);
+  const t = moTam({ tieuDe:"Một lần ghi lỗi" });
+  const bo = new Set(["message","stack","bc","ctx"]);
+  t.than.innerHTML = `<div class="the">
+      <div class="kv"><span>Lúc</span><span>${esc(gioVN(a.ms))}${x.ts && x.tsClient ? ` <small class="nhat">(máy khách ${esc(gioVN(x.tsClient))} · máy chủ ${esc(gioVN(x.ts))})</small>` : ""}</span></div>
+      <div class="kv"><span>Khách</span><span>${esc(emailCua(x.uid) || x.uid || "chưa đăng nhập")}</span></div>
+      <div class="kv"><span>Máy</span><span>${esc(a.may.os + " · " + a.may.tr)}</span></div>
+      <div class="kv"><span>Bản app</span><span>${b ? esc((b.chac ? "" : "≈ ") + b.b) : "chưa rõ"}</span></div>
+      ${Object.keys(x).filter(k => !bo.has(k) && !["id","ua","uid","ts","tsClient"].includes(k)).sort().map(k => `<div class="kv"><span>${esc(k)}</span><span>${esc(typeof x[k] === "object" && x[k] ? (ngay(x[k]) ? gioVN(x[k]) : JSON.stringify(x[k]).slice(0, 300)) : String(x[k]))}</span></div>`).join("")}</div>
+    <div class="nhatky" style="max-height:none">${esc(q5Chuan(x.message))}</div>
+    ${x.stack ? `<div class="nhatky">${esc(x.stack)}</div>` : ""}
+    ${Array.isArray(x.bc) || x.ctx ? q5BoiCanhHtml(x) : ""}
+    <p class="nho" style="word-break:break-all">${esc(x.ua || "")}</p>`;
+  t.chan.innerHTML = `<button class="nut" data-act="chep" data-v="${esc(JSON.stringify(Object.assign({}, x, { ts: ngay(x.ts) ? ngay(x.ts).toISOString() : x.ts, resolvedAt: ngay(x.resolvedAt) ? ngay(x.resolvedAt).toISOString() : x.resolvedAt })))}">${ic("chep")}Chép bản ghi</button>
+    ${x.uid ? `<button class="nut" data-act="mo-khach" data-uid="${esc(x.uid)}">Hồ sơ khách</button>` : ""}`;
+}
+/* báo cáo tổng (tab) */
+function q5BaoCaoTong(){
+  const N = q5Nhom(), K = q5KhamNho(), D = q5Diem(N, K), can = N.filter(q5CanSua);
+  const R = [`BÁO CÁO SỨC KHOẺ HỆ APP — Quản trị ${CFG.ver} · ${gioVN(new Date())}`, `Điểm: ${D.d}/100 (${D.chu})${D.ly.length ? " · " + D.ly.join(" · ") : ""}`, ""];
+  R.push(`LỖI CẦN SỬA (${can.length} nhóm):`);
+  can.slice(0, 15).forEach((g, i) => R.push(`${i + 1}. [${g.key}] ${q5TenApp(g.app)} · ${g.tieuDe}${g.ham ? " · " + g.ham + "()" : ""} · ${g.count} lần (7 ngày ${g.n7}) · ${g.users.size} khách (${g.nguoiTra} trả tiền) · cuối ${gioVN(g.cuoi)}${g.top ? " · " + q5DuongNgan(g.top.url) + ":" + g.top.line : ""}\n   ${q5Chuan(g.mau.message).slice(0, 220)}`));
+  R.push(""); R.push("NHÓM KHÁC (chưa xử lý):");
+  N.filter(g => !q5CanSua(g) && g.chua && !g.boQua).slice(0, 15).forEach(g => R.push(`- ${Q5_LOP[g.cls].ngan} · ${q5TenApp(g.app)} · ${g.tieuDe} · ${g.count} lần · ${g.users.size} khách`));
+  if(K){ R.push(""); R.push(`KHÁM TỔNG QUÁT (${gioVN(K.luc)}):`); K.K.forEach(k => R.push(`${{ ok:"✓", canh:"!", xau:"✗", bo:"·" }[k.tt] || "·"} [${k.nhom}] ${k.ten}${k.chi ? " — " + k.chi : ""}`)); }
+  return R.join("\n");
+}
+
+/* ─────────── 9. KHÁM TỔNG QUÁT ─────────── */
+const Q5_TRANG = [
+  { ma:"sono", ten:"Sổ Nợ + Bán hàng", p:"/SO---NO/", sw:"/SO---NO/sw.js", phu:[["/SO---NO/sono-push-sw.js","SW thông báo đẩy"],["/SO---NO/cuahang.html","Trang cửa hàng online"],["/SO---NO/menu.html","Trang thực đơn QR"],["/SO---NO/shop.html","Trang link cố định"]] },
+  { ma:"cafe", ten:"Quản Lý Cafe", p:"/cafe-tra-sua/", sw:"/cafe-tra-sua/sw.js" },
+  { ma:"tro", ten:"TrọSafe", p:"/nha-tro/", sw:"/nha-tro/sw.js" },
+  { ma:"xe", ten:"NhàXe Pro", p:"/xe-dich-vu/", sw:"/xe-dich-vu/sw.js" },
+  { ma:"hd", ten:"Xe Hợp Đồng", p:"/hop-dong/", sw:"/hop-dong/sw.js" },
+  { ma:"admin", ten:"Quản trị (app này)", p:"", sw:"" }
+];
+const q5DuongTrang = p => p.p || (/(^|\.)github\.io$/.test(location.hostname) ? location.pathname.replace(/[^/]*$/, "") : "/admin/");
+const Q5_HAM = [
+  { ten:"aiHieu", vung:"asia-southeast1", viec:"AI online (hiểu câu nói khách)" },
+  { ten:"tbDangKyMay", vung:"asia-southeast1", viec:"Thông báo đẩy — đăng ký máy" },
+  { ten:"tbThu", vung:"asia-southeast1", viec:"Thông báo đẩy — gửi thử" },
+  { ten:"saoLuuApp", vung:"asia-southeast1", viec:"Sao lưu tự động qua email" },
+  { ten:"xoaTaiKhoan", vung:"asia-southeast1", viec:"Khách tự xoá tài khoản" },
+  { ten:"datLaiMKKhach", vung:"us-central1", viec:"Đặt lại mật khẩu khách (nút của Quản trị)" }
+];
+function q5KhamNho(){
+  if(Q5S.kham) return Q5S.kham;
+  const o = q5Lay(Q5.KEY_KHAM, null);
+  return o && Array.isArray(o.K) && Date.now() - (Number(o.luc) || 0) < 36 * 3600e3 ? o : null;
+}
+async function q5LayNho(url, ms){
+  const ac = typeof AbortController === "function" ? new AbortController() : null, hen = setTimeout(() => { try{ ac && ac.abort(); }catch(e){} }, ms || 20000);
+  try{ const r = await fetch(url, { cache:"no-cache", credentials:"omit", signal: ac ? ac.signal : undefined }); const t = r.ok ? await r.text() : ""; return { r, t }; }
+  finally{ clearTimeout(hen); }
+}
+async function q5GoCua(h){
+  const url = `https://${h.vung}-${CFG.fb.projectId}.cloudfunctions.net/${h.ten}`, t0 = performance.now();
+  const ac = typeof AbortController === "function" ? new AbortController() : null; let het = false;
+  const hen = setTimeout(() => { het = true; try{ ac && ac.abort(); }catch(e){} }, 20000);
+  try{
+    /* thân {} không có "data" ⇒ máy chủ chối ngay ở cổng (400), KHÔNG chạy việc gì — chỉ để biết hàm còn sống */
+    const r = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}", cache:"no-store", credentials:"omit", signal: ac ? ac.signal : undefined });
+    const ms = Math.round(performance.now() - t0);
+    if(r.status === 400) return { tt:"ok", chi:`đang chạy · trả lời ${ms} ms` + (ms > 6000 ? " (vừa khởi động lạnh)" : "") };
+    if(r.status === 404) return { tt:"xau", chi:"chưa cài / đã gỡ (404)" };
+    if(r.status === 401 || r.status === 403) return { tt:"xau", chi:`cổng bị khoá (${r.status}) — app khách gọi sẽ bị chối` };
+    if(r.status >= 500) return { tt:"canh", chi:`máy chủ lỗi ${r.status}` };
+    return { tt:"ok", chi:`trả lời mã ${r.status} · ${ms} ms` };
+  }catch(e){ return { tt: navigator.onLine ? "xau" : "canh", chi: het ? "quá 20 giây không trả lời" : navigator.onLine ? "không gọi được — chưa cài, đã gỡ, hoặc cổng chưa mở công khai" : "máy này đang mất mạng" }; }
+  finally{ clearTimeout(hen); }
+}
+const q5Gio = ms => ms < 60e3 ? Math.round(ms / 1000) + " giây" : ms < 3600e3 ? Math.round(ms / 60e3) + " phút" : Math.round(ms / 3600e3) + " giờ";
+async function q5Kham(td){
+  const K = [], them = (nhom, ten, tt, chi, nut) => K.push({ nhom, ten, tt, chi: String(chi || ""), nut: nut || null });
+  const buoc = async (ten, fn) => { td(ten); try{ await fn(); }catch(e){ them("Bộ khám", ten, "canh", "Bước khám này gặp trục trặc: " + maLoi(e)); } };
+  /* A. Máy chủ Firestore */
+  await buoc("Máy chủ dữ liệu", async () => {
+    const t0 = performance.now(); const s = await getDoc(doc(fdb, "billing", "config")); const ms = Math.round(performance.now() - t0);
+    if(s.metadata && s.metadata.fromCache) them("Máy chủ dữ liệu", "Đọc thẳng máy chủ Firestore", "canh", "Chỉ đọc được bản lưu trong máy — mạng chập chờn");
+    else them("Máy chủ dữ liệu", "Đọc thẳng máy chủ Firestore", ms > 3000 ? "canh" : "ok", `trả lời ${ms} ms${ms > 3000 ? " — chậm" : ""}`);
+    them("Máy chủ dữ liệu", "Số liệu đang xem", DA_NAP ? (Date.now() - LUC_NAP > 3600e3 ? "canh" : "ok") : "xau",
+      DA_NAP ? `${Object.keys(ACC).length} khách · ${LIC.length} giấy phép · ${PAY.length} dòng thu · tải ${lauRoi(new Date(LUC_NAP))}` : "chưa tải được", DA_NAP && Date.now() - LUC_NAP > 3600e3 ? { act:"q5-tai-lai", chu:"Tải lại số liệu" } : null);
+    them("Máy chủ dữ liệu", "Nhận nhật ký lỗi từ máy khách", CFGDB.choLog === false ? "xau" : "ok", CFGDB.choLog === false ? "ĐANG TẮT — máy khách lỗi gì cũng không báo về" : "đang nhận", CFGDB.choLog === false ? { act:"nav", data:'data-v="caidat"', chu:"Mở công tắc" } : null);
+    try{
+      const m = await import("https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js");
+      if(m && typeof m.getCountFromServer === "function"){
+        const [a, b] = await Promise.all([m.getCountFromServer(collection(fdb, "error_logs")), m.getCountFromServer(query(collection(fdb, "error_logs"), where("resolved", "==", true)))]);
+        const n = Number(a.data().count) || 0, x = Number(b.data().count) || 0;
+        them("Máy chủ dữ liệu", "Kho nhật ký lỗi (error_logs)", n > 1500 ? "canh" : "ok", `${n.toLocaleString("vi-VN")} bản ghi · ${x.toLocaleString("vi-VN")} đã xử lý${n > 1500 ? " — bảng chỉ đọc 1.500 lần mới nhất; nên xoá log đã xử lý cho gọn, đỡ tốn lượt đọc" : ""}`,
+          n > 1500 && x ? { act:"q5-xoa-log", chu:`Xoá ${x.toLocaleString("vi-VN")} log đã xử lý` } : null);
+      }
+    }catch(e){ them("Máy chủ dữ liệu", "Kho nhật ký lỗi (error_logs)", "bo", "chưa đếm được: " + maLoi(e)); }
+    const u = auth.currentUser;
+    them("Máy chủ dữ liệu", "Tài khoản quản trị", u ? "ok" : "xau", u ? `${u.email} · đăng nhập ${u.metadata && u.metadata.lastSignInTime ? lauRoi(new Date(u.metadata.lastSignInTime)) : "—"}${u.emailVerified ? " · email đã xác minh" : ""}` : "chưa đăng nhập");
+  });
+  /* B. Từng app trên GitHub */
+  let lech = null;
+  for(const p of Q5_TRANG){
+    await buoc("App " + p.ten, async () => {
+      const duong = q5DuongTrang(p), url = q5Goc() + duong, nh = "App trên GitHub · " + p.ten;
+      let e;
+      try{ e = await q5Tai(url); }
+      catch(x){ them(nh, "Mở được trang", p.ma === "sono" || p.ma === "admin" ? "xau" : "canh", `${duong} — ${maLoi(x)}${/404/.test(maLoi(x)) ? " (sai tên kho, hoặc app chưa đưa lên)" : ""}`); return; }
+      const t = e.text, lm = Date.parse(e.lm) || 0;
+      if(lech == null && e.hDate){ const s = Date.parse(e.hDate); if(s) lech = Date.now() - s; }
+      const sdk = [...new Set([...t.matchAll(/firebasejs\/(\d+\.\d+\.\d+)\//g)].map(m => m[1]))];
+      const soDong = q5Off(e).length - (/\n$/.test(t) ? 1 : 0);
+      them(nh, "Trang đang chạy", "ok", `${e.build ? "bản " + e.build : "không ghi số bản"} · ${(e.bytes || t.length).toLocaleString("vi-VN")} byte · ${soDong.toLocaleString("vi-VN")} dòng${e.md5 ? " · md5 " + e.md5 : ""}${lm ? " · đưa lên " + lauRoi(lm) : ""}${sdk.length ? " · Firebase " + sdk.join(", ") : ""}`);
+      if(p.ma === "admin" && e.build && e.build !== CFG.ver) them(nh, "Bản trên máy này", "canh", `GitHub có ${e.build}, máy này đang chạy ${CFG.ver} — tải lại trang (kéo xuống / đóng mở app) để lên bản mới`);
+      const cp = q5KiemCuPhap(e), hong = cp.filter(x => !x.ok);
+      them(nh, "Cú pháp từng khối script", hong.length ? "xau" : "ok", hong.length ? hong.map(x => `khối #${x.k.i + 1} (dòng ${x.k.dong}${x.k.ten ? " · " + x.k.ten.slice(0, 50) : ""}): ${x.loi}`).join(" · ") + " — CẢ KHỐI đó không chạy trên máy khách"
+        : `${cp.length}/${cp.length} khối hợp lệ (chỉ đọc, không chạy mã)`);
+      const tr = q5TrungTen(e);
+      if(tr.length) them(nh, "Khai báo trùng tên giữa các khối", "xau", tr.slice(0, 5).map(x => `“${x.ten}” ở khối #${x.k1} và #${x.k2} (dòng ${x.dong})`).join(" · ") + " — khối sau KHÔNG chạy");
+      else them(nh, "Khai báo trùng tên giữa các khối", "ok", "không có");
+      const coThu = t.indexOf("__ERR_" + "LOG__") >= 0, coHop = t.indexOf("__ERR_" + "HOPDEN__") >= 0;   /* ghép chữ để chính mã này không tự khớp */
+      them(nh, "Bộ thu lỗi", coThu ? "ok" : "canh", coThu ? (coHop ? "có · kèm hộp đen (bản app, bối cảnh, lỗi bị nuốt)" : "có" + (p.ma === "sono" ? " · bản cũ (chưa ghi số bản app) — đưa Sổ Nợ SN28 lên để bắt lỗi chính xác tuyệt đối" : "")) : "KHÔNG có — lỗi máy khách app này không báo về");
+      if(!/so-no-cc57a/.test(t)) them(nh, "Cấu hình Firebase", "xau", "không thấy dự án so-no-cc57a trong trang");
+      if(p.ma === "sono"){
+        const b1 = (/\bAPP_BUILD\s*=\s*["'`]([^"'`\r\n]+)["'`]/.exec(t) || [])[1], b2 = (/\bvar\s+BUILD\s*=\s*'([^'\r\n]+)'/.exec(t) || [])[1];
+        if(b1 && b2) them(nh, "Số bản khớp nhau (APP_BUILD = BUILD báo về)", b1 === b2 ? "ok" : "canh", b1 === b2 ? b1 : `APP_BUILD ${b1} ≠ BUILD ${b2} — bảng quản trị sẽ thấy máy khách chạy sai bản`);
+      }
+      if(p.sw){ try{ const { r, t: s } = await q5LayNho(q5Goc() + p.sw); const v = (/\b(?:VER|PHIENBAN|CACHE_VER|VERSION)\s*=\s*["'`]([^"'`]+)["'`]/.exec(s) || [])[1];
+        them(nh, "Service worker " + p.sw.split("/").pop(), r.ok ? "ok" : "canh", r.ok ? (v ? "bản " + v : "có") : `không mở được (${r.status}) — app không chạy được khi mất mạng`); }
+        catch(x){ them(nh, "Service worker", "canh", "không mở được: " + maLoi(x)); } }
+      for(const [pp, ten] of (p.phu || [])){
+        try{ const { r } = await q5LayNho(q5Goc() + pp); them(nh, ten, r.ok ? "ok" : "xau", r.ok ? pp + " mở được" : `${pp} trả mã ${r.status} — khách mở link sẽ lỗi`); }
+        catch(x){ them(nh, ten, "xau", pp + " không mở được: " + maLoi(x)); }
+      }
+    });
+  }
+  if(lech != null) them("Máy quản trị này", "Giờ trên máy", Math.abs(lech) > 120e3 ? "canh" : "ok", Math.abs(lech) > 120e3 ? `lệch ${q5Gio(Math.abs(lech))} so với giờ máy chủ GitHub (${lech > 0 ? "nhanh" : "chậm"}) — giờ hạn / nhật ký trên máy này có thể sai` : "đúng giờ (lệch dưới 2 phút)");
+  /* C. Máy chủ chức năng */
+  await buoc("Máy chủ chức năng", async () => {
+    const kq = await Promise.all(Q5_HAM.map(h => q5GoCua(h).then(r => ({ h, r }))));
+    kq.forEach(({ h, r }) => them("Máy chủ chức năng (Cloud Functions)", `${h.viec}`, r.tt, `${h.ten} · ${h.vung} · ${r.chi}`, h.ten === "aiHieu" && r.tt === "ok" ? { act:"q5-thu-ai", chu:"Thử thật AI online" } : null));
+  });
+  /* D. Máy khách */
+  await buoc("Máy khách", async () => {
+    if(!QUET.ban){ td("Đọc nhịp báo về của máy khách…"); try{ await quetPhienBan(); }catch(e){} }
+    const pb = q5PhanBan(), q = QUET.ban;
+    if(pb && pb.tong) them("Máy khách", "Máy chạy bản mới nhất", pb.moi / pb.tong >= 0.7 ? "ok" : "canh", `${pb.moi}/${pb.tong} máy chạy ${pb.ban}${pb.tuGit ? " (bản đang ở GitHub)" : ""}${q && q.cu && q.cu.length ? ` · ${q.cu.length} máy bản cũ` : ""}`, q && q.cu && q.cu.length ? { act:"quet-ban", chu:"Xem máy bản cũ" } : null);
+    else them("Máy khách", "Máy chạy bản mới nhất", "bo", "chưa máy nào báo về");
+    if(q && q.im) them("Máy khách", "Khách trả tiền lâu không mở app", q.im.length ? "canh" : "ok", q.im.length ? `${q.im.length} khách ≥ ${DN_IM} ngày không mở — sắp bỏ app` : "không có", q.im.length ? { act:"quet-ban", chu:"Xem" } : null);
+  });
+  /* E. Tiền & giấy phép */
+  await buoc("Radar tiền", async () => {
+    const n = radarNang(), R = radar().filter(x => x.items.length);
+    them("Tiền & giấy phép", "Radar thất thoát", n.length ? "xau" : R.length ? "canh" : "ok", n.length ? `${n.length} lỗ nặng: ${n.slice(0, 3).map(x => x.ten).join(" · ")}` : R.length ? `${R.length} mục nên xem` : "sạch", n.length || R.length ? { act:"nav", data:'data-v="radar"', chu:"Mở Radar" } : null);
+    let l = null; try{ l = v4TKLech(); }catch(e){}
+    them("Tiền & giấy phép", "Tài khoản nhận tiền", l ? "xau" : v4CoTK(BILL) ? "ok" : "xau", l ? `ĐÃ ĐỔI so với lần trước máy này thấy: ${l.cu} → ${l.moi}` : v4CoTK(BILL) ? v4MoTaTK(BILL) : "đang trống — khách không quét QR trả tiền được", l || !v4CoTK(BILL) ? { act:"mo-bang-gia", chu:"Bảng giá" } : null);
+    them("Tiền & giấy phép", "Bắt buộc giấy phép", CFGDB.enforce === false ? "xau" : "ok", CFGDB.enforce === false ? "ĐANG TẮT — mọi khách dùng miễn phí" : "đang bật");
+  });
+  /* F. Lỗi app */
+  await buoc("Lỗi app", async () => {
+    const N = q5Nhom(), can = N.filter(q5CanSua), tp = N.filter(g => g.taiPhat && g.chua && !g.boQua), bung = N.filter(g => g.bung && g.chua && !g.boQua);
+    them("Lỗi app", "Lỗi code cần sửa", can.some(g => g.tra7.size) ? "xau" : can.length ? "canh" : "ok", can.length ? `${can.length} nhóm: ${can.slice(0, 3).map(g => g.tieuDe).join(" · ")}` : "không có", can.length ? { act:"q5-loc-can", chu:"Xem" } : null);
+    if(tp.length) them("Lỗi app", "Lỗi TÁI PHÁT sau khi đã xử lý", "xau", tp.slice(0, 3).map(g => g.tieuDe).join(" · "));
+    if(bung.length) them("Lỗi app", "Lỗi ĐANG BÙNG (24 giờ qua tăng vọt)", "xau", bung.slice(0, 3).map(g => `${g.tieuDe} (${g.n24} lần)`).join(" · "));
+    const moi = ERR.reduce((m, x) => Math.max(m, q5Ms(x)), 0);
+    them("Lỗi app", "Bộ thu lỗi còn báo về", "ok", moi ? `lần ghi gần nhất ${lauRoi(moi)}` : "chưa có lần ghi nào");
+  });
+  /* G. Máy quản trị này */
+  await buoc("Máy này", async () => {
+    let sw = null; try{ sw = navigator.serviceWorker ? await navigator.serviceWorker.getRegistration() : null; }catch(e){}
+    them("Máy quản trị này", "Chạy được khi mạng yếu (service worker)", sw ? "ok" : "canh", sw ? "đã đăng ký" : "chưa có — kiểm file sw.js trong kho admin");
+    let cai = false; try{ cai = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }catch(e){}
+    them("Máy quản trị này", "Cài lên màn hình chính", cai ? "ok" : "bo", cai ? "đã cài" : "đang mở bằng trình duyệt");
+    let k = true; try{ k = v4TuKhoaBat(); }catch(e){}
+    them("Máy quản trị này", "Tự khoá màn khi để quên", k ? "ok" : "canh", k ? `bật (${V4.PHUT} phút)` : "đang TẮT trên máy này", k ? null : { act:"v4-an-toan", chu:"Bật lại" });
+    try{ if(navigator.storage && navigator.storage.estimate){ const s = await navigator.storage.estimate(); const u = Number(s.usage) || 0, q = Number(s.quota) || 0;
+      them("Máy quản trị này", "Bộ nhớ trình duyệt", q && u / q > 0.8 ? "canh" : "ok", `dùng ${(u / 1048576).toFixed(1)} MB${q ? " / " + (q / 1073741824).toFixed(1) + " GB" : ""}`); } }catch(e){}
+    const ds = await q5KhoDs(q5KhoaTrang("/SO---NO/"));
+    them("Máy quản trị này", "Kho mã nguồn đã lưu (để soi lỗi bản cũ)", "ok", ds.length ? `Sổ Nợ: ${ds.join(", ")}` : "chưa lưu bản nào (tự lưu khi soi lỗi / khám)");
+  });
+  return { luc: Date.now(), K };
+}
+function q5DongKham(k){
+  const kh = { ok:"✓", canh:"!", xau:"✕", bo:"·" }[k.tt] || "·";
+  return `<div class="q5-buoc"><span class="q5-tt ${k.tt}">${kh}</span><div class="gi"><div class="t">${esc(k.ten)}</div><div class="q5-chi">${esc(k.chi)}</div>
+    ${k.nut ? `<button class="nut nho${k.tt === "xau" ? " chinh" : ""}" data-act="${esc(k.nut.act)}" ${k.nut.data || ""}>${esc(k.nut.chu)}</button>` : ""}</div></div>`;
+}
+function q5MoKham(chay){
+  const t = moTam({ tieuDe:"Khám tổng quát", lamMoi: () => q5VeKham(t) });
+  t.S = { q5Kham: true };
+  q5VeKham(t);
+  if(chay || !q5KhamNho()) q5ChayKham(t);
+  return t;
+}
+async function q5ChayKham(t){
+  if(Q5S.dangKham) return;
+  Q5S.dangKham = true; Q5S.td = "Bắt đầu…"; if(TAM.includes(t)) q5VeKham(t);
+  try{
+    const k = await q5Kham(s => { Q5S.td = s; if(TAM.includes(t)){ const b = $("#q5Td", t.than); if(b) b.textContent = s; } });
+    Q5S.kham = k; q5Ghi(Q5.KEY_KHAM, { luc: k.luc, K: k.K });
+    const x = k.K.filter(z => z.tt === "xau").length, c = k.K.filter(z => z.tt === "canh").length;
+    bao(x ? `Khám xong: ${x} mục đỏ, ${c} mục vàng` : c ? `Khám xong: ${c} mục cần chú ý` : `Khám xong: ${k.K.length} mục đều ổn`, x ? 1 : 0);
+  }catch(e){ bao("Khám lỗi: " + maLoi(e), 1); }
+  finally{ Q5S.dangKham = false; if(TAM.includes(t)) q5VeKham(t); if(VIEW === "suckhoe") q5VeTab(); else if(VIEW === "homnay") veView("homnay"); veHuyHieu(); }
+}
+function q5VeKham(t){
+  const K = q5KhamNho();
+  if(Q5S.dangKham){ t.than.innerHTML = `<div class="the" style="text-align:center;padding:26px 14px"><div style="font-size:30px">🩺</div><b>Đang khám…</b><div class="nho" id="q5Td">${esc(Q5S.td)}</div>
+    <div class="nho" style="margin-top:8px">Đọc thẳng GitHub + máy chủ. Không ghi gì, không chạy mã của app.</div></div>`; t.chan.innerHTML = ""; return; }
+  if(!K){ t.than.innerHTML = trong("Chưa khám", ""); t.chan.innerHTML = `<button class="nut chinh" data-act="q5-kham-lai">Khám ngay</button>`; return; }
+  const nhom = []; K.K.forEach(k => { let g = nhom.find(x => x.ten === k.nhom); if(!g) nhom.push(g = { ten: k.nhom, ds: [] }); g.ds.push(k); });
+  const x = K.K.filter(k => k.tt === "xau").length, c = K.K.filter(k => k.tt === "canh").length;
+  const can = [...K.K.filter(k => k.tt === "xau"), ...K.K.filter(k => k.tt === "canh")];
+  t.than.innerHTML = `<div class="bao ${x ? "xau" : c ? "canh" : "tot"}" style="margin-top:0"><b>${x ? `${x} mục ĐỎ cần làm ngay` : c ? `${c} mục cần chú ý` : "Mọi thứ đều ổn"}</b> · ${K.K.length} mục · khám ${esc(gioVN(K.luc))}</div>
+    ${can.length ? `${mucHtml("Cần làm ngay", `${x} đỏ · ${c} vàng`)}<div class="nhom">${can.map(k => q5DongKham(Object.assign({}, k, { ten: k.ten + " · " + k.nhom.replace(/^App trên GitHub · /, "") }))).join("")}</div>` : ""}
+    ${mucHtml("Toàn bộ kết quả")}
+    ${nhom.map(g => `${mucHtml(g.ten, `${g.ds.filter(k => k.tt === "ok").length}/${g.ds.length} ổn`)}<div class="nhom">${g.ds.map(q5DongKham).join("")}</div>`).join("")}
+    <div id="q5Ai"></div>
+    <p class="nho" style="margin-top:12px">Máy chủ chức năng chỉ được GÕ CỬA (gửi yêu cầu rỗng, máy chủ chối ngay ở cổng) — không chạy việc nào, không tốn tiền AI. Muốn thử AI online thật thì bấm nút ở dòng AI.</p>`;
+  t.chan.innerHTML = `<button class="nut" data-act="q5-kham-chep">${ic("chep")}Chép kết quả</button><button class="nut chinh" data-act="q5-kham-lai">${ic("tai")}Khám lại</button>`;
+}
+function q5KhamChu(){ const K = q5KhamNho(); if(!K) return "Chưa khám";
+  return [`KẾT QUẢ KHÁM TỔNG QUÁT — Quản trị ${CFG.ver} · ${gioVN(K.luc)}`, ...K.K.map(k => `${{ ok:"✓", canh:"!", xau:"✗", bo:"·" }[k.tt] || "·"} [${k.nhom}] ${k.ten} — ${k.chi}`)].join("\n"); }
+
+/* ─────────── 10. CANH LỖI TRỰC TIẾP ─────────── */
+let _q5Nghe = null, _q5NgheHen = 0, _q5NgheLan = 0;
+const q5CanhBat = () => { try{ return localStorage.getItem(Q5.KEY_CANH) !== "0"; }catch(e){ return true; } };
+function q5TatNghe(){ clearTimeout(_q5NgheHen); try{ if(_q5Nghe) _q5Nghe(); }catch(e){} _q5Nghe = null; }
+function q5Nghe(){
+  q5TatNghe();
+  if(!q5CanhBat() || !auth.currentUser || !DA_NAP) return;
+  try{
+    _q5Nghe = onSnapshot(query(collection(fdb, "error_logs"), orderBy("tsClient", "desc"), limit(5)), s => {
+      _q5NgheLan = 0;
+      if(!s || (s.metadata && s.metadata.fromCache)) return;
+      const co = new Set(ERR.map(x => x.id)), moi = [];
+      s.docs.forEach(d => { if(!co.has(d.id)) moi.push({ ...(d.data() || {}), id: d.id }); });
+      if(!moi.length) return;
+      moi.sort((a, b) => q5Ms(a) - q5Ms(b)).forEach(x => ERR.unshift(x));
+      q5DaDoi();
+      const that = moi.filter(x => { try{ const c = q5Doc(x).cls; return c === "that" || c === "cauhinh"; }catch(e){ return false; } });
+      try{ veHuyHieu(); }catch(e){}
+      if(VIEW === "suckhoe" && !TAM.length && !(document.activeElement && document.activeElement.id === "q5Tim")) q5VeTab();
+      TAM.forEach(t => { try{ if(t.S && t.S.q5Nhom) q5VeNhom(t); }catch(e){} });
+      if(that.length){
+        const x = that[that.length - 1], tieu = q5TieuDe({ pt: q5Doc(x).pt, message: x.message, cls: q5Doc(x).cls });
+        bao(`🐞 Lỗi mới · ${q5TenApp(x.app)}: ${tieu}${x.uid ? " · " + (emailCua(x.uid) || "") : ""}`, 1);
+        try{ if(document.hidden && "Notification" in window && Notification.permission === "granted") new Notification("🐞 Lỗi mới · " + q5TenApp(x.app), { body: tieu, tag: "q5-loi" }); }catch(e){}
+      }
+    }, err => {
+      console.warn("canh lỗi:", err); _q5Nghe = null; _q5NgheLan++;
+      if(err && err.code === "permission-denied") return;
+      clearTimeout(_q5NgheHen); _q5NgheHen = setTimeout(q5Nghe, Math.min(300000, 15000 * Math.pow(2, Math.min(_q5NgheLan, 4))));
+    });
+  }catch(e){ console.warn("canh lỗi:", e); }
+}
+
+/* ─────────── 11. MÓC VÀO APP CŨ (bọc hàm — code cũ không sửa dòng nào; lỗi gì cũng trả về đúng kết quả cũ) ─────────── */
+function q5DatHuyHieu(){
+  const b = $('.nav button[data-v="suckhoe"]'); if(!b) return;
+  const hh = b.querySelector(".hh"); if(hh) hh.remove();
+  let n = 0; try{ n = q5Nhom().filter(q5CanSua).length; }catch(e){ n = 0; }
+  if(n) b.insertAdjacentHTML("beforeend", `<span class="hh">${n > 99 ? "99+" : n}</span>`);
+}
+try{
+  const goc = veView;
+  veView = function(v){ if(v === "suckhoe"){ try{ q5VeTab(); }catch(e){ console.warn("q5 tab:", e); } return; } return goc.apply(this, arguments); };
+}catch(e){ console.warn("q5 móc veView:", e); }
+try{
+  const goc = veHuyHieu;
+  veHuyHieu = function(){ const r = goc.apply(this, arguments); try{ q5DatHuyHieu(); }catch(e){ console.warn("q5 huy hiệu:", e); } return r; };
+}catch(e){ console.warn("q5 móc huy hiệu:", e); }
+try{
+  const goc = viecCanLam;
+  viecCanLam = function(){
+    const v = goc.apply(this, arguments);
+    try{
+      const i = v.findIndex(x => x && x.ic === "loi" && /lỗi app mới trong 24 giờ/.test(String(x.t || "")));
+      const can = q5Nhom().filter(q5CanSua);
+      if(can.length){
+        const kh = new Set(), tr = new Set(); can.forEach(g => { g.users7.forEach(u => kh.add(u)); g.tra7.forEach(u => tr.add(u)); });
+        const moi = { ic:"loi", lop:"do-c", t:`${can.length} lỗi code cần sửa`, d: esc(`${kh.size} khách gặp${tr.size ? ` (${tr.size} đang trả tiền)` : ""} · ${can.slice(0, 2).map(g => g.tieuDe).join(" · ")}${can.length > 2 ? "…" : ""}`),
+          ph:`<button class="nut nho chinh" data-act="nav" data-v="suckhoe">Xem</button>` };
+        if(i >= 0) v.splice(i, 1, moi); else v.push(moi);
+      } else if(i >= 0){
+        const cu = v[i]; v.splice(i, 1, { ...cu, t: String(cu.t || "").replace("lỗi app mới trong 24 giờ", "lỗi app trong 24 giờ — không có lỗi code"), d:"Toàn mạng yếu / máy khách / nhiễu — xem phân loại ở tab Sức khoẻ", ph:`<button class="nut nho" data-act="nav" data-v="suckhoe">Xem</button>` });
+      }
+      const K = q5KhamNho(); const x = K ? K.K.filter(k => k.tt === "xau") : [];
+      if(x.length) v.push({ ic:"canh", lop:"do-c", t:`Khám tổng quát: ${x.length} mục đỏ`, d: esc(x.slice(0, 2).map(k => k.ten + " — " + k.chi).join(" · ").slice(0, 200)), ph:`<button class="nut nho" data-act="q5-kham-xem">Xem</button>` });
+    }catch(e){ console.warn("q5 việc cần làm:", e); }
+    return v;
+  };
+}catch(e){ console.warn("q5 móc việc cần làm:", e); }
+function q5LoiCuaKhach(uid){
+  const ds = q5Nhom().filter(g => g.users.has(uid));
+  return mucHtml("Lỗi app máy khách này gặp", ds.length ? `${ds.length} nhóm` : "") + `<div class="nhom">${ds.length ? ds.slice(0, 12).map(g => {
+    const cuoi = Math.max(0, ...g.items.filter(x => x.uid === uid).map(q5Ms));
+    return dongHtml({ the:"button", act:"q5-nhom", data:`data-k="${esc(g.key)}"`, ic: (Q5_LOP[g.cls] || Q5_LOP.that).ic, lop: q5CanSua(g) ? "do-c" : "",
+      t:`<span class="loi-msg">${esc(g.tieuDe)}</span>`, d: esc(`${q5TenApp(g.app)} · ${g.users.get(uid)} lần · cuối ${lauRoi(cuoi)}`), ph: chip((Q5_LOP[g.cls] || Q5_LOP.that).ngan, q5CanSua(g) ? "xau" : ""), mui:true }); }).join("")
+    : trong("Máy khách này không gặp lỗi nào", "Trong 1.500 lần ghi lỗi mới nhất")}</div>`;
+}
+try{
+  const goc = hoHoTro;
+  hoHoTro = function(S){ const h = goc.apply(this, arguments); try{ return h + q5LoiCuaKhach(S.uid); }catch(e){ console.warn("q5 hồ sơ:", e); return h; } };
+}catch(e){ console.warn("q5 móc hồ sơ:", e); }
+try{
+  const goc = veRadar;
+  veRadar = function(){
+    const r = goc.apply(this, arguments);
+    try{
+      const v = $("#v-radar"), h = v && [...v.querySelectorAll(".muc h2")].find(x => x.textContent.trim() === "Lỗi app");
+      if(h && !$("#q5Radar")){ const n = q5Nhom().filter(q5CanSua).length;
+        h.parentElement.insertAdjacentHTML("afterend", `<div class="bao ngoc" id="q5Radar">🩺 Tab <b>Sức khoẻ</b> gộp đúng nhóm (cùng chỗ hỏng mà Chrome / iPhone báo khác chữ), chỉ ra dòng mã gây lỗi và chép được báo cáo gửi Claude. ${n ? `<b>${n} lỗi code cần sửa.</b>` : "Không có lỗi code cần sửa."} <button class="nut nho chinh" data-act="nav" data-v="suckhoe">Mở</button></div>`); }
+    }catch(e){ console.warn("q5 radar:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q5 móc radar:", e); }
+try{
+  const goc = veCaiDat;
+  veCaiDat = function(){
+    const r = goc.apply(this, arguments);
+    try{ const b = $('#v-caidat [data-act="v4-ban-do"]');
+      if(b && !$('#v-caidat [data-act="nav"][data-v="suckhoe"]')) b.insertAdjacentHTML("beforebegin", dongHtml({ the:"button", act:"nav", data:'data-v="suckhoe"', ic:"suckhoe", t:"Sức khoẻ app & bắt lỗi", d:"Lỗi máy khách gom theo vân tay · soi đúng dòng mã · khám tổng quát cả hệ · canh lỗi trực tiếp", mui:true }));
+      const p = [...$$("#v-caidat p.nho")].pop(); if(p && /Sổ doanh thu/.test(p.textContent) && !/Sức khoẻ/.test(p.textContent)) p.insertAdjacentText("beforeend", " · có tab Sức khoẻ app");
+    }catch(e){ console.warn("q5 cài đặt:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q5 móc cài đặt:", e); }
+try{
+  const goc = v4MoBanDo;
+  v4MoBanDo = function(){
+    const r = goc.apply(this, arguments);
+    try{ const t = TAM[TAM.length - 1], nh = t && t.than.querySelector(".nhom");
+      if(nh) nh.insertAdjacentHTML("afterbegin", `<div class="dong" style="flex-wrap:wrap"><span class="gi"><span class="t" style="display:block">Lỗi app · sức khoẻ cả hệ</span><span class="d" style="display:block">Mọi lỗi máy khách (6 app) gom theo vân tay · phân loại · soi đúng dòng / hàm / khối mã · tái phát · đang bùng · khám tổng quát GitHub + máy chủ chức năng + máy khách · canh lỗi trực tiếp · chép báo cáo gửi Claude</span>
+        <span class="d" style="display:block;opacity:.8">Ở đâu: tab Sức khoẻ · Hồ sơ → Hỗ trợ</span></span><span class="hang-nut" style="width:100%;margin-top:8px"><button class="nut nho" data-act="nav" data-v="suckhoe">Sức khoẻ</button><button class="nut nho" data-act="q5-kham">Khám tổng quát</button></span></div>`); }
+    catch(e){ console.warn("q5 bản đồ:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q5 móc bản đồ:", e); }
+try{
+  const goc = quetPhienBan;
+  quetPhienBan = async function(){ const r = await goc.apply(this, arguments); try{ q5DaDoi(); if(VIEW === "suckhoe" && !TAM.length && !(document.activeElement && document.activeElement.id === "q5Tim")) q5VeTab(); }catch(e){ console.warn("q5 quét bản:", e); } return r; };
+}catch(e){ console.warn("q5 móc quét bản:", e); }
+try{
+  const goc = batDau;
+  batDau = async function(){
+    const r = await goc.apply(this, arguments);
+    try{ if(DA_NAP && auth.currentUser){ q5Nghe(); setTimeout(() => { try{ if(auth.currentUser) q5NapNen(); }catch(e){} }, 9000); } }catch(e){ console.warn("q5 khởi động:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q5 móc khởi động:", e); }
+try{
+  const goc = ACT["mo-loi"];
+  ACT["mo-loi"] = b => {
+    try{ const g = _loiNhom.find(x => x.key === b.dataset.k), id = g && g.items[0] && g.items[0].id, G = id ? q5NhomCuaDoc(id) : null; if(G && q5MoNhom(G.key)) return; }catch(e){ console.warn("q5 mở lỗi:", e); }
+    return goc(b);
+  };
+}catch(e){ console.warn("q5 móc mở lỗi:", e); }
+try{
+  onAuthStateChanged(auth, u => { if(!u){ q5TatNghe(); Q5S.kham = null; } });
+  addEventListener("online", () => { if(DA_NAP && auth.currentUser && !_q5Nghe) q5Nghe(); });
+  document.addEventListener("input", e => { if(e.target && e.target.id === "q5Tim"){ Q5S.tim = e.target.value; q5VeTab(true); } });
+}catch(e){ console.warn("q5 sự kiện:", e); }
+
+/* ─────────── 12. NÚT BẤM ─────────── */
+Object.assign(ACT, {
+  "q5-nhom": b => { q5MoNhom(b.dataset.k); },
+  "q5-lan": b => q5MoLan(b.dataset.id),
+  "q5-loc": b => { Q5S.loc = b.dataset.k || "can"; q5VeTab(); },
+  "q5-app": b => { Q5S.app = b.dataset.k || ""; q5VeTab(); },
+  "q5-loc-can": () => { while(TAM.length) dongTam(); Q5S.loc = "can"; chuyenView("suckhoe"); },
+  "q5-kham": () => q5MoKham(true),
+  "q5-kham-xem": () => q5MoKham(false),
+  "q5-kham-lai": b => { const t = tamCua(b); if(t) q5ChayKham(t); },
+  "q5-kham-chep": () => copy(q5KhamChu()),
+  "q5-chep-tong": () => copy(q5BaoCaoTong()),
+  "q5-chep-bc": b => { const t = tamCua(b); if(t && t.S && t.S.q5Nhom){ copy(q5BaoCao(t)); if(!t.S.soi) bao("Đã chép — mã nguồn chưa soi xong, chép lại sau vài giây sẽ có thêm đoạn mã"); } },
+  "q5-tai-lai": () => taiLai(),
+  "q5-canh": async () => {
+    const bat = !q5CanhBat();
+    try{ localStorage.setItem(Q5.KEY_CANH, bat ? "1" : "0"); }catch(e){ return bao("Máy không cho lưu cài đặt này", 1); }
+    if(bat){ q5Nghe(); try{ if("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {}); }catch(e){} bao("Đã bật canh lỗi trực tiếp trên máy này"); }
+    else { q5TatNghe(); bao("Đã tắt canh lỗi trực tiếp trên máy này"); }
+    if(VIEW === "suckhoe") q5VeTab();
+  },
+  "q5-soi-lai": b => { const t = tamCua(b); if(t && t.S && t.S.q5Nhom) return q5SoiNhom(t, true); },
+  "q5-khung": b => { const t = tamCua(b); if(t && t.S && t.S.q5Nhom){ t.S.xemKhung = !t.S.xemKhung; const g = q5NhomCuaTam(t), x = $("#q5Soi", t.than); if(g && x) x.innerHTML = q5SoiHtml(t, g); } },
+  "q5-them-lan": b => { const t = tamCua(b); if(t && t.S && t.S.q5Nhom){ t.S.xemLan += 50; q5VeNhom(t); } },
+  "q5-xu-ly": async b => {
+    const t = tamCua(b), g = t && t.S && t.S.q5Nhom ? q5NhomCuaTam(t) : null; if(!g) return;
+    const ghi = await nhap({ tieuDe:"Đánh dấu đã xử lý", nutOk:"Đã xử lý", macDinh:"",
+      noiDung:`${g.chua} lần ghi chưa xử lý của nhóm “${g.tieuDe}” sẽ chuyển sang đã xử lý.\n\nGhi chú (không bắt buộc) — ví dụ: đã sửa ở bản SN28.\nLỗi này mà xảy ra lại sau lúc này sẽ hiện chữ TÁI PHÁT.` });
+    if(ghi == null) return;
+    await chay(b, async () => {
+      const ids = g.items.filter(x => x.resolved !== true).map(x => x.id);
+      await doiTrangThaiLoi(ids, true);
+      const luc = new Date();
+      ids.forEach(id => { const x = ERR.find(y => y.id === id); if(x){ x.resolved = true; x.resolvedAt = luc; x.resolvedBy = toiLa(); } });
+      const dong = `${String(ghi || "").trim().slice(0, 200) || "đã xử lý"} · ${g.tieuDe.slice(0, 120)} · #${g.key}`;
+      await ghiChung("loi_xu_ly", { ghi: dong }, "", g.app);
+      Q5_MOI.push({ viec:"loi_xu_ly", ghi: dong, at: luc, boi: toiLa() }); q5DaDoi();
+      bao(`Đã xử lý ${ids.length} lần ghi`);
+      if(TAM.includes(t)) q5VeNhom(t); if(VIEW === "suckhoe") q5VeTab(); else if(VIEW === "radar") veRadar(); veHuyHieu();
+    }, "Đang ghi…");
+  },
+  "q5-mo-lai": async b => {
+    const t = tamCua(b), g = t && t.S && t.S.q5Nhom ? q5NhomCuaTam(t) : null; if(!g) return;
+    await chay(b, async () => {
+      const ids = g.items.map(x => x.id);
+      await doiTrangThaiLoi(ids, false);
+      ids.forEach(id => { const x = ERR.find(y => y.id === id); if(x){ x.resolved = false; x.resolvedAt = null; x.resolvedBy = ""; } });
+      q5DaDoi(); bao("Đã mở lại nhóm lỗi");
+      if(TAM.includes(t)) q5VeNhom(t); if(VIEW === "suckhoe") q5VeTab(); veHuyHieu();
+    });
+  },
+  "q5-bo-qua": async b => {
+    const t = tamCua(b), g = t && t.S && t.S.q5Nhom ? q5NhomCuaTam(t) : null; if(!g) return;
+    const bo = !g.boQua;
+    if(bo && !(await hoi({ tieuDe:"Bỏ qua nhóm lỗi này", nutOk:"Bỏ qua",
+      noiDung:`“${g.tieuDe}” sẽ không tính vào Cần sửa, điểm sức khoẻ, huy hiệu nữa (vẫn xem được ở bộ lọc “Nhiễu · bỏ qua”).\n\nGhi vào nhật ký — mọi máy quản trị đều thấy. Bấm nhầm thì “Theo dõi lại”.` }))) return;
+    await chay(b, async () => {
+      const viec = bo ? "loi_bo_qua" : "loi_bo_bo_qua", dong = `${g.tieuDe.slice(0, 160)} · #${g.key}`;
+      await ghiChung(viec, { ghi: dong }, "", g.app);
+      Q5_MOI.push({ viec, ghi: dong, at: new Date(), boi: toiLa() }); q5DaDoi();
+      bao(bo ? "Đã bỏ qua nhóm này" : "Đã theo dõi lại nhóm này");
+      if(TAM.includes(t)) q5VeNhom(t); if(VIEW === "suckhoe") q5VeTab(); veHuyHieu();
+    });
+  },
+  "q5-xoa-log": async b => {
+    const n = ERR.filter(x => x.resolved === true).length;
+    if(!(await hoi({ tieuDe:"Xoá log lỗi đã xử lý", noiDung:`Xoá ${n} lần ghi lỗi ĐÃ XỬ LÝ trong số liệu đang tải (không xoá lỗi chưa xử lý). Không lấy lại được.`, nutOk:"Xoá", nguy:true }))) return;
+    await chay(b, async () => { const k = await xoaLoiDaXuLy(); bao(`Đã xoá ${k} log`); await taiLai(true); });
+  },
+  "q5-thu-ai": async b => {
+    const t = tamCua(b), box = t ? $("#q5Ai", t.than) : null;
+    await chay(b, async () => {
+      const t0 = performance.now();
+      const r = await httpsCallable(getFunctions(fbApp, "asia-southeast1"), "aiHieu", { timeout: 60000 })({ v: 1, viec: "kiem" });
+      const d = (r && r.data) || {}, th = d.thang || {};
+      const html = `<div class="bao tot"><b>✅ AI online chạy tốt</b> · mô hình ${esc(d.mo_hinh || "?")} · ${Math.round(performance.now() - t0)} ms<br>Câu thử «ghi no co ba 2 xi» ⇒ <b>${esc(d.thu || "?")}</b><br>Tháng này: ${esc(Number(th.n || 0).toLocaleString("vi-VN"))} lượt · ≈ ${esc(String(Math.round((Number(th.usd) || 0) * 100) / 100))} USD / trần ${esc(String(th.tran ?? "?"))} USD · mỗi shop ${esc(String(d.luot_ngay_moi_shop ?? "?"))} lượt/ngày</div>`;
+      if(box) box.innerHTML = html; bao("AI online chạy tốt");
+    }, "Đang hỏi AI…").catch(() => {});
+    if(box && !box.innerHTML) box.innerHTML = `<div class="bao xau">AI online chưa trả lời được — xem dòng báo lỗi phía dưới màn.</div>`;
+  }
+});
+/* ══════════════════════════ [5.1] 🧰 VẬN HÀNH — TRẠM PHÁT HÀNH · CÔNG TẮC KHẨN CẤP · HỘP THƯ HỖ TRỢ · TÍNH NĂNG KHÁCH DÙNG · SAO LƯU SỔ ══════════════════════════
+   Một mình làm cả đội: soát file trước khi đưa lên GitHub (bắt file hỏng, file cũ, quên đổi số bản…), biết file trên GitHub có
+   bị sửa ngoài ý muốn không, quay về bản trước 1 chạm, tắt ngay 1 tính năng đang lỗi trên máy khách (cả hệ hoặc 1 khách), buộc
+   máy chạy bản lỗi cập nhật, trả lời khách ngay trong app, xem khách dùng tính năng nào, tải bản sao sổ quản trị về máy.
+   Ghép đôi với Sổ Nợ SN29 (khối "ĐIỀU KHIỂN TỪ XA 2") + Firestore Rules Z8 (kho hotro, sono_dung, hộp đen error_logs).
+   Tiền tố q6 / Q6. KHÔNG sửa dòng nào của code cũ: móc bằng bọc hàm (q5VeTab, viecCanLam, hoHoTro, q5Kham, batDau) — lỗi gì
+   trong khối này thì màn cũ vẫn y như cũ. Chỉ ghi: billing/config.tat · banToiThieu (công tắc), accounts/{uid}.remote.tat ·
+   banToiThieu · hotro (riêng 1 khách), hotro/** (trả lời khách), audit (nhật ký). Không đụng dữ liệu bán hàng của khách. */
+const Q6 = { KEY_HT:"qt6_ht_v1", KEY_SOAT:"qt6_soat_v1", HT_TOI_DA:40, NGAY_DEM:30 };
+const Q6_VIEC = ["phat_hanh", "cong_tac_khan", "ban_toi_thieu", "tai_sao_luu_qt", "hotro_xong"];
+try{
+  Object.assign(TEN_VIEC, { phat_hanh:"Ghi nhận phát hành", cong_tac_khan:"Công tắc khẩn cấp", ban_toi_thieu:"Buộc cập nhật bản", tai_sao_luu_qt:"Tải bản sao sổ quản trị", hotro_xong:"Hộp thư: xong" });
+}catch(e){ console.warn("q6 tên việc:", e); }
+/* Danh mục tính năng — TRÙNG KHOÁ với QTX_TN của Sổ Nợ SN29 */
+const Q6_TN = {
+  ai:"🤖 AI làm giúp", aib:"🧠 Cố vấn kinh doanh", cam:"📷 Camera thông minh", in:"🖨️ In hoá đơn · bảng kê", hd:"📝 Hợp đồng",
+  link:"🔗 Link công nợ · nhắc nợ · chữ ký", pos:"🛒 Bán hàng", online:"🛍️ Nhắn tin khách · bán online", tb:"🔔 Thông báo đẩy",
+  sl:"💾 Sao lưu qua email", file:"📊 Xuất Excel · sao lưu / nhập file", gt:"🎁 Giới thiệu bạn bè", xtk:"🗑️ Xoá tài khoản",
+  troly:"💡 Trợ lý hướng dẫn", hotro:"💬 Hộp thư hỗ trợ (phía khách)"
+};
+const Q6_TN_GHI = { pos:"Tắt là khách KHÔNG mở được màn Bán hàng (đang bán dở thì vẫn bán xong). Chỉ dùng khi màn Bán hàng làm hỏng dữ liệu.",
+  cam:"Tắt ⇒ màn Bán hàng tự dùng máy quét cũ; các nút 📷 quét CCCD / chụp giấy bị chặn.", hotro:"Tắt ⇒ khách không gửi được câu hỏi mới (dùng khi bị nhắn rác)." };
+/* tên các con số đếm (users/{shop}/sono_dung) */
+const Q6_DEM = Object.assign({}, Q6_TN, {
+  mo_app:"📱 Mở app", ghi_gd:"✍️ Lưu giao dịch nợ", mo_gd:"➕ Mở bảng ghi nợ", khach_moi:"👤 Thêm khách", sua_khach:"✏️ Sửa khách", xem_khach:"👀 Xem sổ 1 khách",
+  cai_dat:"⚙️ Mở Cài đặt", cong_cu:"🧰 Mở Công cụ", ban_tm:"💵 Bán · tiền mặt", ban_no:"📒 Bán · ghi nợ", ban_qr:"🏦 Bán · chuyển khoản",
+  nhap_hang:"📦 Lưu phiếu nhập", tra_hang:"↩️ Trả hàng", don_giu:"⏸️ Mở đơn giữ", quet_ma:"🔎 Quét mã vạch", bao_tri:"🛠 Bấm vào tính năng đang tắt",
+  loi:"⚠️ Lỗi trên máy", hotro_gui:"💬 Gửi câu hỏi"
+});
+const Q6_LOI_CHINH = ["ghi_gd", "ban_tm", "ban_no", "ban_qr", "nhap_hang", "khach_moi"];
+const q6Lay = (k, md) => { try{ const v = JSON.parse(localStorage.getItem(k) || "null"); return v == null ? md : v; }catch(e){ return md; } };
+const q6Ghi = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+const q6Ms = v => { const d = ngay(v); return d ? d.getTime() : 0; };
+/* so số bản dạng 2026-11-06-SN29: ngày trước, rồi số. Không hiểu ⇒ null */
+function q6SoBan(b){ const m = /^(\d{4})-(\d\d)-(\d\d)-[A-Za-z]*(\d+)/.exec(String(b || "").trim()); return m ? [Number(m[1] + m[2] + m[3]), Number(m[4])] : null; }
+function q6SoSanhBan(a, b){ const x = q6SoBan(a), y = q6SoBan(b); if(!x || !y) return null; return x[0] !== y[0] ? Math.sign(x[0] - y[0]) : Math.sign(x[1] - y[1]); }
+/* ghi nhật ký chung + đưa ngay vào AUD (màn cập nhật liền, khỏi chờ tải lại) */
+async function q6NhatKy(viec, ct, uid, app){
+  const x = buoc(viec, ct); const rec = sach({ ...x, uid: uid || "", app: app || "" });
+  await addDoc(collection(fdb, "audit"), rec);
+  try{ AUD.unshift({ ...rec, id: "moi-" + Date.now() }); }catch(e){}
+  return rec;
+}
+/* tải 1 file về máy (đúng byte) */
+function q6TaiVe(ten, data, kieu){
+  const blob = data instanceof Blob ? data : new Blob([data], { type: kieu || "application/octet-stream" });
+  const u = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = u; a.download = ten; a.rel = "noopener"; document.body.appendChild(a); a.click();
+  setTimeout(() => { try{ URL.revokeObjectURL(u); a.remove(); }catch(e){} }, 4000);
+}
+const q6Byte = n => (Number(n) || 0).toLocaleString("vi-VN") + " byte";
+/* ─────────── 1. 🚀 TRẠM PHÁT HÀNH ───────────
+   Trước khi đưa file lên GitHub: chọn file ⇒ soát (đọc được UTF-8, đủ đuôi </html>, cú pháp từng khối, trùng tên khai báo, số bản đã đổi
+   và MỚI hơn bản đang chạy, 2 chỗ số bản khớp nhau, còn bộ thu lỗi / hộp đen, đúng dự án Firebase, dung lượng, khối mất / thêm, dấu vá mới)
+   ⇒ ✅ / ⚠️ / ⛔. Ghi nhận phát hành = 1 dòng audit "phat_hanh" (md5) ⇒ về sau file trên GitHub KHÔNG nằm trong danh sách đã ghi nhận
+   ⇒ cảnh báo "file bị đổi ngoài Trạm". Kho trong máy giữ 4 bản gần nhất mỗi app ⇒ quay về bản trước = tải đúng file đó về. */
+const Q6_MAU_APP = [["sono", /BỘ THU LỖI[^\n]{0,90}app=sono\b/], ["admin", /BỘ THU LỖI[^\n]{0,90}app=admin\b/], ["cafe", /BỘ THU LỖI[^\n]{0,90}app=cafe\b/],
+  ["tro", /BỘ THU LỖI[^\n]{0,90}app=tro\b/], ["xe", /BỘ THU LỖI[^\n]{0,90}app=xe\b/], ["hd", /BỘ THU LỖI[^\n]{0,90}app=hd\b/]];
+function q6AppCuaFile(t){
+  for(const [ma, re] of Q6_MAU_APP) if(re.test(t)) return ma;
+  if(/\bAPP_BUILD\s*=\s*["'`][^"'`]*SN\d+/.test(t)) return "sono";
+  if(/Sổ doanh thu/.test(t) && /\bCFG\s*=\s*\{/.test(t)) return "admin";
+  return "";
+}
+const q6Trang = ma => Q5_TRANG.find(p => p.ma === ma) || null;
+function q6CauHinhFb(t){
+  const lay = re => { const s = new Set(); let m; const r = new RegExp(re.source, "g"); while((m = r.exec(t))) s.add(m[1]); return [...s].sort().join(", "); };
+  return { pid: lay(/\bprojectId\s*:\s*["']([^"']{3,60})["']/), key: lay(/\bapiKey\s*:\s*["']([^"']{10,80})["']/), sdk: lay(/gstatic\.com\/firebasejs\/(\d+\.\d+\.\d+)\//) };
+}
+function q6DauVaDs(t){ const s = new Set(); const re = /\[((?:SN|QT|BV|QM)\d+[a-z]?|\d+\.\d+(?:\.\d+)?)\]/g; let m; while((m = re.exec(t))) s.add(m[1]); return s; }
+function q6KhoiTen(e){ return q5Scripts(e).filter(k => !k.src && !k.json).map(k => q5TenKhoi(e, k) || ("khối #" + (k.i + 1))); }
+/* so dòng nhanh (đếm theo nội dung dòng) — đủ biết thêm / bớt bao nhiêu dòng mà không phải chạy so khớp nặng */
+function q6SoDong(a, b){
+  const dem = t => { const m = new Map(); for(const l of t.split("\n")) m.set(l, (m.get(l) || 0) + 1); return m; };
+  const A = dem(a), B = dem(b); let them = 0, bot = 0;
+  B.forEach((n, l) => { const c = A.get(l) || 0; if(n > c) them += n - c; });
+  A.forEach((n, l) => { const c = B.get(l) || 0; if(n > c) bot += n - c; });
+  return { them, bot };
+}
+const q6DaPhatHanh = () => AUD.filter(x => x && x.viec === "phat_hanh" && x.md5).sort((a, b) => q6Ms(b.at) - q6Ms(a.at));
+async function q6Soat(buf, tenFile, maChon){
+  const R = { ten: tenFile, bytes: buf.length, md5: q5Md5(buf), K: [], luc: Date.now() };
+  const them = (tt, t, d) => R.K.push({ tt, t, d: String(d || "") });
+  let text = "";
+  try{ text = new TextDecoder("utf-8", { fatal:true }).decode(buf); them("ok", "Đọc được chữ tiếng Việt (UTF-8)", buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF ? "có dấu BOM đầu file (vẫn chạy được)" : "chuẩn"); }
+  catch(e){ text = new TextDecoder("utf-8").decode(buf); them("xau", "Đọc được chữ tiếng Việt (UTF-8)", "file KHÔNG phải UTF-8 — chữ có dấu sẽ hỏng. Lưu lại file bằng UTF-8 rồi soát lại"); }
+  if(/\r\n/.test(text)) them("ok", "Kiểu xuống dòng", "Windows (CRLF) — vẫn chạy được");
+  text = text.replace(/\r\n?/g, "\n");
+  R.dong = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+  R.ma = maChon || q6AppCuaFile(text);
+  const tr = q6Trang(R.ma);
+  R.app = tr ? tr.ten : "";
+  if(!tr) them("xau", "Nhận ra app", "không nhận ra file của app nào (không có bộ thu lỗi / số bản) — chọn app ở trên rồi soát lại");
+  else them("ok", "Nhận ra app", tr.ten + (maChon ? " (bạn chọn)" : " (tự nhận)"));
+  const e = q5NgMoi("soat:" + tenFile, text, { nguon:"file", bytes: buf.length, md5: R.md5 });
+  R.e = e; R.build = e.build;
+  /* bản đang chạy trên GitHub */
+  let cur = null;
+  if(tr){ try{ cur = await q5Tai(q5DuongTrang(tr), true); }catch(x){ them("canh", "Đọc bản đang chạy trên GitHub", "chưa đọc được (" + maLoi(x) + ") — các mục so sánh bị bỏ qua"); } }
+  R.cur = cur ? { build: cur.build, md5: cur.md5, bytes: cur.bytes, lm: cur.lm, dong: cur.text.split("\n").length } : null;
+  /* 1. đủ đuôi */
+  const duoi = text.trimEnd().slice(-20).toLowerCase();
+  them(/<\/html>$/.test(duoi) ? "ok" : "xau", "File đủ đuôi", /<\/html>$/.test(duoi) ? "kết thúc bằng </html>" : "KHÔNG kết thúc bằng </html> — file bị cắt cụt (tải / chép thiếu). Đưa lên là app trắng màn");
+  /* 2. cú pháp */
+  let cp = []; try{ cp = q5KiemCuPhap(e); }catch(x){ them("canh", "Cú pháp từng khối script", "chưa kiểm được: " + maLoi(x)); }
+  const hong = cp.filter(x => !x.ok);
+  if(cp.length) them(hong.length ? "xau" : "ok", "Cú pháp từng khối script", hong.length ? hong.slice(0, 4).map(x => `khối #${x.k.i + 1} (dòng ${x.k.dong}${q5TenKhoi(e, x.k) ? " · " + q5TenKhoi(e, x.k).slice(0, 50) : ""}): ${x.loi}`).join(" · ") + " — khối hỏng KHÔNG chạy gì cả" : `${cp.length}/${cp.length} khối hợp lệ`);
+  /* 3. trùng tên */
+  try{
+    const tn = q5TrungTen(e); const cu = cur ? new Set(q5TrungTen(cur).map(x => x.ten)) : new Set();
+    const moi = tn.filter(x => !cu.has(x.ten)), sanCo = tn.filter(x => cu.has(x.ten));
+    if(moi.length) them("xau", "Khai báo trùng tên giữa các khối", moi.slice(0, 5).map(x => `“${x.ten}” ở khối #${x.k1} và #${x.k2} (dòng ${x.dong})`).join(" · ") + " — khối sau báo lỗi, không chạy");
+    else them(sanCo.length ? "canh" : "ok", "Khai báo trùng tên giữa các khối", sanCo.length ? `${sanCo.length} chỗ có sẵn từ bản đang chạy (không mới)` : "không có");
+  }catch(x){}
+  /* 4. số bản */
+  if(R.ma === "sono"){
+    const b1 = (/\bAPP_BUILD\s*=\s*["'`]([^"'`\r\n]{1,80})["'`]/.exec(text) || [])[1] || "", b2 = (/\bvar\s+BUILD\s*=\s*["'`]([^"'`\r\n]{1,60})["'`]/.exec(text) || [])[1] || "";
+    if(!b1) them("xau", "Số bản (APP_BUILD)", "không thấy APP_BUILD — máy khách sẽ không tự nhận bản mới");
+    else if(b2 && b1 !== b2) them("xau", "2 chỗ số bản khớp nhau", `APP_BUILD ${b1} ≠ BUILD ${b2} — quên đổi 1 chỗ (bảng quản trị sẽ thấy sai bản)`);
+    else if(b2) them("ok", "2 chỗ số bản khớp nhau", b1);
+  }
+  if(cur){
+    if(R.md5 && R.md5 === cur.md5) them("canh", "Khác bản đang chạy", "file này TRÙNG TỪNG BYTE bản đang chạy trên GitHub — chưa có gì mới");
+    if(!R.build) them("canh", "Số bản", "file không ghi số bản");
+    else if(cur.build && R.build === cur.build && R.md5 !== cur.md5) them(R.ma === "sono" ? "xau" : "canh", "Đã đổi số bản", `vẫn là ${R.build} như bản đang chạy — ${R.ma === "sono" ? "máy khách KHÔNG biết có bản mới, không tự cập nhật" : "khó biết máy nào đã lên bản mới"}`);
+    else if(cur.build){
+      const ss = q6SoSanhBan(R.build, cur.build);
+      if(ss === -1) them("xau", "Mới hơn bản đang chạy", `file là ${R.build}, CŨ hơn bản đang chạy ${cur.build} — chọn nhầm file cũ?`);
+      else if(ss === 1) them("ok", "Mới hơn bản đang chạy", `${cur.build} → ${R.build}`);
+      else if(R.build !== cur.build) them("ok", "Số bản", `${cur.build} → ${R.build}`);
+    }
+  }
+  /* 5. bộ thu lỗi · hộp đen */
+  const coThu = t => t.indexOf("__ERR_" + "LOG__") >= 0, coHop = t => t.indexOf("__ERR_" + "HOPDEN__") >= 0;
+  if(cur && coThu(cur.text) && !coThu(text)) them("xau", "Bộ thu lỗi", "bản đang chạy CÓ mà file mới KHÔNG CÓ — đưa lên là mất báo lỗi từ máy khách");
+  else them(coThu(text) ? "ok" : "canh", "Bộ thu lỗi", coThu(text) ? "có" + (coHop(text) ? " · kèm hộp đen" : "") : "không có");
+  if(cur && coHop(cur.text) && !coHop(text)) them("canh", "Hộp đen của bộ thu lỗi", "bản đang chạy có, file mới không có");
+  if(R.ma === "sono"){
+    const qtx = t => t.indexOf("__QTX_" + "READY__") >= 0;
+    if(cur && qtx(cur.text) && !qtx(text)) them("xau", "Khối điều khiển từ xa 2 (công tắc · hộp thư)", "bản đang chạy có, file mới KHÔNG có — mất công tắc khẩn cấp & hộp thư hỗ trợ");
+  }
+  /* 6. cấu hình Firebase */
+  const c1 = q6CauHinhFb(text);
+  if(!/so-no-cc57a/.test(c1.pid)) them("xau", "Dự án Firebase", c1.pid ? `file trỏ tới ${c1.pid} — KHÔNG phải so-no-cc57a (khách sẽ không thấy dữ liệu)` : "không thấy cấu hình Firebase");
+  else if(cur){
+    const c0 = q6CauHinhFb(cur.text);
+    if(c0.key && c1.key !== c0.key) them("xau", "Khoá Firebase (apiKey)", "khác bản đang chạy — kiểm lại, sai khoá là khách không đăng nhập được");
+    else them("ok", "Dự án Firebase", c1.pid);
+    if(c0.sdk && c1.sdk !== c0.sdk) them("canh", "Bản thư viện Firebase", `${c0.sdk} → ${c1.sdk} — đổi bản thư viện thì thử kỹ đăng nhập / đọc ghi`);
+  } else them("ok", "Dự án Firebase", c1.pid);
+  /* 7. dung lượng · khối · dấu vá */
+  if(cur){
+    const tl = buf.length / Math.max(1, cur.bytes || cur.text.length);
+    them(tl < 0.85 ? "canh" : "ok", "Dung lượng", `${q6Byte(cur.bytes)} → ${q6Byte(buf.length)} (${tl >= 1 ? "+" : ""}${Math.round((tl - 1) * 1000) / 10}%)${tl < 0.85 ? " — NHỎ HƠN HẲN, có thể thiếu phần" : ""}`);
+    const d = q6SoDong(cur.text, text); R.them = d.them; R.bot = d.bot;
+    them(d.bot > 400 && d.bot > d.them * 3 ? "canh" : "ok", "Dòng thay đổi", `+${d.them.toLocaleString("vi-VN")} dòng · −${d.bot.toLocaleString("vi-VN")} dòng so với bản đang chạy`);
+    const k0 = q6KhoiTen(cur), k1 = q6KhoiTen(e), s0 = new Set(k0), s1 = new Set(k1);
+    const mat = [...s0].filter(x => !s1.has(x) && !/^khối #/.test(x)), moiK = [...s1].filter(x => !s0.has(x) && !/^khối #/.test(x));
+    them(mat.length ? "canh" : "ok", "Khối script", `${k0.length} → ${k1.length} khối${mat.length ? " · MẤT: " + mat.slice(0, 4).map(x => "“" + x.slice(0, 60) + "”").join(", ") : ""}${moiK.length ? " · thêm: " + moiK.slice(0, 4).map(x => "“" + x.slice(0, 60) + "”").join(", ") : ""}`);
+    const v0 = q6DauVaDs(cur.text), v1 = [...q6DauVaDs(text)].filter(x => !v0.has(x));
+    if(v1.length) them("ok", "Dấu vá mới", v1.slice(0, 8).map(x => "[" + x + "]").join(" "));
+  }
+  /* 8. đã từng ghi nhận */
+  const cu = q6DaPhatHanh().find(x => x.md5 === R.md5);
+  if(cu) them("ok", "Đã ghi nhận phát hành trước đây", `${lauRoi(cu.at)} · ${cu.build || ""}`);
+  R.muc = R.K.some(k => k.tt === "xau") ? "xau" : R.K.some(k => k.tt === "canh") ? "canh" : "ok";
+  return R;
+}
+/* kho trong máy: cất mọi app có số bản (Sổ Nợ đã có sẵn từ 5.0 — thêm các app khác + file vừa soát) */
+async function q6KhoLuu(k, build, text, md5, bytes, lm){
+  if(!k || !build || !text) return;
+  const d = await q5Idb();
+  try{
+    const id = k + "|" + build;
+    const co = await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").count(id));
+    if(!co) await q5IdbXong(d.transaction("ban", "readwrite").objectStore("ban").put({ id, k, build, text, lm: lm || "", md5: md5 || "", bytes: bytes || 0, luc: Date.now() }));
+    const ks = (await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").getAllKeys())) || [];
+    const cua = ks.filter(x => String(x).indexOf(k + "|") === 0);
+    if(cua.length > Q5.BAN_LUU){
+      const ds = []; for(const x of cua){ const v = await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").get(x)); if(v) ds.push({ id: x, luc: v.luc || 0 }); }
+      ds.sort((a, b) => b.luc - a.luc);
+      const st = d.transaction("ban", "readwrite").objectStore("ban"); for(const x of ds.slice(Q5.BAN_LUU)) await q5IdbXong(st.delete(x.id));
+    }
+  } finally { try{ d.close(); }catch(x){} }
+}
+async function q6KhoDsDu(k){
+  try{ const d = await q5Idb(); try{
+    const ks = ((await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").getAllKeys())) || []).filter(x => String(x).indexOf(k + "|") === 0);
+    const out = []; for(const id of ks){ const v = await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").get(id)); if(v) out.push({ build: v.build, md5: v.md5 || "", bytes: v.bytes || 0, luc: v.luc || 0, lm: v.lm || "" }); }
+    return out.sort((a, b) => (q6SoSanhBan(b.build, a.build) || 0) || (b.luc - a.luc));
+  } finally { try{ d.close(); }catch(x){} } }catch(e){ return []; }
+}
+const Q6S = { soat:null, dangSoat:false, maChon:"", tram:{}, dangTram:false, file:null };
+/* bản đang chạy của từng app + đã qua Trạm chưa */
+async function q6DocTram(moi){
+  const out = {};
+  await Promise.all(Q5_TRANG.map(async p => {
+    const k = q5KhoaTrang(q5DuongTrang(p));
+    try{ const e = await q5Tai(q5DuongTrang(p), !!moi);
+      out[p.ma] = { build: e.build, md5: e.md5, bytes: e.bytes, lm: e.lm, k };
+      q6KhoLuu(k, e.build, e.text, e.md5, e.bytes, e.lm).catch(() => {});
+    }catch(x){ out[p.ma] = { loi: maLoi(x), k }; }
+  }));
+  Q6S.tram = out; Q6S.tramLuc = Date.now();
+  return out;
+}
+function q6TrangThaiTram(ma){
+  const x = Q6S.tram[ma]; if(!x || x.loi || !x.md5) return null;
+  const ds = q6DaPhatHanh().filter(a => a.app === ma);
+  if(!ds.length) return { tt:"chua", x };
+  const khop = ds.find(a => a.md5 === x.md5);
+  return khop ? { tt:"ok", x, a: khop } : { tt:"la", x, a: ds[0] };
+}
+function q6MoTram(){
+  const t = moTam({ tieuDe:"🚀 Trạm phát hành", lamMoi: () => { q6DocTram(true).then(() => { if(TAM.includes(t)) q6VeTram(t); }); } });
+  t.S = { q6tram:true };
+  q6VeTram(t);
+  if(!Q6S.tramLuc || Date.now() - Q6S.tramLuc > 5 * 60e3){ Q6S.dangTram = true; q6VeTram(t);
+    q6DocTram(false).catch(() => {}).then(() => { Q6S.dangTram = false; if(TAM.includes(t)) q6VeTram(t); }); }
+  return t;
+}
+function q6DongSoat(k){ const icc = k.tt === "xau" ? "canh" : k.tt === "canh" ? "canh" : "xong"; const lop = k.tt === "xau" ? "do-c" : k.tt === "canh" ? "dong-c" : "la-c";
+  return dongHtml({ ic: icc, lop, t: esc(k.t), d: esc(k.d) }); }
+function q6VeTram(t){
+  const R = Q6S.soat, ph = q6DaPhatHanh();
+  const chonApp = `<div class="loc">${[["", "Tự nhận app"], ...Q5_TRANG.filter(p => p.ma !== "admin" || true).map(p => [p.ma, p.ten.replace(" (app này)", "")])].map(([m, n]) => `<button data-act="q6-chon-app" data-k="${esc(m)}" class="${Q6S.maChon === m ? "on" : ""}">${esc(n)}</button>`).join("")}</div>`;
+  let soat = "";
+  if(Q6S.dangSoat) soat = trong("Đang soát file…", "Đọc từng khối, so với bản đang chạy trên GitHub");
+  else if(R){
+    const mu = R.muc === "xau" ? ["do", "⛔ KHÔNG NÊN ĐƯA LÊN", "Sửa các mục đỏ rồi soát lại."] : R.muc === "canh" ? ["vang", "⚠️ Xem lại các mục vàng", "Không có lỗi chặn — xem kỹ mục vàng rồi hãy đưa lên."] : ["xanh", "✅ An toàn để đưa lên", "Đưa lên GitHub xong, bấm “Ghi nhận đã phát hành”."];
+    soat = `<div class="bao ${mu[0] === "do" ? "xau" : mu[0] === "vang" ? "canh" : "tot"}" style="margin-top:0"><b>${mu[1]}</b><br>${esc(R.ten)} · ${esc(R.app || "app ?")} · ${esc(R.build || "không số bản")} · ${q6Byte(R.bytes)} · ${R.dong.toLocaleString("vi-VN")} dòng<br><span class="nho">md5 ${esc(R.md5)}</span><br>${esc(mu[2])}</div>
+      <div class="nhom">${R.K.filter(k => k.tt !== "ok").concat(R.K.filter(k => k.tt === "ok")).map(q6DongSoat).join("")}</div>
+      <div class="hang-nut">${R.ma && R.muc !== "xau" ? `<button class="nut chinh" data-act="q6-ghi-ph">${ic("xong")}Ghi nhận đã phát hành</button>` : ""}
+        <button class="nut" data-act="q6-tai-soat">${ic("tai")}Tải lại đúng file này (tên index.html)</button>
+        <button class="nut" data-act="q6-chep-soat">${ic("chep")}Chép kết quả</button></div>
+      <p class="nho">Đưa lên: GitHub → repo <b>${esc(R.ma === "sono" ? "SO---NO" : R.ma === "admin" ? "admin" : (q6Trang(R.ma) || {}).p ? String((q6Trang(R.ma) || {}).p).replace(/\//g, "") : "?")}</b> → thay <b>index.html</b>. Ghi nhận xong, Trạm sẽ báo nếu file trên GitHub khác file này.</p>`;
+  }
+  const dongApp = Q5_TRANG.map(p => {
+    const x = Q6S.tram[p.ma], s = q6TrangThaiTram(p.ma);
+    if(!x) return dongHtml({ ic:"may", t: esc(p.ten), d: Q6S.dangTram ? "Đang đọc GitHub…" : "chưa đọc" });
+    if(x.loi) return dongHtml({ ic:"canh", lop: p.ma === "sono" || p.ma === "admin" ? "do-c" : "dong-c", t: esc(p.ten), d: esc("Không đọc được: " + x.loi) });
+    const d = `${x.build || "không số bản"} · ${q6Byte(x.bytes)} · md5 ${String(x.md5).slice(0, 10)}…${x.lm ? " · đưa lên " + lauRoi(new Date(x.lm)) : ""}`;
+    if(!s || s.tt === "chua") return dongHtml({ ic:"may", t: esc(p.ten), d: esc(d + " · chưa có mốc phát hành"), ph: `<button class="nut nho" data-act="q6-moc" data-k="${esc(p.ma)}">Lấy làm mốc</button>` });
+    if(s.tt === "ok") return dongHtml({ ic:"xong", lop:"la-c", t: esc(p.ten), d: esc(d + " · ✓ đúng file đã ghi nhận " + lauRoi(s.a.at)) });
+    return dongHtml({ ic:"canh", lop:"do-c", t: esc(p.ten) + " — file KHÁC bản đã ghi nhận", d: esc(d + ` · bản ghi nhận cuối ${s.a.build || ""} ${lauRoi(s.a.at)}. Bạn vừa đưa file mà chưa ghi nhận — hoặc file bị sửa ở nơi khác (lộ tài khoản GitHub?)`),
+      ph: `<button class="nut nho" data-act="q6-moc" data-k="${esc(p.ma)}">Đúng là mình đưa</button>` });
+  }).join("");
+  const pb = q5PhanBan();
+  const sauPH = pb && pb.tong ? dongHtml({ the:"button", act:"quet-ban", ic:"khach", lop: pb.moi / pb.tong < 0.7 ? "dong-c" : "la-c", t:`Máy khách Sổ Nợ đã lên ${esc(pb.ban || "bản mới")}: ${pb.moi}/${pb.tong} máy (${Math.round(pb.moi / pb.tong * 100)}%)`, d:"Bấm để quét lại · máy chạy bản lỗi thì dùng 🛑 Công tắc khẩn cấp → Buộc cập nhật", mui:true }) : "";
+  const loiMoi = q6LoiBanMoi();
+  t.than.innerHTML = `
+    <div class="bao ngoc" style="margin-top:0">Soát file <b>trước khi</b> đưa lên GitHub — bắt file hỏng, file cũ, quên đổi số bản, mất khối, sai dự án Firebase. Không gửi file đi đâu: soát ngay trong máy này.</div>
+    ${mucHtml("1. Soát file mới")}
+    ${chonApp}
+    <div class="hang-nut"><label class="nut chinh" style="cursor:pointer">${ic("tai")}Chọn file .html để soát<input type="file" accept=".html,.htm,text/html" data-in="q6File" hidden></label></div>
+    ${soat}
+    ${mucHtml("2. Bản đang chạy trên GitHub", Q6S.tramLuc ? lauRoi(new Date(Q6S.tramLuc)) : "", `<button class="lk" data-act="q6-doc-tram">Đọc lại</button>`)}
+    <div class="nhom">${dongApp}</div>
+    ${mucHtml("3. Sau khi đưa lên")}
+    <div class="nhom">${sauPH}${loiMoi}</div>
+    ${mucHtml("4. Quay về bản trước", "", `<button class="lk" data-act="q6-kho">Xem kho</button>`)}
+    <p class="nho">Máy này tự cất 4 bản gần nhất của mỗi app (mỗi lần đọc GitHub / soát file). Bản mới lỗi ⇒ tải bản trước về, đưa lên GitHub thay index.html là xong.</p>
+    <div id="q6Kho">${Q6S.khoHtml || ""}</div>
+    ${mucHtml("Nhật ký phát hành", ph.length ? ph.length + " lần" : "")}
+    <div class="nhom">${ph.slice(0, 12).map(a => dongHtml({ ic:"lich", t: esc(`${tenAppQ6(a.app)} · ${a.build || "?"}`), d: esc(`${lauRoi(a.at)} · ${a.boi || ""} · md5 ${String(a.md5).slice(0, 10)}…${a.ghi ? " · " + a.ghi : ""}`) })).join("") || trong("Chưa ghi nhận lần phát hành nào", "Soát file ✅ rồi bấm Ghi nhận — hoặc bấm “Lấy làm mốc” ở mục 2")}</div>`;
+  q6GanFile(t);
+}
+const tenAppQ6 = ma => (q6Trang(ma) || {}).ten || ma || "?";
+/* lỗi code chỉ xuất hiện từ bản mới nhất (theo hộp đen: số bản lúc lỗi) */
+function q6LoiBanMoi(){
+  try{
+    const pb = q5PhanBan(); const moi = pb && pb.ban; if(!moi) return "";
+    const N = q5Nhom().filter(g => g.app === "sono" && q5CanSua(g));
+    const chiMoi = N.filter(g => g.bans && Object.keys(g.bans).length && Object.keys(g.bans).every(b => b === moi));
+    if(!chiMoi.length) return dongHtml({ ic:"xong", lop:"la-c", t:`Bản ${esc(moi)} chưa sinh lỗi code mới`, d:"So theo số bản trong hộp đen của từng lần lỗi" });
+    return chiMoi.slice(0, 5).map(g => dongHtml({ the:"button", act:"q5-nhom", data:`data-k="${esc(g.key)}"`, ic:"loi", lop:"do-c", t:`Lỗi MỚI từ bản ${esc(moi)}: <span class="loi-msg">${esc(g.tieuDe)}</span>`, d: esc(`${g.users.size} khách · ${g.items.length} lần — cân nhắc quay về bản trước / tắt tính năng liên quan`), mui:true })).join("");
+  }catch(e){ return ""; }
+}
+async function q6VeKho(t){
+  const H = [];
+  for(const p of Q5_TRANG){
+    const k = q5KhoaTrang(q5DuongTrang(p)); const ds = await q6KhoDsDu(k); if(!ds.length) continue;
+    const x = Q6S.tram[p.ma];
+    H.push(`<div class="the" style="margin:6px 0"><b>${esc(p.ten)}</b>${ds.map(v => `<div class="kv"><span>${esc(v.build)}${x && x.md5 && v.md5 === x.md5 ? " <i>(đang chạy)</i>" : ""}<br><small class="nho">${q6Byte(v.bytes)} · cất ${esc(lauRoi(new Date(v.luc)))}</small></span><span><button class="nut nho" data-act="q6-tai-kho" data-k="${esc(k)}" data-b="${esc(v.build)}">${ic("tai")}Tải</button></span></div>`).join("")}</div>`);
+  }
+  Q6S.khoHtml = H.join("") || trong("Kho trong máy chưa có bản nào", "Mở Trạm vài lần (mỗi lần đọc GitHub là cất 1 bản) — bản cũ sẽ có ở đây khi bạn đưa bản mới lên");
+  const el = $("#q6Kho", t.than); if(el) el.innerHTML = Q6S.khoHtml;
+}
+async function q6TaiKho(k, build){
+  const d = await q5Idb(); let v = null;
+  try{ v = await q5IdbXong(d.transaction("ban", "readonly").objectStore("ban").get(k + "|" + build)); } finally { try{ d.close(); }catch(x){} }
+  if(!v || !v.text) throw new Error("không còn trong kho");
+  const b = new TextEncoder().encode(v.text);
+  const md5 = q5Md5(b);
+  q6TaiVe("index.html", b, "text/html;charset=utf-8");
+  return { trung: !v.md5 || md5 === v.md5, md5, md5Goc: v.md5 };
+}
+async function q6GhiPhatHanh(ma, build, md5, bytes, dong, ghi){
+  await q6NhatKy("phat_hanh", { app: ma, build: build || "", md5, byte: bytes || 0, dong: dong || 0, ghi: ghi || "" }, "", ma);
+}
+/* ─────────── 2. 🛑 CÔNG TẮC KHẨN CẤP + BUỘC CẬP NHẬT ───────────
+   Cả hệ: billing/config.tat.<khoá> = {at, ly, boi} · billing/config.banToiThieu. Riêng 1 khách: accounts/{uid}.remote.tat / .banToiThieu.
+   Máy khách SN29 nghe 2 doc này (accounts dùng chung đích nghe với khối "nhận lệnh" có sẵn ⇒ không tốn lượt đọc thêm). Máy chạy bản
+   TRƯỚC SN29 không hiểu công tắc ⇒ dùng "Buộc cập nhật" kèm thanh "Có bản mới" có sẵn để kéo lên SN29 trước. */
+const q6TatChung = () => { const x = CFGDB && CFGDB.tat; return x && typeof x === "object" ? x : {}; };
+const q6TatRieng = uid => { const r = ACC[uid] && ACC[uid].remote; const x = r && r.tat; return x && typeof x === "object" ? x : {}; };
+const q6DangTat = x => !!x && (x === true || (typeof x === "object" && x.tat !== false));
+const q6SoTatChung = () => Object.keys(q6TatChung()).filter(k => Q6_TN[k] && q6DangTat(q6TatChung()[k])).length;
+const q6BanSono = () => { try{ const e = Q5NG.get(q5KhoaTrang("/SO---NO/")); return (e && e.build) || (Q6S.tram.sono && Q6S.tram.sono.build) || ""; }catch(e){ return ""; } };
+async function q6DatTat(uid, k, bat, ly){
+  const gt = bat ? { at: new Date(), ly: String(ly || "").slice(0, 300), boi: toiLa() } : deleteField();
+  if(uid){
+    await setDoc(doc(fdb, "accounts", uid), { remote: { tat: { [k]: gt } } }, { merge:true });
+    const a = ACC[uid] = ACC[uid] || {}; a.remote = a.remote || {}; a.remote.tat = Object.assign({}, a.remote.tat);
+    if(bat) a.remote.tat[k] = { at: new Date(), ly: String(ly || ""), boi: toiLa() }; else delete a.remote.tat[k];
+  } else {
+    await setDoc(doc(fdb, "billing", "config"), { tat: { [k]: gt } }, { merge:true });
+    CFGDB.tat = Object.assign({}, CFGDB.tat); if(bat) CFGDB.tat[k] = { at: new Date(), ly: String(ly || ""), boi: toiLa() }; else delete CFGDB.tat[k];
+  }
+  try{ await q6NhatKy("cong_tac_khan", { ghi: `${bat ? "TẮT" : "Bật lại"} ${Q6_TN[k] || k} ${uid ? "cho 1 khách" : "cho MỌI khách"}${bat && ly ? " · " + String(ly).slice(0, 120) : ""}` }, uid || "", "sono"); }catch(e){}
+}
+async function q6DatBanMin(uid, b){
+  const gt = b ? String(b).slice(0, 60) : deleteField();
+  if(uid){ await setDoc(doc(fdb, "accounts", uid), { remote: { banToiThieu: gt } }, { merge:true });
+    const a = ACC[uid] = ACC[uid] || {}; a.remote = Object.assign({}, a.remote); if(b) a.remote.banToiThieu = b; else delete a.remote.banToiThieu; }
+  else { await setDoc(doc(fdb, "billing", "config"), { banToiThieu: gt }, { merge:true }); if(b) CFGDB.banToiThieu = b; else delete CFGDB.banToiThieu; }
+  try{ await q6NhatKy("ban_toi_thieu", { ghi: b ? `Buộc ${uid ? "máy khách này" : "MỌI máy"} lên tối thiểu ${b}` : `Gỡ buộc cập nhật ${uid ? "(1 khách)" : "(cả hệ)"}` }, uid || "", "sono"); }catch(e){}
+}
+function q6MoCongTac(uid){
+  const t = moTam({ tieuDe: uid ? "🛑 Công tắc riêng khách này" : "🛑 Công tắc khẩn cấp", lamMoi: () => q6VeCongTac(t) });
+  t.S = { q6ct:true, uid: uid || "" };
+  q6VeCongTac(t);
+  if(!q6BanSono()) q5Tai("/SO---NO/").then(() => { if(TAM.includes(t)) q6VeCongTac(t); }).catch(() => {});
+  return t;
+}
+function q6VeCongTac(t){
+  const uid = t.S.uid, X = uid ? q6TatRieng(uid) : q6TatChung(), C = q6TatChung();
+  const dang = Object.keys(Q6_TN).filter(k => q6DangTat(X[k]));
+  const banGit = q6BanSono(), min = uid ? (ACC[uid] && ACC[uid].remote && ACC[uid].remote.banToiThieu) || "" : CFGDB.banToiThieu || "";
+  const pb = QUET.ban, duoi = min && pb && pb.rows ? pb.rows.filter(r => r.m && r.m.build && q6SoSanhBan(r.m.build, min) === -1).length : null;
+  const dong = Object.keys(Q6_TN).map(k => {
+    const x = X[k], tat = q6DangTat(x), tatChung = uid && q6DangTat(C[k]);
+    return dongHtml({ ic: tat ? "khoa" : "mo", lop: tat ? "do-c" : "la-c", t: esc(Q6_TN[k]) + (tat ? " — <b>ĐANG TẮT</b>" : tatChung ? " — đang tắt cho mọi khách" : ""),
+      d: esc(tat ? `${x && x.ly ? "Lý do: " + x.ly + " · " : ""}tắt ${lauRoi(x && x.at)}${x && x.boi ? " bởi " + x.boi : ""}` : (Q6_TN_GHI[k] || "Đang chạy bình thường")),
+      ph: `<button class="nut nho ${tat ? "chinh" : "nguy"}" data-act="q6-tat" data-k="${k}" data-b="${tat ? 0 : 1}">${tat ? "Bật lại" : "Tắt"}</button>` });
+  }).join("");
+  t.than.innerHTML = `
+    <div class="bao ${dang.length ? "xau" : "ngoc"}" style="margin-top:0">${dang.length ? `<b>Đang tắt ${dang.length} tính năng ${uid ? "cho khách này" : "cho MỌI khách"}:</b> ${esc(dang.map(k => Q6_TN[k]).join(", "))}. Sửa xong nhớ <b>Bật lại</b>.`
+      : `Tính năng nào đang lỗi trên máy khách ⇒ bấm <b>Tắt</b>: khách bấm vào chỉ thấy “🛠 đang bảo trì” thay vì gặp lỗi. Có hiệu lực sau vài giây, không cần khách tải lại app. Máy phải chạy Sổ Nợ từ bản SN29 trở lên.`}</div>
+    ${uid ? `<p class="nho">Khách: <b>${esc(emailCua(uid) || uid)}</b>. Công tắc ở đây chỉ áp cho khách này (cả máy nhân viên của shop).</p>` : ""}
+    ${mucHtml("Tính năng", `${dang.length} đang tắt`)}
+    <div class="nhom">${dong}</div>
+    ${!uid ? `${mucHtml("Máy chủ")}<div class="nhom">${dongHtml({ ic: CFGDB.choHoTro === false ? "khoa" : "mo", lop: CFGDB.choHoTro === false ? "do-c" : "la-c",
+        t: CFGDB.choHoTro === false ? "Hộp thư: máy chủ ĐANG CHẶN câu hỏi mới" : "Hộp thư: máy chủ nhận câu hỏi mới",
+        d: "Công tắc choHoTro (Rules Z8). Bị nhắn rác hàng loạt thì chặn ở máy chủ — mạnh hơn tắt phía app. Cuộc đang có vẫn trả lời được.",
+        ph: `<button class="nut nho ${CFGDB.choHoTro === false ? "chinh" : "nguy"}" data-act="q6-cho-ht" data-b="${CFGDB.choHoTro === false ? 1 : 0}">${CFGDB.choHoTro === false ? "Mở lại" : "Chặn"}</button>` })}</div>` : ""}
+    ${mucHtml("Buộc cập nhật bản mới")}
+    <div class="the"><div class="kv"><span>Bản Sổ Nợ trên GitHub</span><span>${esc(banGit || "chưa đọc được")}</span></div>
+      <div class="kv"><span>Bản tối thiểu đang buộc</span><span>${esc(min || "không buộc")}</span></div>
+      ${duoi != null ? `<div class="kv"><span>Máy còn dưới mức đó (lần quét gần nhất)</span><span>${duoi}</span></div>` : ""}</div>
+    <p class="nho">Máy chạy bản cũ hơn mức tối thiểu sẽ hiện màn “Cần cập nhật” — CHỈ lúc rảnh (không có giỏ hàng, đơn giữ, phiếu nhập, ô đang gõ). Tải 2 lần không lên được thì cho dùng tạm 30 phút. Chỉ buộc tới đúng bản ĐANG Ở GITHUB.</p>
+    <div class="hang-nut">${banGit && q6SoBan(banGit) ? `<button class="nut ${min === banGit ? "" : "chinh"}" data-act="q6-ban-min" data-b="${esc(banGit)}" ${min === banGit ? "disabled" : ""}>Buộc lên ${esc(banGit)}</button>` : ""}
+      ${min ? `<button class="nut" data-act="q6-ban-min" data-b="">Gỡ buộc cập nhật</button>` : ""}
+      ${uid ? `<button class="nut" data-act="ho-cap-nhat" data-uid="${esc(uid)}" data-bat="1">Bật thanh “Có bản mới”</button>` : `<button class="nut" data-act="mo-ban-tin">Thanh “Có bản mới” (máy bản cũ)</button>`}</div>`;
+}
+/* ─────────── 3. 📈 TÍNH NĂNG KHÁCH DÙNG ───────────
+   Mỗi máy Sổ Nợ SN29 ghi users/{shop}/sono_dung/{mã máy} = { la:'chu'|'nv', b: số bản, atMs, d: { 'YYYY-MM-DD': { khoá: số lần } } } (30 ngày).
+   Đọc 1 lượt cả kho (collectionGroup — Rules Z8); máy chủ chưa cho ⇒ đọc từng shop. Chỉ đọc khi bấm mở (không tốn lượt đọc nền). */
+const Q6D = { ds:null, luc:0, dang:false, loi:"", ky:7, nguon:"" };
+async function q6DocDung(){
+  let rows = [];
+  try{
+    const s = await getDocs(collectionGroup(fdb, "sono_dung"));
+    rows = s.docs.map(d => ({ uid: d.ref.parent.parent ? d.ref.parent.parent.id : "", id: d.id, ...(d.data() || {}) }));
+    Q6D.nguon = "1 lượt đọc cả kho";
+  }catch(e){
+    if(!/permission-denied/.test(maLoi(e))) throw e;
+    const uids = uidsSono();
+    const kq = await theoLo(uids, 8, async uid => { const s = await getDocs(collection(fdb, "users", uid, "sono_dung")); return s.docs.map(d => ({ uid, id: d.id, ...(d.data() || {}) })); });
+    kq.forEach(x => { if(Array.isArray(x)) rows.push(...x); });
+    Q6D.nguon = `đọc từng shop (${uids.length} shop — Rules Z8 chưa Publish nên chưa đọc 1 lượt được)`;
+  }
+  Q6D.ds = rows.filter(r => r && r.d && typeof r.d === "object"); Q6D.luc = Date.now();
+  return Q6D.ds;
+}
+function q6NgayGan(n){ const out = []; const d = new Date(); for(let i = 0; i < n; i++){ const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() - i); out.push(x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0")); } return out; }
+/* tổng hợp: khoá → { lan, shop:Set, may:Set } trong n ngày; so với n ngày trước đó */
+function q6TongDung(rows, n, uid){
+  const nay = new Set(q6NgayGan(n)), truoc = new Set(q6NgayGan(2 * n).slice(n));
+  const T = {}, P = {}, S = {}, may = new Set(), shop = new Set();
+  rows.filter(r => !uid || r.uid === uid).forEach(r => {
+    Object.keys(r.d || {}).forEach(ng => {
+      const h = r.d[ng] || {}, laNay = nay.has(ng), laTruoc = truoc.has(ng); if(!laNay && !laTruoc) return;
+      Object.keys(h).forEach(k => { const v = Number(h[k]) || 0; if(!v) return;
+        if(laNay){ (T[k] = T[k] || { lan:0, shop:new Set(), may:new Set() }).lan += v; T[k].shop.add(r.uid); T[k].may.add(r.uid + "/" + r.id); may.add(r.uid + "/" + r.id); shop.add(r.uid);
+          (S[r.uid] = S[r.uid] || {})[k] = (S[r.uid][k] || 0) + v; }
+        else P[k] = (P[k] || 0) + v; });
+    });
+  });
+  return { T, P, S, may, shop };
+}
+function q6MoDung(uid){
+  const t = moTam({ tieuDe: uid ? "📈 Khách này dùng gì" : "📈 Tính năng khách dùng", lamMoi: () => q6TaiDung(t, true) });
+  t.S = { q6dung:true, uid: uid || "" };
+  q6VeDung(t);
+  if(!Q6D.ds || Date.now() - Q6D.luc > 10 * 60e3) q6TaiDung(t);
+  return t;
+}
+async function q6TaiDung(t, ep){
+  if(Q6D.dang) return; Q6D.dang = true; Q6D.loi = ""; if(TAM.includes(t)) q6VeDung(t);
+  try{ await q6DocDung(); }catch(e){ Q6D.loi = maLoi(e); }
+  Q6D.dang = false; if(TAM.includes(t)) q6VeDung(t);
+}
+function q6VeDung(t){
+  const uid = t.S.uid, n = Q6D.ky;
+  if(!Q6D.ds){ t.than.innerHTML = Q6D.loi ? `<div class="bao xau">Chưa đọc được: ${esc(Q6D.loi)}</div>` : trong("Đang đọc số liệu…", "Mỗi máy Sổ Nợ (từ SN29) gửi số lần dùng từng tính năng, tối đa 3 giờ 1 lần"); return; }
+  const G = q6TongDung(Q6D.ds, n, uid);
+  const keys = Object.keys(Q6_DEM);
+  const ds = keys.map(k => ({ k, t: Q6_DEM[k], lan: G.T[k] ? G.T[k].lan : 0, shop: G.T[k] ? G.T[k].shop.size : 0, truoc: G.P[k] || 0 }))
+    .sort((a, b) => b.shop - a.shop || b.lan - a.lan);
+  const dung = ds.filter(x => x.lan), khong = ds.filter(x => !x.lan && Q6_TN[x.k] && x.k !== "hotro");
+  const xu = x => !x.truoc ? (x.lan ? "mới" : "") : (x.lan >= x.truoc ? "▲ " : "▼ ") + Math.round(Math.abs(x.lan - x.truoc) / x.truoc * 100) + "%";
+  /* khách "kẹt": mở app ≥ 3 lần mà không ghi / bán được gì · bấm vào tính năng đang tắt · nhiều lỗi */
+  const ket = uid ? [] : Object.keys(G.S).map(u => { const s = G.S[u], mo = s.mo_app || 0, viec = Q6_LOI_CHINH.reduce((a, k) => a + (s[k] || 0), 0);
+      return { u, mo, viec, loi: s.loi || 0, bt: s.bao_tri || 0 }; })
+    .filter(x => (x.mo >= 3 && !x.viec) || x.loi >= 5 || x.bt >= 3).sort((a, b) => (b.loi + b.bt * 2) - (a.loi + a.bt * 2)).slice(0, 15);
+  const top = uid ? [] : Object.keys(G.S).map(u => ({ u, tong: Object.values(G.S[u]).reduce((a, b) => a + b, 0) })).sort((a, b) => b.tong - a.tong).slice(0, 10);
+  t.than.innerHTML = `
+    <div class="loc">${[7, 30].map(x => `<button data-act="q6-ky" data-k="${x}" class="${n === x ? "on" : ""}">${x} ngày</button>`).join("")}</div>
+    <div class="bao ngoc" style="margin-top:0">${uid ? `Khách <b>${esc(emailCua(uid) || uid)}</b> · ` : ""}${G.shop.size} shop · ${G.may.size} máy có số liệu trong ${n} ngày${Q6D.dang ? " · đang đọc lại…" : ""}<br><span class="nho">Đọc ${esc(lauRoi(new Date(Q6D.luc)))} · ${esc(Q6D.nguon)}. Chỉ là số lần bấm — không có nội dung, tên khách, số tiền.</span></div>
+    ${Q6D.loi ? `<div class="bao xau">Lần đọc gần nhất lỗi: ${esc(Q6D.loi)}</div>` : ""}
+    ${mucHtml("Được dùng nhiều nhất", `${dung.length} mục`)}
+    <div class="nhom">${dung.length ? dung.map(x => dongHtml({ ic: Q6_TN[x.k] ? "cot" : "homnay", t: esc(x.t), d: esc(`${x.lan.toLocaleString("vi-VN")} lần · ${x.shop} shop${xu(x) ? " · " + xu(x) + " so với " + n + " ngày trước" : ""}`) })).join("") : trong("Chưa có số liệu", "Máy khách phải chạy Sổ Nợ SN29 trở lên và có mở app")}</div>
+    ${!uid && khong.length ? `${mucHtml("Tính năng KHÔNG ai dùng", `${khong.length} mục`)}<div class="nhom">${khong.map(x => dongHtml({ ic:"canh", lop:"dong-c", t: esc(x.t), d:"0 lần trong " + n + " ngày — khách chưa biết? thêm vào Trợ lý / nhắn hướng dẫn" })).join("")}</div>` : ""}
+    ${!uid ? `${mucHtml("Khách có thể đang KẸT", `${ket.length}`)}<div class="nhom">${ket.length ? ket.map(x => dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(x.u)}"`, ic:"khach", lop:"dong-c", t: esc(emailCua(x.u) || x.u),
+        d: esc([x.mo >= 3 && !x.viec ? `mở app ${x.mo} lần mà chưa ghi / bán được gì` : "", x.loi >= 5 ? `${x.loi} lỗi trên máy` : "", x.bt >= 3 ? `${x.bt} lần bấm vào tính năng đang tắt` : ""].filter(Boolean).join(" · ")), mui:true })).join("") : trong("Không thấy khách nào kẹt", "")}</div>` : ""}
+    ${!uid && top.length ? `${mucHtml("Shop dùng nhiều nhất")}<div class="nhom">${top.map(x => dongHtml({ the:"button", act:"mo-khach", data:`data-uid="${esc(x.u)}"`, ic:"khach", t: esc(emailCua(x.u) || x.u), d: esc(x.tong.toLocaleString("vi-VN") + " lần bấm trong " + n + " ngày"), mui:true })).join("")}</div>` : ""}`;
+}
+/* ─────────── 4. 💬 HỘP THƯ HỖ TRỢ ───────────
+   Khách (Sổ Nợ SN29) nhắn: hotro/{mã} + hotro/{mã}/tin. Quản trị nghe 40 cuộc mới nhất (1 lượt đọc lúc mở + mỗi lần có tin), trả lời ⇒
+   ghi tin + cập nhật cuộc + accounts/{uid}.remote.hotro (máy khách có sẵn kênh nghe ⇒ hiện "💬 Có trả lời" ngay, không tốn đọc thêm). */
+const Q6H = { ds:[], huy:null, loi:"", lan:0, hen:null, luc:0, chuaRules:false };
+const q6HtXem = () => q6Lay(Q6.KEY_HT, {});
+const q6HtChua = () => Q6H.ds.filter(x => x.moiKhach === true && x.tt !== "xong");
+function q6TatHT(){ clearTimeout(Q6H.hen); try{ if(Q6H.huy) Q6H.huy(); }catch(e){} Q6H.huy = null; }
+function q6NgheHT(){
+  q6TatHT();
+  if(!auth.currentUser) return;
+  try{
+    Q6H.huy = onSnapshot(query(collection(fdb, "hotro"), orderBy("cap", "desc"), limit(Q6.HT_TOI_DA)), s => {
+      Q6H.lan = 0; Q6H.loi = ""; Q6H.chuaRules = false;
+      if(!s || (s.metadata && s.metadata.fromCache && !Q6H.luc)) return;
+      const cu = new Map(Q6H.ds.map(x => [x.id, x]));
+      Q6H.ds = s.docs.map(d => ({ ...(d.data() || {}), id: d.id })); Q6H.luc = Date.now();
+      const moi = Q6H.ds.filter(x => x.moiKhach === true && x.tt !== "xong" && (!cu.has(x.id) ? Q6H.daCo : q6Ms(x.cap) > q6Ms(cu.get(x.id).cap)));
+      Q6H.daCo = true;
+      if(moi.length){
+        const x = moi[0];
+        bao(`💬 ${x.email || "Khách"} nhắn: ${String(x.tieuDe || "").slice(0, 70)}`);
+        try{ if(document.hidden && "Notification" in window && Notification.permission === "granted") new Notification("💬 Khách nhắn hỗ trợ", { body: (x.email || "") + ": " + String(x.tieuDe || "").slice(0, 120), tag: "q6-ht" }); }catch(e){}
+      }
+      q6VeLaiHT();
+    }, err => {
+      console.warn("hộp thư:", err); Q6H.huy = null; Q6H.lan++; Q6H.loi = maLoi(err);
+      if(err && err.code === "permission-denied"){ Q6H.chuaRules = true; q6VeLaiHT(); return; }
+      clearTimeout(Q6H.hen); Q6H.hen = setTimeout(q6NgheHT, Math.min(300000, 15000 * Math.pow(2, Math.min(Q6H.lan, 4))));
+    });
+  }catch(e){ console.warn("hộp thư:", e); }
+}
+function q6VeLaiHT(){
+  try{ if(VIEW === "suckhoe" && !TAM.length && !(document.activeElement && document.activeElement.id === "q5Tim")) q5VeTab(); }catch(e){}
+  TAM.forEach(t => { try{ if(t.S && t.S.q6ht) q6VeHopThu(t); if(t.S && t.S.q6cuoc) q6VeCuoc(t); }catch(e){} });
+  try{ if(VIEW === "homnay" && !TAM.length) veView("homnay"); }catch(e){}
+}
+const Q6_MAU = ["Mình đã nhận, đang kiểm tra — có kết quả mình báo ngay nhé.",
+  "Bạn tắt hẳn app (vuốt tắt) rồi mở lại giúp mình, xong thử lại nhé.",
+  "Mình đã sửa xong lỗi này. Bạn tắt app mở lại để lên bản mới nhất nhé.",
+  "Mình đã gia hạn xong cho bạn. Bạn tắt app mở lại là dùng được ngay.",
+  "Bạn chụp màn hình chỗ bị lỗi gửi mình qua Zalo giúp nhé."];
+function q6MoHopThu(loc){
+  const t = moTam({ tieuDe:"💬 Hộp thư hỗ trợ", lamMoi: () => { q6NgheHT(); q6VeHopThu(t); } });
+  t.S = { q6ht:true, loc: loc || "cho" };
+  if(!Q6H.huy && auth.currentUser) q6NgheHT();
+  q6VeHopThu(t);
+  return t;
+}
+function q6TrangThaiKhach(uid){
+  try{ const ls = licsCua(uid).filter(l => String(l.app).indexOf("sono") === 0); if(!ls.length) return "";
+    const m = ls.map(l => tt(l).ma); return m.includes("tra") || m.includes("vv") ? "đang trả tiền" : m.includes("thu") ? "đang dùng thử" : "hết hạn"; }catch(e){ return ""; }
+}
+function q6DongCuoc(x){
+  const chua = x.moiKhach === true && x.tt !== "xong";
+  const nhan = x.tt === "xong" ? chip("xong", "") : chua ? chip("chờ trả lời", "do") : chip("đã trả lời", "");
+  return dongHtml({ the:"button", act:"q6-cuoc", data:`data-k="${esc(x.id)}"`, ic:"tin", lop: chua ? "do-c" : x.tt === "xong" ? "la-c" : "",
+    t: esc(String(x.tieuDe || "(không tiêu đề)").slice(0, 90)), d: esc(`${x.email || x.uid || "?"} · ${lauRoi(x.cap)} · ${Number(x.n) || 1} tin${x.build ? " · " + x.build : ""}${q6TrangThaiKhach(x.uid) ? " · " + q6TrangThaiKhach(x.uid) : ""}`), ph: nhan, mui:true });
+}
+function q6VeHopThu(t){
+  const loc = t.S.loc, ds = Q6H.ds.filter(x => loc === "cho" ? (x.moiKhach === true && x.tt !== "xong") : loc === "xong" ? x.tt === "xong" : true);
+  const nCho = q6HtChua().length;
+  t.than.innerHTML = `
+    ${Q6H.chuaRules ? `<div class="bao xau" style="margin-top:0"><b>Máy chủ chưa mở hộp thư.</b> Publish trọn bộ Firestore Rules Z8 (mình đã gửi kèm bản này) rồi bấm làm mới.</div>`
+      : Q6H.loi ? `<div class="bao canh" style="margin-top:0">Đang thử nghe lại hộp thư: ${esc(Q6H.loi)}</div>` : ""}
+    <div class="loc">${[["cho", `Chờ trả lời (${nCho})`], ["tat", "Tất cả"], ["xong", "Đã xong"]].map(([k, n]) => `<button data-act="q6-ht-loc" data-k="${k}" class="${loc === k ? "on" : ""}">${esc(n)}</button>`).join("")}</div>
+    <div class="nhom">${ds.length ? ds.map(q6DongCuoc).join("") : trong(loc === "cho" ? "Không có câu hỏi nào chờ trả lời" : "Chưa có cuộc trò chuyện nào", Q6H.luc ? "Cập nhật " + lauRoi(new Date(Q6H.luc)) : "Đang nghe hộp thư…")}</div>
+    <p class="nho">Khách gửi từ Sổ Nợ (bản SN29 trở lên): ☰ menu → 💬 Hỏi · báo lỗi, màn khoá, hoặc Trợ lý. Mỗi câu hỏi tự kèm hộp đen (số bản, thao tác vừa bấm, lỗi vừa gặp). Đang hiện ${Q6.HT_TOI_DA} cuộc mới nhất.</p>`;
+}
+const Q6C = { huy:null, tid:"", tin:[], loi:"" };
+function q6MoCuoc(tid){
+  const t = moTam({ tieuDe:"💬 Trò chuyện với khách", khiDong: () => { if(Q6C.tid === tid){ try{ Q6C.huy && Q6C.huy(); }catch(e){} Q6C.huy = null; Q6C.tid = ""; } } });
+  t.S = { q6cuoc:true, tid };
+  try{ Q6C.huy && Q6C.huy(); }catch(e){}
+  Q6C.tid = tid; Q6C.tin = []; Q6C.loi = "";
+  try{
+    Q6C.huy = onSnapshot(query(collection(fdb, "hotro", tid, "tin"), orderBy("at", "asc"), limit(300)), s => {
+      Q6C.tin = s.docs.map(d => ({ ...(d.data() || {}), id: d.id })); Q6C.loi = "";
+      if(TAM.includes(t)) q6VeCuoc(t);
+    }, err => { Q6C.loi = maLoi(err); if(TAM.includes(t)) q6VeCuoc(t); });
+  }catch(e){ Q6C.loi = maLoi(e); }
+  const x = q6HtXem(); x[tid] = Date.now(); q6Ghi(Q6.KEY_HT, x);
+  q6VeCuoc(t);
+  return t;
+}
+function q6HopDenHtml(s){
+  let o = null; try{ o = JSON.parse(s); }catch(e){ return ""; }
+  if(!o || typeof o !== "object") return "";
+  const c = o.ctx && typeof o.ctx === "object" ? o.ctx : {};
+  const dong = [["Bản app", o.b], ["Máy", o.ua ? q5May(o.ua) : ""], ["Máy nhân viên", o.nv ? "có" : ""], ["Mạng", o.on === false ? "MẤT MẠNG" : "có"],
+    ["Màn đang mở", c.man], ["Mở app được", c.up != null ? Math.round(c.up / 60) + " phút" : ""], ["Màn hình", c.w ? c.w + "×" + c.h : ""], ["Đã cài app", c.cai ? "có" : c.cai === false ? "chưa (mở bằng trình duyệt)" : ""]].filter(x => x[1]);
+  return `<details class="q6-hd"><summary>🧭 Hộp đen lúc gửi</summary><div class="the" style="margin:6px 0">${dong.map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}
+    ${Array.isArray(o.bc) && o.bc.length ? `<div class="nho" style="margin-top:6px"><b>Thao tác vừa bấm:</b><br>${o.bc.slice(-12).map(esc).join("<br>")}</div>` : ""}
+    ${Array.isArray(o.loi) && o.loi.length ? `<div class="nho" style="margin-top:6px;color:var(--do)"><b>Lỗi vừa gặp trên máy:</b><br>${o.loi.map(esc).join("<br>")}</div>` : ""}</div></details>`;
+}
+function q6VeCuoc(t){
+  const x = Q6H.ds.find(z => z.id === t.S.tid) || {};
+  const nhap = $("#q6TraLoi", t.than), giu = nhap ? nhap.value : "";
+  t.than.innerHTML = `
+    <div class="the" style="margin-top:0"><div class="kv"><span>Khách</span><span>${esc(x.email || x.uid || "?")}${q6TrangThaiKhach(x.uid) ? " · " + esc(q6TrangThaiKhach(x.uid)) : ""}</span></div>
+      <div class="kv"><span>Câu hỏi</span><span>${esc(String(x.tieuDe || "").slice(0, 120))}</span></div>
+      <div class="kv"><span>Bắt đầu</span><span>${esc(lauRoi(x.tao))}${x.build ? " · bản " + esc(x.build) : ""}</span></div></div>
+    <div class="hang-nut">${x.uid ? `<button class="nut" data-act="mo-khach" data-uid="${esc(x.uid)}">${ic("khach")}Hồ sơ khách</button>` : ""}
+      ${x.email ? `<button class="nut" data-act="q6-soi-loi" data-k="${esc(x.email)}">${ic("loi")}Lỗi của khách</button>` : ""}
+      ${x.tt === "xong" ? `<button class="nut" data-act="q6-ht-xong" data-k="${esc(t.S.tid)}" data-b="0">Mở lại</button>` : `<button class="nut" data-act="q6-ht-xong" data-k="${esc(t.S.tid)}" data-b="1">${ic("xong")}Đánh dấu xong</button>`}</div>
+    ${Q6C.loi ? `<div class="bao xau">${esc(Q6C.loi)}</div>` : ""}
+    <div class="q6-chat">${Q6C.tin.map(m => { const qt = m.tu === "qt";
+      return `<div class="q6-bb ${qt ? "qt" : "kh"}">${esc(m.noi || "")}<small>${qt ? "Bạn" : esc(x.email || "Khách")} · ${esc(lauRoi(m.at))}${!qt && m.build ? " · " + esc(m.build) : ""}</small>${!qt && m.hd ? q6HopDenHtml(m.hd) : ""}</div>`; }).join("") || trong("Đang tải tin nhắn…", "")}</div>
+    <div class="q6-mau">${Q6_MAU.map((s, i) => `<button class="chip" data-act="q6-mau" data-k="${i}">${esc(s.slice(0, 34))}…</button>`).join("")}</div>
+    <label class="o-nhap"><textarea id="q6TraLoi" maxlength="1500" placeholder="Trả lời khách — hiện ngay trong app của khách"></textarea></label>
+    <div class="hang-nut"><button class="nut chinh" data-act="q6-gui" data-k="${esc(t.S.tid)}">${ic("tin")}Gửi trả lời</button></div>`;
+  const n2 = $("#q6TraLoi", t.than); if(n2 && giu) n2.value = giu;
+  const ch = $(".q6-chat", t.than); if(ch) ch.scrollTop = ch.scrollHeight;
+}
+async function q6TraLoi(tid, noi){
+  const x = Q6H.ds.find(z => z.id === tid); if(!x || !x.uid) throw new Error("không tìm thấy cuộc trò chuyện");
+  const n = (Number(x.n) || 1) + 1;
+  const b = writeBatch(fdb);
+  b.set(doc(collection(fdb, "hotro", tid, "tin")), { tu:"qt", noi: String(noi).slice(0, 1500), at: serverTimestamp(), nguoi: (auth.currentUser && auth.currentUser.uid) || "" });
+  b.set(doc(fdb, "hotro", tid), { moiQT:true, moiKhach:false, tt:"mo", cap: serverTimestamp(), n }, { merge:true });
+  b.set(doc(fdb, "accounts", x.uid), { remote: { hotro: { id: tid, n, at: new Date() } } }, { merge:true });
+  await b.commit();
+  x.n = n; x.moiQT = true; x.moiKhach = false; x.tt = "mo";
+}
+async function q6DanhDauXong(tid, xong){
+  await setDoc(doc(fdb, "hotro", tid), xong ? { tt:"xong", moiKhach:false } : { tt:"mo" }, { merge:true });
+  const x = Q6H.ds.find(z => z.id === tid); if(x){ x.tt = xong ? "xong" : "mo"; if(xong) x.moiKhach = false; }
+  if(xong) try{ await q6NhatKy("hotro_xong", { ghi: String((x && x.tieuDe) || "").slice(0, 100) + " · #" + tid }, (x && x.uid) || "", "sono"); }catch(e){}
+}
+function q6HopThuCuaKhach(uid){
+  const ds = Q6H.ds.filter(x => x.uid === uid);
+  return mucHtml("💬 Hộp thư của khách này", ds.length ? `${ds.length} cuộc` : "") + `<div class="nhom">${ds.length ? ds.slice(0, 8).map(q6DongCuoc).join("") : trong("Khách chưa nhắn gì", Q6H.luc ? "Trong " + Q6.HT_TOI_DA + " cuộc mới nhất" : "")}</div>`;
+}
+/* ─────────── 5. 📦 SAO LƯU SỔ QUẢN TRỊ ───────────
+   Tải về máy 1 file JSON: hồ sơ khách, giấy phép, đơn gia hạn, sổ thu, công tắc, bảng giá, đăng ký, giới thiệu, 3.000 dòng nhật ký —
+   lấy từ số liệu ĐANG MỞ (0 lượt đọc thêm). "So với bản sao lưu": mở file cũ ⇒ liệt kê giấy phép bị đổi hạn / khoá / thêm / mất,
+   khách thêm / mất, sổ thu, công tắc đổi — bắt được việc bị sửa ngoài ý muốn. Chỉ ĐỌC, không ghi đè gì lên máy chủ. */
+function q6Tron(v){
+  if(v == null || typeof v !== "object") return v;
+  if(typeof v.toMillis === "function") return { __ts: v.toMillis() };
+  if(v instanceof Date) return { __ts: v.getTime() };
+  if(Array.isArray(v)) return v.map(q6Tron);
+  const o = {}; for(const k in v) if(Object.prototype.hasOwnProperty.call(v, k)) o[k] = q6Tron(v[k]); return o;
+}
+function q6TaoSaoLuu(){
+  return { loai:"so-quan-tri", v:1, luc: Date.now(), boi: toiLa(), ban: CFG.ver,
+    cfg: q6Tron(CFGDB), bill: q6Tron(BILL), acc: q6Tron(ACC), lic: q6Tron(LIC), req: q6Tron(REQ), pay: q6Tron(PAY),
+    sgn: q6Tron(SGN), ref: q6Tron(REF), aud: q6Tron(AUD.slice(0, 3000)) };
+}
+async function q6TaiSaoLuu(){
+  if(!DA_NAP) throw new Error("chưa tải số liệu");
+  const o = q6TaoSaoLuu(), s = JSON.stringify(o);
+  const d = new Date(), ten = `so-quan-tri-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}.json`;
+  q6TaiVe(ten, s, "application/json;charset=utf-8");
+  try{ await q6NhatKy("tai_sao_luu_qt", { ghi: `${Object.keys(ACC).length} khách · ${LIC.length} giấy phép · ${PAY.length} dòng thu · ${Math.round(s.length / 1024)} KB` }); }catch(e){}
+  return { ten, kb: Math.round(s.length / 1024) };
+}
+const q6VtLic = l => { l = l || {}; const h = l.paidUntil && typeof l.paidUntil === "object" && l.paidUntil.__ts != null ? l.paidUntil.__ts : q6Ms(l.paidUntil);
+  return { han: h || 0, vv: l.vinhVien === true, khoa: l.active === false, qty: Math.floor(num(l.qty)) || 0, thu: l.trial === true }; };
+function q6SoSaoLuu(cu){
+  if(!cu || cu.loai !== "so-quan-tri" || !Array.isArray(cu.lic)) throw new Error("không phải file sao lưu sổ quản trị");
+  const nay = q6TaoSaoLuu(), out = [];
+  const mapL = ds => { const m = new Map(); ds.forEach(l => m.set(l.uid + "|" + l.app, l)); return m; };
+  const A = mapL(cu.lic), B = mapL(nay.lic);
+  const ngayTxt = ms => ms ? new Date(ms).toLocaleDateString("vi-VN") : "không hạn";
+  B.forEach((l, k) => { const a = A.get(k), v1 = q6VtLic(l);
+    if(!a){ out.push({ muc:"them", t:`➕ Giấy phép mới: ${emailCua(l.uid) || l.uid} · ${tenApp(l.app)}`, d:`hạn ${ngayTxt(v1.han)}${v1.vv ? " · VĨNH VIỄN" : ""}${v1.thu ? " · dùng thử" : ""}`, uid: l.uid }); return; }
+    const v0 = q6VtLic(a), doi = [];
+    if(v0.han !== v1.han) doi.push(`hạn ${ngayTxt(v0.han)} → ${ngayTxt(v1.han)}`);
+    if(v0.vv !== v1.vv) doi.push(v1.vv ? "thành VĨNH VIỄN" : "bỏ vĩnh viễn");
+    if(v0.khoa !== v1.khoa) doi.push(v1.khoa ? "BỊ KHOÁ" : "mở khoá");
+    if(v0.qty !== v1.qty) doi.push(`số suất ${v0.qty} → ${v1.qty}`);
+    if(doi.length) out.push({ muc: (v1.vv && !v0.vv) || (v1.han - v0.han > 400 * 864e5) ? "la" : "doi", t:`✏️ ${emailCua(l.uid) || l.uid} · ${tenApp(l.app)}`, d: doi.join(" · "), uid: l.uid });
+  });
+  A.forEach((l, k) => { if(!B.has(k)) out.push({ muc:"mat", t:`➖ Giấy phép không còn: ${emailCua(l.uid) || (cu.acc && cu.acc[l.uid] && cu.acc[l.uid].email) || l.uid} · ${tenApp(l.app)}`, d:"có trong bản sao lưu, nay không thấy trên máy chủ", uid: l.uid }); });
+  const kA = Object.keys(cu.acc || {}), kB = Object.keys(nay.acc || {});
+  const sA = new Set(kA), sB = new Set(kB);
+  const accMat = kA.filter(u => !sB.has(u)), accMoi = kB.filter(u => !sA.has(u));
+  const cfgDoi = Object.keys(Object.assign({}, cu.cfg, nay.cfg)).filter(k => k !== "tat" && JSON.stringify((cu.cfg || {})[k]) !== JSON.stringify((nay.cfg || {})[k]));
+  const billDoi = Object.keys(Object.assign({}, cu.bill, nay.bill)).filter(k => JSON.stringify((cu.bill || {})[k]) !== JSON.stringify((nay.bill || {})[k]));
+  return { cu, nay, out, accMat, accMoi, cfgDoi, billDoi, payCu: (cu.pay || []).length, payNay: (nay.pay || []).length };
+}
+const Q6SL = { kq:null, loi:"" };
+function q6MoSaoLuu(){
+  const t = moTam({ tieuDe:"📦 Sao lưu sổ quản trị", lamMoi: () => q6VeSaoLuu(t) });
+  t.S = { q6sl:true };
+  q6VeSaoLuu(t);
+  return t;
+}
+function q6VeSaoLuu(t){
+  const K = Q6SL.kq;
+  let so = "";
+  if(Q6SL.loi) so = `<div class="bao xau">${esc(Q6SL.loi)}</div>`;
+  else if(K){
+    const la = K.out.filter(x => x.muc === "la" || x.muc === "mat");
+    so = `<div class="bao ${la.length ? "xau" : K.out.length ? "canh" : "tot"}">So với bản sao lưu lúc <b>${esc(new Date(K.cu.luc).toLocaleString("vi-VN"))}</b>:
+        ${K.out.length} giấy phép khác · ${K.accMoi.length} khách mới · ${K.accMat.length} khách mất · sổ thu ${K.payCu} → ${K.payNay} dòng${K.cfgDoi.length ? " · công tắc đổi: " + esc(K.cfgDoi.join(", ")) : ""}${K.billDoi.length ? " · bảng giá / TK nhận tiền đổi: " + esc(K.billDoi.join(", ")) : ""}
+        ${la.length ? "<br><b>⚠️ Có thay đổi lạ (giấy phép mất / thành vĩnh viễn / cộng hơn 400 ngày) — xem kỹ nhật ký ai làm.</b>" : ""}</div>
+      <div class="nhom">${K.out.slice(0, 120).map(x => dongHtml({ the: x.uid ? "button" : "div", act: x.uid ? "mo-khach" : "", data: x.uid ? `data-uid="${esc(x.uid)}"` : "", ic: x.muc === "them" ? "nap" : x.muc === "mat" ? "canh" : "but", lop: x.muc === "la" || x.muc === "mat" ? "do-c" : "", t: esc(x.t), d: esc(x.d), mui: !!x.uid })).join("") || trong("Giấy phép y hệt bản sao lưu", "")}</div>
+      ${K.out.length > 120 ? `<p class="nho">Đang hiện 120 / ${K.out.length} dòng.</p>` : ""}`;
+  }
+  t.than.innerHTML = `
+    <div class="bao ngoc" style="margin-top:0">Tải về máy 1 file chứa toàn bộ sổ quản trị đang mở: <b>${Object.keys(ACC).length}</b> hồ sơ khách · <b>${LIC.length}</b> giấy phép · <b>${REQ.length}</b> đơn gia hạn · <b>${PAY.length}</b> dòng sổ thu · công tắc · bảng giá · ${Math.min(AUD.length, 3000)} dòng nhật ký. Không tốn lượt đọc thêm.</div>
+    <div class="hang-nut"><button class="nut chinh" data-act="q6-sl-tai">${ic("taive")}Tải bản sao về máy</button>
+      <label class="nut" style="cursor:pointer">${ic("nap")}So với bản sao lưu cũ…<input type="file" accept=".json,application/json" data-in="q6SoFile" hidden></label></div>
+    <p class="nho">Nên tải mỗi tuần 1 lần, cất vào Google Drive. Có chuyện (lỡ tay, bị sửa lén, máy chủ có vấn đề) thì mở “So với bản sao lưu cũ” để biết chính xác cái gì đã đổi. File này chỉ để đối chiếu — không tự ghi đè lên máy chủ.</p>
+    ${so}`;
+  q6GanFile(t);
+}
+/* ─────────── 6. GIAO DIỆN + MÓC VÀO MÀN CŨ (bọc hàm, lỗi gì cũng trả đúng kết quả cũ) ─────────── */
+try{
+  const st = document.createElement("style"); st.id = "q6-css";
+  st.textContent = `.q6-chat{display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow:auto;padding:4px 2px;margin:10px 0}
+.q6-bb{max-width:88%;padding:9px 11px;border-radius:14px;font-size:14px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.q6-bb.kh{align-self:flex-start;background:var(--mat2);border:1px solid var(--vach);color:var(--muc);border-bottom-left-radius:4px}
+.q6-bb.qt{align-self:flex-end;background:var(--ngoc);color:var(--chu-ngoc);border-bottom-right-radius:4px}
+.q6-bb small{display:block;font-size:11px;opacity:.75;margin-top:3px}
+.q6-mau{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.q6-mau .chip{cursor:pointer;border:none;font:inherit;font-size:12px}
+.q6-hd{white-space:normal}.q6-hd summary{cursor:pointer;font-size:12.5px;margin-top:6px;opacity:.9}`;
+  document.head.appendChild(st);
+}catch(e){ console.warn("q6 css:", e); }
+function q6VanHanhHtml(){
+  const ph = Q5_TRANG.map(p => ({ p, s: q6TrangThaiTram(p.ma) })).filter(x => x.s && x.s.tt === "la");
+  const nTat = q6SoTatChung(), min = CFGDB.banToiThieu || "", cho = q6HtChua(), sl = AUD.find(x => x && x.viec === "tai_sao_luu_qt");
+  return mucHtml("🧰 Vận hành") + `<div class="nhom">
+    ${dongHtml({ the:"button", act:"q6-tram", ic:"cong", lop: ph.length ? "do-c" : "", t: ph.length ? `🚀 Trạm phát hành — <b>file trên GitHub khác bản đã ghi nhận</b>` : "🚀 Trạm phát hành",
+      d: esc(ph.length ? ph.map(x => x.p.ten).join(", ") + " — bạn quên ghi nhận, hoặc file bị sửa ở nơi khác" : "Soát file trước khi đưa lên GitHub · biết file bị sửa ngoài ý muốn · quay về bản trước 1 chạm"), mui:true })}
+    ${dongHtml({ the:"button", act:"q6-ct", ic:"khoa", lop: nTat ? "do-c" : "", t: nTat ? `🛑 Công tắc khẩn cấp — <b>đang tắt ${nTat} tính năng</b>` : "🛑 Công tắc khẩn cấp",
+      d: esc(nTat ? Object.keys(q6TatChung()).filter(k => Q6_TN[k] && q6DangTat(q6TatChung()[k])).map(k => Q6_TN[k]).join(", ") + " — sửa xong nhớ bật lại" : "Tắt ngay 1 tính năng đang lỗi trên máy khách · buộc máy chạy bản lỗi cập nhật" + (min ? " · đang buộc tối thiểu " + min : "")), mui:true })}
+    ${dongHtml({ the:"button", act:"q6-ht", ic:"tin", lop: Q6H.chuaRules ? "dong-c" : cho.length ? "do-c" : "", t: cho.length ? `💬 Hộp thư hỗ trợ — <b>${cho.length} câu hỏi chờ trả lời</b>` : "💬 Hộp thư hỗ trợ",
+      d: esc(Q6H.chuaRules ? "Máy chủ chưa mở hộp thư — Publish Firestore Rules Z8" : cho.length ? cho.slice(0, 2).map(x => (x.email || "") + ": " + String(x.tieuDe || "").slice(0, 50)).join(" · ") : "Khách hỏi / báo lỗi ngay trong app, kèm hộp đen · bạn trả lời ở đây"), mui:true })}
+    ${dongHtml({ the:"button", act:"q6-dung", ic:"cot", t:"📈 Tính năng khách dùng", d:"Tính năng nào nhiều người dùng, cái nào bỏ xó, khách nào đang kẹt", mui:true })}
+    ${dongHtml({ the:"button", act:"q6-sl", ic:"taive", t:"📦 Sao lưu sổ quản trị", d: esc(sl ? "Tải lần cuối " + lauRoi(sl.at) + " · so với bản cũ để biết cái gì đã đổi" : "Chưa tải lần nào — tải 1 bản cất vào Google Drive"), mui:true })}
+  </div>`;
+}
+try{
+  const goc = q5VeTab;
+  q5VeTab = function(){
+    const r = goc.apply(this, arguments);
+    try{ const el = $("#v-suckhoe"), hn = el && el.querySelector(":scope > .hang-nut");
+      if(hn && !el.querySelector("#q6VanHanh")) hn.insertAdjacentHTML("afterend", `<div id="q6VanHanh">${q6VanHanhHtml()}</div>`); }catch(e){ console.warn("q6 vận hành:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q6 móc tab:", e); }
+try{
+  const goc = viecCanLam;
+  viecCanLam = function(){
+    const v = goc.apply(this, arguments);
+    try{
+      const cho = q6HtChua();
+      if(cho.length) v.unshift({ ic:"tin", lop:"do-c", t:`${cho.length} câu hỏi của khách chờ trả lời`, d: esc(cho.slice(0, 2).map(x => (x.email || "") + ": " + String(x.tieuDe || "").slice(0, 60)).join(" · ")),
+        ph:`<button class="nut nho chinh" data-act="q6-ht">Trả lời</button>` });
+      const nTat = q6SoTatChung();
+      if(nTat) v.push({ ic:"khoa", lop:"dong-c", t:`Đang tắt ${nTat} tính năng trên máy khách`, d:"Công tắc khẩn cấp — sửa xong nhớ bật lại", ph:`<button class="nut nho" data-act="q6-ct">Xem</button>` });
+      const ph = Q5_TRANG.filter(p => { const s = q6TrangThaiTram(p.ma); return s && s.tt === "la"; });
+      if(ph.length) v.unshift({ ic:"canh", lop:"do-c", t:`File trên GitHub khác bản đã ghi nhận: ${esc(ph.map(p => p.ten).join(", "))}`, d:"Bạn vừa đưa file mà chưa ghi nhận ở Trạm phát hành — hoặc file bị sửa ở nơi khác", ph:`<button class="nut nho chinh" data-act="q6-tram">Xem</button>` });
+    }catch(e){ console.warn("q6 việc cần làm:", e); }
+    return v;
+  };
+}catch(e){ console.warn("q6 móc việc cần làm:", e); }
+try{
+  const goc = hoHoTro;
+  hoHoTro = function(S){
+    const h = goc.apply(this, arguments);
+    try{
+      const nt = Object.keys(q6TatRieng(S.uid)).filter(k => Q6_TN[k] && q6DangTat(q6TatRieng(S.uid)[k])).length, rm = (ACC[S.uid] && ACC[S.uid].remote) || {};
+      return h + q6HopThuCuaKhach(S.uid) + mucHtml("Điều khiển riêng khách này") + `<div class="nhom">
+        ${dongHtml({ the:"button", act:"q6-ct-kh", data:`data-uid="${esc(S.uid)}"`, ic:"khoa", lop: nt ? "do-c" : "", t: nt ? `🛑 Đang tắt ${nt} tính năng riêng khách này` : "🛑 Công tắc riêng khách này", d: esc("Tắt tính năng đang lỗi chỉ trên máy khách này" + (rm.banToiThieu ? " · đang buộc tối thiểu " + rm.banToiThieu : "")), mui:true })}
+        ${dongHtml({ the:"button", act:"q6-dung-kh", data:`data-uid="${esc(S.uid)}"`, ic:"cot", t:"📈 Khách này dùng gì", d:"Số lần dùng từng tính năng 7 / 30 ngày", mui:true })}</div>`;
+    }catch(e){ console.warn("q6 hồ sơ:", e); return h; }
+  };
+}catch(e){ console.warn("q6 móc hồ sơ:", e); }
+/* Khám tổng quát: thêm nhóm "Vận hành" */
+try{
+  const goc = q5Kham;
+  q5Kham = async function(){
+    const r = await goc.apply(this, arguments);
+    try{
+      const them = (ten, tt, chi) => r.K.push({ nhom:"Vận hành (5.1)", ten, tt, chi: String(chi || ""), nut:null });
+      await q6DocTram(false).catch(() => {});
+      Q5_TRANG.forEach(p => { const s = q6TrangThaiTram(p.ma); if(!s) return;
+        them(`Trạm phát hành · ${p.ten}`, s.tt === "ok" ? "ok" : s.tt === "la" ? "xau" : "canh",
+          s.tt === "ok" ? `GitHub đúng file đã ghi nhận (${s.x.build || ""})` : s.tt === "la" ? `md5 GitHub ${String(s.x.md5).slice(0, 10)}… KHÁC bản ghi nhận cuối (${s.a.build || ""}) — chưa ghi nhận hoặc bị sửa ngoài Trạm` : "chưa có mốc phát hành — mở Trạm, bấm “Lấy làm mốc”"); });
+      const nTat = q6SoTatChung(); them("Công tắc khẩn cấp", nTat ? "canh" : "ok", nTat ? `đang tắt ${nTat} tính năng cho mọi khách — nhớ bật lại` : "không tắt tính năng nào");
+      them("Hộp thư hỗ trợ", Q6H.chuaRules ? "xau" : q6HtChua().length ? "canh" : "ok", Q6H.chuaRules ? "máy chủ chưa mở kho hotro — Publish Firestore Rules Z8" : q6HtChua().length ? `${q6HtChua().length} câu hỏi chờ trả lời` : "không có câu hỏi chờ");
+      const gan = ERR.filter(x => x && x.app === "sono" && Date.now() - q5Ms(x) < 3 * 864e5);
+      const coHop = gan.filter(x => x.build || x.bc || x.ctx).length, banGit = q6BanSono();
+      if(gan.length && q6SoSanhBan(banGit, "2026-11-06-SN28") >= 0)
+        them("Máy chủ nhận hộp đen lỗi", coHop ? "ok" : "canh", coHop ? `${coHop}/${gan.length} lỗi Sổ Nợ 3 ngày qua có hộp đen` : `${gan.length} lỗi Sổ Nợ 3 ngày qua đều KHÔNG có hộp đen — Rules cũ đang chối; Publish Firestore Rules Z8`);
+    }catch(e){ console.warn("q6 khám:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q6 móc khám:", e); }
+try{
+  const goc = batDau;
+  batDau = async function(){
+    const r = await goc.apply(this, arguments);
+    try{ if(DA_NAP && auth.currentUser){ q6NgheHT();
+      setTimeout(() => { try{ if(auth.currentUser && (!Q6S.tramLuc || Date.now() - Q6S.tramLuc > 30 * 60e3)) q6DocTram(false).then(() => { if(VIEW === "homnay" && !TAM.length) veView("homnay"); if(VIEW === "suckhoe" && !TAM.length) q5VeTab(); }).catch(() => {}); }catch(e){} }, 20000); } }catch(e){ console.warn("q6 khởi động:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q6 móc khởi động:", e); }
+try{
+  onAuthStateChanged(auth, u => { if(!u){ q6TatHT(); Q6H.ds = []; Q6H.luc = 0; Q6H.daCo = false; Q6D.ds = null; } });
+  addEventListener("online", () => { if(DA_NAP && auth.currentUser && !Q6H.huy && !Q6H.chuaRules) q6NgheHT(); });
+}catch(e){ console.warn("q6 sự kiện:", e); }
+/* ô chọn file: gắn THẲNG vào ô (không nhờ document) ⇒ tấm có vẽ lại lúc đang chọn file thì ô cũ (đã rời trang) vẫn báo về được */
+function q6GanFile(t){ try{ t.than.querySelectorAll('input[type="file"][data-in^="q6"]').forEach(i => { if(i.__q6) return; i.__q6 = 1; i.addEventListener("change", q6KhiChonFile); }); }catch(e){} }
+async function q6KhiChonFile(e){
+  try{
+    const el = e.target; if(!el || !el.dataset) return;
+    const k = el.dataset.in; if(k !== "q6File" && k !== "q6SoFile") return;
+    const f = el.files && el.files[0]; try{ el.value = ""; }catch(x){} if(!f) return;
+    const tim = () => { const t0 = el.isConnected ? tamCua(el) : null; return (t0 && TAM.includes(t0)) ? t0 : ([...TAM].reverse().find(x => x.S && (k === "q6File" ? x.S.q6tram : x.S.q6sl)) || null); };
+    if(k === "q6File"){
+      Q6S.dangSoat = true; Q6S.soat = null; let t = tim(); if(t) q6VeTram(t);
+      try{ const buf = new Uint8Array(await f.arrayBuffer()); Q6S.file = { ten: f.name, buf };
+        Q6S.soat = await q6Soat(buf, f.name, Q6S.maChon); }
+      catch(x){ bao("Soát lỗi: " + maLoi(x), 1); }
+      Q6S.dangSoat = false; t = tim(); if(t) q6VeTram(t);
+    } else {
+      try{ const o = JSON.parse(await f.text()); Q6SL.kq = q6SoSaoLuu(o); Q6SL.loi = ""; }
+      catch(x){ Q6SL.kq = null; Q6SL.loi = "Không đọc được file: " + maLoi(x); }
+      const t = tim(); if(t) q6VeSaoLuu(t);
+    }
+  }catch(x){ console.warn("q6 chọn file:", x); }
+}
+function q6SoatChu(R){
+  return [`SOÁT FILE TRƯỚC KHI ĐƯA LÊN — ${new Date(R.luc).toLocaleString("vi-VN")}`, `${R.ten} · ${R.app || "?"} · ${R.build || "không số bản"} · ${R.bytes} byte · ${R.dong} dòng · md5 ${R.md5}`,
+    R.cur ? `Bản đang chạy: ${R.cur.build || "?"} · ${R.cur.bytes} byte · md5 ${R.cur.md5}` : "Bản đang chạy: chưa đọc được",
+    `KẾT LUẬN: ${R.muc === "xau" ? "KHÔNG NÊN ĐƯA LÊN" : R.muc === "canh" ? "xem lại mục vàng" : "an toàn để đưa lên"}`, ""]
+    .concat(R.K.map(k => `${k.tt === "xau" ? "⛔" : k.tt === "canh" ? "⚠️" : "✓"} ${k.t}: ${k.d}`)).join("\n");
+}
+Object.assign(ACT, {
+  "q6-tram": () => q6MoTram(),
+  "q6-chon-app": async b => { Q6S.maChon = b.dataset.k || ""; const t = tamCua(b); if(Q6S.file){ Q6S.dangSoat = true; if(t) q6VeTram(t);
+      try{ Q6S.soat = await q6Soat(Q6S.file.buf, Q6S.file.ten, Q6S.maChon); }catch(e){ bao("Soát lỗi: " + maLoi(e), 1); } Q6S.dangSoat = false; } if(t && TAM.includes(t)) q6VeTram(t); },
+  "q6-doc-tram": async b => { const t = tamCua(b); Q6S.dangTram = true; if(t) q6VeTram(t); try{ await q6DocTram(true); }catch(e){ bao("Đọc GitHub lỗi: " + maLoi(e), 1); } Q6S.dangTram = false; if(t && TAM.includes(t)) q6VeTram(t); },
+  "q6-ghi-ph": async b => { const R = Q6S.soat; if(!R || !R.ma) return;
+    const ok = await hoi({ tieuDe:"Ghi nhận đã phát hành?", noiDung:`${R.app} · ${R.build || "không số bản"}\nmd5 ${R.md5}\n\nBấm sau khi ĐÃ đưa file này lên GitHub. Về sau file trên GitHub khác file này, Trạm sẽ báo.`, nutOk:"Ghi nhận" }); if(!ok) return;
+    await chay(b, async () => { await q6GhiPhatHanh(R.ma, R.build, R.md5, R.bytes, R.dong, R.muc === "canh" ? "có mục vàng khi soát" : "");
+      try{ const tr = q6Trang(R.ma); if(tr && R.build) await q6KhoLuu(q5KhoaTrang(q5DuongTrang(tr)), R.build, R.e.text, R.md5, R.bytes, ""); }catch(e){}
+      bao("Đã ghi nhận phát hành " + (R.build || "")); const t = tamCua(b); if(t) q6VeTram(t); }, "Đang ghi…"); },
+  "q6-tai-soat": () => { if(Q6S.file) q6TaiVe("index.html", Q6S.file.buf, "text/html;charset=utf-8"); },
+  "q6-chep-soat": () => { if(Q6S.soat) copy(q6SoatChu(Q6S.soat)); },
+  "q6-moc": async b => { const ma = b.dataset.k, x = Q6S.tram[ma]; if(!x || !x.md5) return;
+    const ok = await hoi({ tieuDe:"Lấy bản đang chạy làm mốc?", noiDung:`${tenAppQ6(ma)} · ${x.build || "không số bản"}\nmd5 ${x.md5}\n\nChỉ bấm khi chắc file đang ở GitHub là do bạn đưa lên.`, nutOk:"Lấy làm mốc" }); if(!ok) return;
+    await chay(b, async () => { await q6GhiPhatHanh(ma, x.build, x.md5, x.bytes, 0, "mốc: bản đang chạy trên GitHub"); bao("Đã ghi mốc"); const t = tamCua(b); if(t) q6VeTram(t); }); },
+  "q6-kho": b => { const t = tamCua(b); if(t) q6VeKho(t); },
+  "q6-tai-kho": async b => { await chay(b, async () => { const r = await q6TaiKho(b.dataset.k, b.dataset.b);
+    bao(r.trung ? `Đã tải ${b.dataset.b} (trùng từng byte bản đã cất) — đổi tên index.html rồi đưa lên GitHub` : `Đã tải ${b.dataset.b} — cùng nội dung, khác kiểu xuống dòng so với bản gốc`); }, "Đang tải…"); },
+  "q6-ct": () => q6MoCongTac(),
+  "q6-ct-kh": b => q6MoCongTac(b.dataset.uid),
+  "q6-tat": async b => {
+    const t = tamCua(b), uid = t && t.S ? t.S.uid : "", k = b.dataset.k, tat = b.dataset.b === "1";
+    let ly = "";
+    if(tat){
+      const r = await nhap({ tieuDe:`Tắt ${Q6_TN[k] || k}?`, noiDung:`${uid ? "Chỉ khách " + (emailCua(uid) || uid) : "MỌI khách"} — bấm vào tính năng này sẽ thấy “🛠 đang bảo trì”.${Q6_TN_GHI[k] ? "\n" + Q6_TN_GHI[k] : ""}\n\nLý do hiện cho khách (có thể để trống):`, nutOk:"Tắt", macDinh:"" });
+      if(r === null) return; ly = String(r).trim();
+      if(k === "pos" && !(await hoi({ tieuDe:"Chắc chắn tắt màn Bán hàng?", noiDung:"Khách sẽ không mở được màn Bán hàng tới khi bạn bật lại.", nutOk:"Tắt Bán hàng", nguy:true }))) return;
+    }
+    await chay(b, async () => { await q6DatTat(uid, k, tat, ly); bao(tat ? `Đã tắt ${Q6_TN[k]}` : `Đã bật lại ${Q6_TN[k]}`); if(t && TAM.includes(t)) q6VeCongTac(t); }, tat ? "Đang tắt…" : "Đang bật…");
+  },
+  "q6-ban-min": async b => {
+    const t = tamCua(b), uid = t && t.S ? t.S.uid : "", v = b.dataset.b || "";
+    if(v && q6SoSanhBan(v, q6BanSono()) === 1) return bao("Không buộc được bản cao hơn bản đang ở GitHub", 1);
+    const ok = await hoi({ tieuDe: v ? `Buộc lên tối thiểu ${v}?` : "Gỡ buộc cập nhật?", noiDung: v ? `${uid ? "Máy của khách này" : "MỌI máy"} chạy bản cũ hơn ${v} sẽ hiện màn “Cần cập nhật” lúc rảnh (không giỏ hàng / đơn giữ / phiếu nhập).` : "Máy bản cũ không còn bị hỏi cập nhật.", nutOk: v ? "Buộc cập nhật" : "Gỡ" }); if(!ok) return;
+    await chay(b, async () => { await q6DatBanMin(uid, v); bao(v ? "Đã buộc cập nhật lên " + v : "Đã gỡ buộc cập nhật"); if(t && TAM.includes(t)) q6VeCongTac(t); });
+  },
+  "q6-cho-ht": async b => { const t = tamCua(b), mo = b.dataset.b === "1";
+    if(!mo && !(await hoi({ tieuDe:"Chặn câu hỏi mới ở máy chủ?", noiDung:"Khách sẽ KHÔNG mở được cuộc hỏi mới (cuộc đang có vẫn nhắn / trả lời được). Dùng khi bị nhắn rác.", nutOk:"Chặn", nguy:true }))) return;
+    await chay(b, async () => { await setDoc(doc(fdb, "billing", "config"), { choHoTro: mo ? deleteField() : false }, { merge:true });
+      if(mo) delete CFGDB.choHoTro; else CFGDB.choHoTro = false;
+      try{ await q6NhatKy("cong_tac_khan", { ghi: mo ? "Mở lại hộp thư (máy chủ nhận câu hỏi mới)" : "CHẶN câu hỏi mới ở máy chủ (choHoTro = false)" }); }catch(e){}
+      bao(mo ? "Đã mở lại hộp thư" : "Đã chặn câu hỏi mới"); if(t && TAM.includes(t)) q6VeCongTac(t); }); },
+  "q6-ht": () => q6MoHopThu(),
+  "q6-ht-loc": b => { const t = tamCua(b); if(t){ t.S.loc = b.dataset.k; q6VeHopThu(t); } },
+  "q6-cuoc": b => q6MoCuoc(b.dataset.k),
+  "q6-mau": b => { const t = tamCua(b), i = Number(b.dataset.k), n = t && $("#q6TraLoi", t.than); if(n){ n.value = (n.value ? n.value.trimEnd() + " " : "") + (Q6_MAU[i] || ""); n.focus(); } },
+  "q6-gui": async b => { const t = tamCua(b), n = t && $("#q6TraLoi", t.than), noi = n ? String(n.value || "").trim() : ""; if(!noi) return bao("Chưa nhập câu trả lời", 1);
+    await chay(b, async () => { await q6TraLoi(b.dataset.k, noi); if(n) n.value = ""; bao("Đã gửi — khách thấy ngay trong app"); if(t && TAM.includes(t)) q6VeCuoc(t); }, "Đang gửi…"); },
+  "q6-ht-xong": async b => { const t = tamCua(b); await chay(b, async () => { await q6DanhDauXong(b.dataset.k, b.dataset.b === "1"); if(t && TAM.includes(t)) q6VeCuoc(t); q6VeLaiHT(); }); },
+  "q6-soi-loi": b => { try{ Q5S.tim = b.dataset.k || ""; }catch(e){} while(TAM.length) dongTam(); chuyenView("suckhoe"); },
+  "q6-dung": () => q6MoDung(),
+  "q6-dung-kh": b => q6MoDung(b.dataset.uid),
+  "q6-ky": b => { const t = tamCua(b); Q6D.ky = Number(b.dataset.k) || 7; if(t) q6VeDung(t); },
+  "q6-sl": () => q6MoSaoLuu(),
+  "q6-sl-tai": async b => { await chay(b, async () => { const r = await q6TaiSaoLuu(); bao(`Đã tải ${r.ten} (${r.kb} KB)`); const t = tamCua(b); if(t) q6VeSaoLuu(t); }, "Đang tạo file…"); }
+});
 </script>
 <!-- ===== BỘ THU LỖI · tự chạy, không đụng code cũ · app=admin ===== -->
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "4.0.1";
+const APP_ID = "admin", APP_VERSION = "5.1.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
