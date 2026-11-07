@@ -464,7 +464,7 @@ const CFG = {
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
          xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
   thang:[1,3,6,12],
-  ver:"5.1.0"
+  ver:"5.2.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -7699,12 +7699,536 @@ Object.assign(ACT, {
   "q6-sl": () => q6MoSaoLuu(),
   "q6-sl-tai": async b => { await chay(b, async () => { const r = await q6TaiSaoLuu(); bao(`Đã tải ${r.ten} (${r.kb} KB)`); const t = tamCua(b); if(t) q6VeSaoLuu(t); }, "Đang tạo file…"); }
 });
+/* ═════════════ [5.2] MÁY CHỦ QUẢN TRỊ — 📲 báo về điện thoại · 💸 tiền về tự duyệt (SePay) · ⏰ tự nhắc gia hạn · 🖥 trạng thái máy chủ ═════════════
+   Đi cùng gói máy chủ "sono-quantri" (codebase quantri). Dữ liệu (Rules Z8): qt_may/{id} máy nhận báo · qt_cauhinh/{sepay, nhac, maychu,
+   lenh, lenh_kq} · qt_sepay/s<id> tiền về (CHỈ máy chủ tạo). Ra lệnh cho máy chủ = ghi qt_cauhinh/lenh, máy chủ ghi kết quả vào lenh_kq.
+   Móc (bọc, lỗi gì cũng trả đúng kết quả cũ): q6VanHanhHtml-không-đụng (thêm khối #q7VanHanh ngay sau), viecCanLam, q5Kham, batDau,
+   doiSoat (khoản SePay đang xử lý tay mang đúng mã sepay_<id> · chống duyệt trùng khoản máy chủ đã tự duyệt), capHan (đánh dấu đã xử lý). */
+const Q7 = { GOC_HAM: "https://asia-southeast1-so-no-cc57a.cloudfunctions.net", KEY_MAY: "qt7_may_v1",
+  ch: {}, daCo: {}, may: [], mayCo: false, tx: [], txCo: false, nghe: [], chuaRules: false, lenhCho: null, cong: null, dangXuLy: null, txDaThay: null };
+const Q7_LOAI = [["tien", "💸 Tiền về / tự duyệt"], ["don", "🧾 Khách báo đã chuyển khoản"], ["ht", "💬 Hộp thư hỗ trợ"], ["dk", "🆕 Khách mới đăng ký"],
+  ["loi", "🐞 Lỗi app mới"], ["kham", "🩺 Máy chủ tự khám"], ["ngay", "☀️ Tóm tắt buổi sáng"], ["cfg", "⚙️ Đổi cấu hình / tài khoản nhận tiền"]];
+const Q7_TT = { duyet: ["✅ Đã tự mở hạn", "ok"], cho: ["⚠️ Chờ bạn xem", "canh"], tay: ["✋ Đã xử lý tay", "ngoc"], bo: ["Bỏ qua", ""], bo_tay: ["Bạn đã bỏ qua", ""],
+  ra: ["Tiền ra", ""], trung: ["Trùng", ""], dang: ["Đang xử lý", ""], moi: ["Đang xử lý", ""], loi: ["⛔ Máy chủ lỗi", "xau"] };
+const Q7_MOC = { sap: [7, 3, 1, 0], thu: [3, 1], rot: [-1, -7] };
+const Q7_TEN_NHAC = { sap: "Sắp hết hạn (đang trả tiền)", thu: "Dùng thử sắp hết", rot: "Vừa hết hạn" };
+try{
+  Object.assign(TEN_VIEC, { tu_duyet_tien: "Máy chủ tự duyệt tiền về (SePay)", tu_nhac_gia_han: "Máy chủ tự nhắc gia hạn", qt_sepay_khoa: "Tạo khoá SePay",
+    qt_sepay_cai: "Cài đặt tiền về tự duyệt", qt_nhac_cai: "Cài đặt tự nhắc gia hạn", qt_may: "Máy nhận báo đẩy", qt_sepay_bo: "Bỏ qua khoản tiền về" });
+}catch(e){ console.warn("q7 tên việc:", e); }
+const q7Ms = v => { const d = ngay(v); return d ? d.getTime() : (typeof v === "number" ? v : 0); };
+async function q7Sha256(s){
+  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s)));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+const q7IOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent || "");
+function q7TenMay(){
+  const ua = navigator.userAgent || "";
+  const he = /Android/.test(ua) ? "Android" : q7IOS() ? "iPhone" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "Mac" : "Máy";
+  const tr = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /CriOS|Chrome\//.test(ua) ? "Chrome" : /Firefox|FxiOS/.test(ua) ? "Firefox" : /Safari/.test(ua) ? "Safari" : "";
+  return (he + (tr ? " · " + tr : "")).slice(0, 60);
+}
+function q7MayNay(){ try{ const x = JSON.parse(localStorage.getItem(Q7.KEY_MAY) || "null"); return x && x.id ? x : null; }catch(e){ return null; } }
+function q7LuuMay(x){ try{ if(x) localStorage.setItem(Q7.KEY_MAY, JSON.stringify(x)); else localStorage.removeItem(Q7.KEY_MAY); }catch(e){} }
+/* ── nghe 4 doc cấu hình + máy nhận báo + 40 khoản tiền về gần nhất (bị chối ⇒ Rules Z8 chưa Publish: thôi nghe, báo rõ) ── */
+function q7TatNghe(){ Q7.nghe.forEach(f => { try{ f(); }catch(e){} }); Q7.nghe = []; }
+function q7Nghe(){
+  if(Q7.nghe.length || Q7.chuaRules || !auth.currentUser) return;
+  const loi = ten => e => {
+    console.warn("q7 nghe", ten, e && (e.code || e.message));
+    if(e && e.code === "permission-denied"){ Q7.chuaRules = true; q7TatNghe(); q7VeLai("rules"); }
+  };
+  ["sepay", "nhac", "maychu", "lenh_kq"].forEach(k => {
+    Q7.nghe.push(onSnapshot(doc(fdb, "qt_cauhinh", k), s => {
+      Q7.ch[k] = s.exists() ? (s.data() || {}) : {}; Q7.daCo[k] = true;
+      if(k === "lenh_kq" && Q7.lenhCho && Q7.ch.lenh_kq.id === Q7.lenhCho.id) Q7.lenhCho.ok(Q7.ch.lenh_kq.kq || {});
+      q7VeLai(k);
+    }, loi(k)));
+  });
+  Q7.nghe.push(onSnapshot(collection(fdb, "qt_may"), s => { Q7.may = s.docs.map(d => ({ id: d.id, ...(d.data() || {}) })); Q7.mayCo = true; q7VeLai("may"); }, loi("may")));
+  Q7.nghe.push(onSnapshot(query(collection(fdb, "qt_sepay"), orderBy("lucMs", "desc"), limit(40)), s => {
+    const ds = s.docs.map(d => ({ _id: d.id, ...(d.data() || {}) }));
+    if(Q7.txDaThay){
+      ds.forEach(x => { const cu = Q7.txDaThay.get(x._id);
+        if(cu === x.tt) return;
+        if(x.tt === "duyet") bao(`✅ Máy chủ tự mở hạn: ${(x.ghi && x.ghi.email) || ""} · ${tienD(x.tien)}`);
+        else if((x.tt === "cho" && x.lienQuan) || x.tt === "loi") bao(`⚠️ Tiền về ${tienD(x.tien)} cần bạn xem — 💸 Tiền về`, 1); });
+    }
+    Q7.txDaThay = new Map(ds.map(x => [x._id, x.tt]));
+    Q7.tx = ds; Q7.txCo = true; q7VeLai("tx");
+  }, loi("tx")));
+}
+/* ── ra lệnh cho máy chủ: ghi qt_cauhinh/lenh ⇒ chờ qt_cauhinh/lenh_kq cùng mã ── */
+function q7Lenh(viec, them){
+  if(Q7.chuaRules) return Promise.reject(new Error("Máy chủ chưa mở kho quản trị — Publish Firestore Rules Z8"));
+  const id = "L" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const cho = (viec === "kham" || /^nhac/.test(viec)) ? 150000 : 60000;
+  return new Promise((ok, hong) => {
+    const hen = setTimeout(() => { if(Q7.lenhCho && Q7.lenhCho.id === id){ Q7.lenhCho = null;
+      hong(new Error(`Máy chủ chưa trả lời sau ${cho / 1000} giây — đã cài máy chủ quản trị chưa? (bấm đúp CAI-DAT.bat trong gói sono-quantri)`)); } }, cho);
+    Q7.lenhCho = { id, ok: kq => { clearTimeout(hen); Q7.lenhCho = null; ok(kq); } };
+    setDoc(doc(fdb, "qt_cauhinh", "lenh"), sach({ id, viec, ...(them || {}), at: serverTimestamp(), boi: toiLa() }))
+      .catch(e => { clearTimeout(hen); if(Q7.lenhCho && Q7.lenhCho.id === id) Q7.lenhCho = null; hong(e); });
+  });
+}
+/* gõ cửa cổng tiền về (GET ⇒ { ok, ten:'qtSepay', ban }) */
+async function q7GoCua(){
+  const t0 = Date.now();
+  try{
+    const ctl = new AbortController(); const hen = setTimeout(() => ctl.abort(), 15000);
+    const r = await fetch(Q7.GOC_HAM + "/qtSepay?gc=" + Date.now(), { cache: "no-store", signal: ctl.signal }); clearTimeout(hen);
+    let j = null; try{ j = await r.json(); }catch(e){}
+    Q7.cong = { luc: Date.now(), ms: Date.now() - t0, st: r.status, ok: r.status === 200 && j && j.ten === "qtSepay", ban: j && j.ban || "", gio: j ? j.gio !== false : true };
+  }catch(e){ Q7.cong = { luc: Date.now(), ms: Date.now() - t0, st: 0, ok: false, loi: e && e.name === "AbortError" ? "quá 15 giây" : maLoi(e) }; }
+  return Q7.cong;
+}
+const q7TxCho = () => Q7.tx.filter(x => (x.tt === "cho" && x.lienQuan) || x.tt === "loi");
+function q7TinhTrangMC(){
+  const mc = Q7.ch.maychu || {};
+  if(!Q7.daCo.maychu) return { tt: "", t: "đang đọc…" };
+  if(!mc.ver) return { tt: "canh", t: "chưa thấy máy chủ chạy lần nào — chưa cài, hoặc vừa cài (bấm 🩺 Khám ngay để thử)" };
+  const lan = Math.max(q7Ms(mc.capNhat), mc.ngay ? mc.ngay.at || 0 : 0, mc.kham ? mc.kham.at || 0 : 0, mc.lenh ? mc.lenh.at || 0 : 0, mc.sepay ? mc.sepay.at || 0 : 0);
+  const kh = mc.kham || {};
+  if(lan && Date.now() - lan > 26 * 3600e3) return { tt: "xau", t: `máy chủ IM LẶNG từ ${lauRoi(lan)} (bình thường 3 giờ khám 1 lần) — xem XEM-NHATKY.bat` };
+  if(kh.xau) return { tt: "xau", t: `tự khám ${lauRoi(kh.at)}: ${kh.xau} việc cần xử lý` };
+  if(kh.canh) return { tt: "canh", t: `tự khám ${lauRoi(kh.at)}: ${kh.canh} việc cần xem` };
+  return { tt: "ok", t: `chạy tốt · ${mc.ver}${kh.at ? " · tự khám " + lauRoi(kh.at) : ""}` };
+}
+/* ─────────── 📲 BÁO VỀ ĐIỆN THOẠI (máy quản trị nhận báo đẩy từ máy chủ) ─────────── */
+async function q7ChoSW(reg){
+  if(reg.active) return reg;
+  const w = reg.installing || reg.waiting;
+  if(!w) return reg;
+  await new Promise(ok => { const hen = setTimeout(ok, 10000); w.addEventListener("statechange", () => { if(w.state === "activated"){ clearTimeout(hen); ok(); } }); });
+  return reg;
+}
+async function q7DangKyMay(im){
+  if(!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window))
+    throw new Error(q7IOS() ? "iPhone: bấm Chia sẻ → “Thêm vào MH chính”, mở app Quản trị từ biểu tượng đó rồi bật lại" : "Trình duyệt này không nhận được báo đẩy — dùng Chrome");
+  let quyen = Notification.permission;
+  if(quyen !== "granted"){ if(im) throw new Error("chưa cho phép thông báo"); quyen = await Notification.requestPermission(); }
+  if(quyen !== "granted") throw new Error(quyen === "denied" ? "Bạn đã CHẶN thông báo cho trang này — bấm ổ khoá cạnh ô địa chỉ → Thông báo → Cho phép, rồi bấm lại" : "Chưa cho phép thông báo");
+  let reg;
+  try{ reg = await navigator.serviceWorker.register("./qt-push-sw.js", { scope: "./qt-push/" }); }
+  catch(e){ throw new Error("Chưa có file qt-push-sw.js trong repo admin trên GitHub (hoặc chưa lên kịp) — đưa file lên, chờ vài phút rồi bấm lại. Chi tiết: " + maLoi(e)); }
+  await q7ChoSW(reg);
+  const M = await import("https://www.gstatic.com/firebasejs/12.17.1/firebase-messaging.js");
+  if(M.isSupported && !(await M.isSupported())) throw new Error("Trình duyệt này không hỗ trợ báo đẩy");
+  const token = await M.getToken(M.getMessaging(fbApp), { serviceWorkerRegistration: reg });
+  if(!token) throw new Error("Google chưa cấp mã máy — thử lại sau ít phút");
+  const id = "m" + (await q7Sha256(token)).slice(0, 40);
+  const cu = Q7.may.find(x => x.id === id), nay = q7MayNay();
+  await setDoc(doc(fdb, "qt_may", id), sach({ token, ten: (cu && cu.ten) || q7TenMay(), ua: String(navigator.userAgent || "").slice(0, 200),
+    at: serverTimestamp(), atMs: Date.now(), ...(cu ? {} : { bat: {} }) }), { merge: true });
+  if(nay && nay.id && nay.id !== id){ try{ await deleteDoc(doc(fdb, "qt_may", nay.id)); }catch(e){} }   /* mã máy đổi ⇒ bỏ mã cũ */
+  q7LuuMay({ id, at: Date.now() });
+  if(!im) try{ await q6NhatKy("qt_may", { ghi: "Bật nhận báo đẩy: " + q7TenMay() }); }catch(e){}
+  return id;
+}
+/* mở app: máy đã bật thì 3 ngày làm mới mã máy 1 lần (không hỏi gì) */
+async function q7LamMoiMay(){
+  try{ const nay = q7MayNay(); if(!nay || Notification.permission !== "granted" || Date.now() - (nay.at || 0) < 3 * 864e5) return;
+    await q7DangKyMay(true); }catch(e){ console.warn("q7 làm mới mã máy:", e); }
+}
+function q7MoBao(){
+  const t = moTam({ tieuDe: "📲 Báo về điện thoại", lamMoi: () => veQ7Bao(t) });
+  t.S = { q7: "bao" }; veQ7Bao(t); return t;
+}
+function veQ7Bao(t){
+  const nay = q7MayNay(), coMayNay = nay && Q7.may.some(x => x.id === nay.id);
+  const quyen = ("Notification" in window) ? Notification.permission : "khong";
+  const kq = t.S.kq;
+  t.than.innerHTML = `
+    <p class="nho" style="margin-top:0">Máy chủ quản trị báo thẳng về điện thoại bạn (cả khi đã tắt app): tiền về / tự mở hạn, khách báo đã chuyển khoản, khách nhắn hỏi, khách mới, lỗi app mới, tài khoản nhận tiền bị đổi, máy chủ tự khám thấy vấn đề, tóm tắt mỗi sáng.</p>
+    ${Q7.chuaRules ? `<div class="bao xau">Máy chủ chưa mở kho quản trị — Publish Firestore Rules Z8 rồi mở lại app.</div>` : ""}
+    <div class="the">
+      <div class="kv"><span>Máy này</span><span>${esc(q7TenMay())}</span></div>
+      <div class="kv"><span>Quyền thông báo</span><span>${quyen === "granted" ? chip("đã cho phép", "ok") : quyen === "denied" ? chip("đang CHẶN", "xau") : quyen === "khong" ? chip("không hỗ trợ", "xau") : chip("chưa hỏi", "canh")}</span></div>
+      <div class="kv"><span>Nhận báo</span><span>${coMayNay ? chip("đã bật", "ok") : chip("chưa bật", "canh")}</span></div>
+    </div>
+    ${q7IOS() && !(navigator.standalone) ? `<div class="bao canh">iPhone chỉ nhận báo đẩy khi app Quản trị được <b>Thêm vào Màn hình chính</b> (nút Chia sẻ của Safari) và mở từ biểu tượng đó.</div>` : ""}
+    ${kq ? `<div class="bao ${kq.ok ? "tot" : "xau"}">${esc(kq.t)}</div>` : ""}
+    <div class="hang-nut" style="margin-top:10px">
+      <button class="nut chinh" data-act="q7-bat-may">${coMayNay ? "Bật lại trên máy này" : "Bật trên máy này"}</button>
+      ${coMayNay ? `<button class="nut" data-act="q7-thu-may" data-k="${esc(nay.id)}">Gửi thử về máy này</button>` : ""}</div>
+    ${mucHtml("Các máy đang nhận báo", String(Q7.may.length))}
+    ${Q7.may.length ? Q7.may.map(m => `<div class="the" style="margin-top:8px">
+        <div class="kv"><span>${esc(m.ten || "Máy")}${nay && nay.id === m.id ? " (máy này)" : ""}</span><span class="nho">${esc(m.atMs ? "bật " + lauRoi(m.atMs) : "")}</span></div>
+        <div class="nho" style="word-break:break-word">${esc(String(m.ua || "").slice(0, 120))}</div>
+        <div class="chips" style="margin-top:8px">${Q7_LOAI.map(([k, ten]) => { const bat = !(m.bat && m.bat[k] === false);
+          return `<button class="chip ${bat ? "ok" : ""}" data-act="q7-loai" data-k="${esc(m.id)}" data-b="${k}" style="cursor:pointer;border:none;font:inherit;font-size:12px">${bat ? "✓ " : "✕ "}${esc(ten)}</button>`; }).join("")}</div>
+        <div class="hang-nut" style="margin-top:8px"><button class="nut nho" data-act="q7-thu-may" data-k="${esc(m.id)}">Gửi thử</button>
+          <button class="nut nho" data-act="q7-ten-may" data-k="${esc(m.id)}">Đổi tên</button><button class="nut nho nguy" data-act="q7-go-may" data-k="${esc(m.id)}">Gỡ</button></div>
+      </div>`).join("") : `<div class="nhom">${trong("Chưa có máy nào", "Bấm “Bật trên máy này” trên điện thoại bạn hay cầm.")}</div>`}
+    <p class="nho">Bấm vào một loại báo để tắt / bật riêng cho từng máy. Gửi thử: máy chủ gửi ngay, thông báo hiện sau vài giây. Không hiện ⇒ xem quyền thông báo, chế độ tiết kiệm pin của máy, hoặc chạy XEM-NHATKY.bat.</p>`;
+  t.chan.innerHTML = "";
+}
+/* ─────────── 💸 TIỀN VỀ TỰ DUYỆT (SePay → máy chủ qtSepay) ─────────── */
+const q7Sp = () => Q7.ch.sepay || {};
+const q7Bat = (o, k, md) => o[k] === undefined ? md : o[k] !== false;
+const Q7_URL_SEPAY = () => Q7.GOC_HAM + "/qtSepay";
+async function q7TaoKhoa(){
+  const b = new Uint8Array(24); crypto.getRandomValues(b);
+  const khoa = "sp_" + [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  const bam = await q7Sha256(khoa);
+  await setDoc(doc(fdb, "qt_cauhinh", "sepay"), { khoaBam: bam, khoaDuoi: khoa.slice(-4), khoaLuc: Date.now(), khoaBoi: toiLa() }, { merge: true });
+  try{ await q6NhatKy("qt_sepay_khoa", { ghi: "Tạo khoá SePay mới …" + khoa.slice(-4) + " (khoá cũ hết dùng)" }); }catch(e){}
+  return khoa;
+}
+async function q7LuuSepay(o, ghi){
+  await setDoc(doc(fdb, "qt_cauhinh", "sepay"), o, { merge: true });
+  Object.assign(Q7.ch.sepay = Q7.ch.sepay || {}, o);
+  try{ await q6NhatKy("qt_sepay_cai", { ghi }); }catch(e){}
+}
+/* dòng sao kê dựng từ khoản SePay: nội dung + số tiền + giờ + mã giao dịch (y như dán từ app ngân hàng) */
+const q7Dong = x => `${String(x.noi || x.mota || "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim()} +${x.tien} ${x.ngay || ""} ${x.ma || ""}`.trim();
+function q7MoSepay(loc){
+  const t = moTam({ tieuDe: "💸 Tiền về tự duyệt (SePay)", lamMoi: () => veQ7Sepay(t) });
+  t.S = { q7: "sepay", loc: loc || (q7TxCho().length ? "cho" : "tat") }; veQ7Sepay(t); return t;
+}
+function q7DongTx(x){
+  const [ten, lop] = Q7_TT[x.tt] || [x.tt || "?", ""], g = x.ghi || {}, gy = x.goiY || {};
+  const ct = x.tt === "duyet" ? `${g.email || ""} · ${tenApp(g.app)} · ${g.thang} tháng${g.qty ? ` · ${g.qty} suất` : ""} → hạn ${ngayVN(g.han)}${g.doiThang ? ` (đơn ghi ${g.doiThang.tu} tháng)` : ""}`
+    : x.tt === "tay" ? `${x.boi || ""} ${x.xuLyLuc ? lauRoi(x.xuLyLuc) : ""}${x.ghiTay ? ` · ${tenApp(x.ghiTay.app)} · ${x.ghiTay.thang} tháng` : ""}`
+    : x.tt === "loi" ? String(x.loi || x.ly || "") : String(x.ly || "");
+  const canXem = (x.tt === "cho") || x.tt === "loi";
+  return `<div class="don-the ${canXem ? "nguy" : ""}">
+    <div class="don-dau"><div class="gi"><div class="t">${esc(x.ngay || gioVN(x.lucMs))}${x.gateway ? " · " + esc(x.gateway) : ""}</div>
+      <div class="d">${esc(String(x.noi || x.mota || "(không nội dung)").slice(0, 160))}</div></div>
+      <div class="ti so">${x.kieu === "out" ? "−" : ""}${tienD(x.tien)}</div></div>
+    <div class="chips">${chip(ten, lop)}${x.ma ? chip("mã " + String(x.ma).slice(0, 24), "") : ""}</div>
+    ${ct ? `<div class="nd-ck">${esc(ct.slice(0, 400))}</div>` : ""}
+    <div class="hang-nut" style="margin-top:10px">
+      ${canXem ? `<button class="nut chinh" data-act="q7-xuly" data-k="${esc(x._id)}">${ic("xong")}Xử lý</button><button class="nut" data-act="q7-boqua" data-k="${esc(x._id)}">Bỏ qua</button>` : ""}
+      ${(g.uid || gy.uid) ? `<button class="nut" data-act="mo-khach" data-uid="${esc(g.uid || gy.uid)}">Hồ sơ</button>` : ""}</div>
+  </div>`;
+}
+function veQ7Sepay(t){
+  const sp = q7Sp(), cho = q7TxCho(), cong = Q7.cong;
+  const ds = t.S.loc === "cho" ? cho : Q7.tx;
+  const kh = t.S.khoaMoi;
+  t.than.innerHTML = `
+    <p class="nho" style="margin-top:0">Khách chuyển khoản ⇒ SePay báo máy chủ ⇒ máy chủ <b>tự mở hạn</b> khi chắc chắn y như màn “Duyệt đơn & ghi sổ” không hiện cảnh báo nào (đúng 1 khách, đúng 1 đơn, đúng bảng giá, không mạo danh, gói không khoá…). Khoản không chắc chắn ⇒ “Chờ bạn xem” + báo về điện thoại. Một khoản chỉ duyệt được đúng 1 lần.</p>
+    ${Q7.chuaRules ? `<div class="bao xau">Máy chủ chưa mở kho quản trị — Publish Firestore Rules Z8 rồi mở lại app.</div>` : ""}
+    ${kh ? `<div class="bao tot"><b>Khoá SePay mới (chỉ hiện 1 lần):</b><div class="nhatky" style="user-select:all;margin:8px 0">${esc(kh)}</div>
+      <div class="hang-nut"><button class="nut chinh" data-act="q7-chep" data-k="khoa">Chép khoá</button><button class="nut" data-act="q7-chep" data-k="url">Chép địa chỉ WebHooks</button></div>
+      my.sepay.vn → WebHooks → + Thêm webhook → Sự kiện: <b>Có tiền vào</b> · URL: địa chỉ ở dưới · Định dạng: JSON · chọn đúng tài khoản nhận tiền · Bảo mật: <b>API Key</b> → dán khoá · bật “Tự động gửi lại khi server trả lỗi”.</div>` : ""}
+    ${mucHtml("Cài đặt")}
+    <div class="the">
+      <div class="kv"><span>Địa chỉ WebHooks</span><span style="word-break:break-all">${esc(Q7_URL_SEPAY())}</span></div>
+      <div class="kv"><span>Khoá SePay</span><span>${sp.khoaBam ? chip(`đã tạo …${sp.khoaDuoi || ""} · ${lauRoi(sp.khoaLuc)}`, "ok") : chip("CHƯA tạo — SePay gọi sẽ bị chối", "xau")}</span></div>
+      <div class="kv"><span>Cổng máy chủ</span><span>${cong ? (cong.ok ? chip(`mở · ${cong.ban || ""} · ${cong.ms} ms`, "ok") : chip(`chưa mở (${cong.st || cong.loi || "?"})`, "xau")) : chip("chưa gõ cửa", "")}</span></div>
+      <div class="kv"><span>Khoản gần nhất</span><span>${Q7.tx[0] ? esc(gioVN(Q7.tx[0].lucMs) + " · " + tienD(Q7.tx[0].tien)) : "chưa có"}</span></div>
+    </div>
+    <div class="hang-nut" style="margin-top:10px"><button class="nut ${sp.khoaBam ? "" : "chinh"}" data-act="q7-tao-khoa">${sp.khoaBam ? "Tạo khoá mới" : "Tạo khoá SePay"}</button>
+      <button class="nut" data-act="q7-chep" data-k="url">Chép địa chỉ</button><button class="nut" data-act="q7-go-cua">Gõ cửa máy chủ</button></div>
+    <div class="nhom" style="margin-top:10px">
+      ${dongHtml({ the: "button", act: "q7-sp-bat", data: `data-k="tuDuyet"`, ic: q7Bat(sp, "tuDuyet", true) ? "xong" : "khoa", lop: q7Bat(sp, "tuDuyet", true) ? "" : "dong-c",
+        t: q7Bat(sp, "tuDuyet", true) ? "Tự mở hạn khi chắc chắn: <b>BẬT</b>" : "Tự mở hạn: <b>TẮT</b> — chỉ báo về, bạn duyệt tay", d: "Bấm để " + (q7Bat(sp, "tuDuyet", true) ? "tắt" : "bật") })}
+      ${dongHtml({ the: "button", act: "q7-sp-bat", data: `data-k="doiThang"`, ic: "lich", t: `Tiền khớp giá số tháng khác đơn ⇒ cấp theo tiền về: <b>${q7Bat(sp, "doiThang", true) ? "BẬT" : "TẮT"}</b>`, d: "Y như app Quản trị (đơn ghi 3 tháng mà tiền = giá gói năm ⇒ cấp 12 tháng)" })}
+      ${dongHtml({ the: "button", act: "q7-sp-bat", data: `data-k="camOn"`, ic: "tin", t: `Gửi tin “✅ Đã nhận tiền” vào app khách: <b>${q7Bat(sp, "camOn", true) ? "BẬT" : "TẮT"}</b>`, d: "Không đè tin chung của bạn còn mới" })}
+      ${dongHtml({ the: "button", act: "q7-sp-tran", ic: "tien", t: `Trần tự duyệt: <b>${tienD(Number(sp.tran) > 0 ? sp.tran : 5000000)}</b> / khoản`, d: "Khoản lớn hơn ⇒ chờ bạn xem" })}
+    </div>
+    ${mucHtml("Tiền về", String(Q7.tx.length))}
+    <div class="loc"><button data-act="q7-sp-loc" data-k="cho" class="${t.S.loc === "cho" ? "on" : ""}">Chờ bạn xem (${cho.length})</button><button data-act="q7-sp-loc" data-k="tat" class="${t.S.loc !== "cho" ? "on" : ""}">Tất cả</button></div>
+    ${ds.length ? ds.map(q7DongTx).join("") : `<div class="nhom">${trong(t.S.loc === "cho" ? "Không có khoản nào chờ" : "Chưa có khoản tiền về nào", Q7.txCo ? "Nối SePay xong, chuyển thử 1 khoản nhỏ để thấy ở đây." : "Đang đọc…")}</div>`}`;
+  t.chan.innerHTML = "";
+}
+/* Xử lý tay 1 khoản chờ: mở ĐÚNG màn đối soát sao kê với dòng của khoản đó ⇒ nút Duyệt / Đặt hạn như mọi khi; khoản mang mã sepay_<id>
+   (chống duyệt trùng với máy chủ) và đúng số tiền SePay báo. */
+function q7XuLy(id){
+  const x = Q7.tx.find(y => y._id === id); if(!x) return bao("Không thấy khoản tiền này — tải lại", 1);
+  const line = q7Dong(x);
+  Q7.dangXuLy = { id: String(x.id || String(id).replace(/^s/, "")), tien: Number(x.tien) || 0, line };
+  _skNho = line;
+  const t = moDoiSoat();
+  try{ if(t && t.S) t.S.q7 = id; }catch(e){}
+  return t;
+}
+try{
+  const goc = doiSoat;
+  doiSoat = function(text){
+    const k = goc.apply(this, arguments);
+    try{
+      const dx = (Q7.dangXuLy && String(text) === Q7.dangXuLy.line) ? Q7.dangXuLy : null;
+      const va = (it, uid, app) => {
+        if(dx){ it.khoan = { ...it.khoan, ma: "sepay_" + dx.id, yeu: false, tien: dx.tien }; it.daDung = PAY.find(p => p.ckMa && p.ckMa === it.khoan.ma) || null; return; }
+        if(it.daDung) return;
+        /* sao kê dán tay có khoản máy chủ ĐÃ tự duyệt (cùng khách, cùng số tiền, ≤ 7 ngày) ⇒ coi như đã dùng (khỏi duyệt 2 lần) */
+        const sp = PAY.find(p => p.may === "sepay" && p.uid === uid && (!app || p.app === app) && pTien(p) === num(it.khoan.tien) && pNgay(p) && Date.now() - pNgay(p) < 7 * 864e5);
+        if(sp) it.daDung = sp;
+      };
+      k.khop.forEach(it => va(it, it.o.x.uid, it.o.x.app));
+      k.ngoai.forEach(it => va(it, it.uid, ""));
+    }catch(e){ console.warn("q7 đối soát:", e); }
+    return k;
+  };
+}catch(e){ console.warn("q7 móc đối soát:", e); }
+try{
+  const goc = capHan;
+  capHan = async function(o){
+    const r = await goc.apply(this, arguments);
+    try{
+      const ma = o && o.saoKe ? String(o.saoKe.ma || "") : "";
+      if(/^sepay_/.test(ma)){
+        await setDoc(doc(fdb, "qt_sepay", "s" + ma.slice(6)), sach({ tt: "tay", boi: toiLa(), xuLyLuc: Date.now(),
+          ghiTay: { uid: o.uid, app: o.app, thang: o.thang, tien: o.soTien, ...(o.qty ? { qty: o.qty } : {}) } }), { merge: true });
+        if(Q7.dangXuLy && ma === "sepay_" + Q7.dangXuLy.id) Q7.dangXuLy = null;
+      }
+    }catch(e){ console.warn("q7 đánh dấu SePay:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q7 móc cấp hạn:", e); }
+/* ─────────── ⏰ TỰ NHẮC GIA HẠN (máy chủ chạy 8:05 sáng mỗi ngày) ─────────── */
+const q7Nh = () => Q7.ch.nhac || {};
+const q7MocCua = (nh, k) => (nh.moc && Array.isArray(nh.moc[k])) ? nh.moc[k] : Q7_MOC[k];
+function q7MoNhac(){
+  const t = moTam({ tieuDe: "⏰ Tự nhắc gia hạn", lamMoi: () => veQ7Nhac(t) });
+  t.S = { q7: "nhac" }; veQ7Nhac(t); return t;
+}
+function veQ7Nhac(t){
+  const nh = q7Nh(), mc = Q7.ch.maychu || {}, lan = mc.nhac || null, bat = nh.bat !== false, xt = t.S.xemTruoc;
+  const moTaMoc = (k, ds) => ds.map(n => k === "rot" ? `quá ${Math.abs(n)} ngày` : n === 0 ? "ngày cuối" : `còn ${n} ngày`).join(" · ");
+  t.than.innerHTML = `
+    <p class="nho" style="margin-top:0">Mỗi sáng 8:05 máy chủ tự gửi tin vào app khách (như nút “Nhắc khách”): đúng nhóm, đúng mẫu tin, đúng tên gói · ngày · giá của từng khách. Mỗi mốc 1 lần, mỗi khách tối đa 1 tin / ngày, không đè tin chung của bạn còn mới. Chỉ khách có app Sổ Nợ (kênh tin từ xa).</p>
+    ${dongHtml({ the: "button", act: "q7-nh-bat", ic: bat ? "xong" : "khoa", lop: bat ? "" : "dong-c", t: `Tự nhắc: <b>${bat ? "BẬT" : "TẮT"}</b>`, d: "Bấm để " + (bat ? "tắt" : "bật") })}
+    <div class="the" style="margin-top:10px"><div class="kv"><span>Lần chạy gần nhất</span><span>${lan && lan.at ? esc(`${gioVN(lan.at)} · đã nhắc ${lan.n || 0} khách${lan.dem ? ` (sắp hết ${lan.dem.sap || 0} · dùng thử ${lan.dem.thu || 0} · rớt hạn ${lan.dem.rot || 0})` : ""}`) : lan && lan.loi ? esc("lỗi: " + lan.loi) : "chưa chạy lần nào"}</span></div></div>
+    ${["sap", "thu", "rot"].map(k => { const on = !(nh.loai && nh.loai[k] === false), moc = q7MocCua(nh, k), mau = (nh.mau && nh.mau[k]) || "";
+      return `${mucHtml(Q7_TEN_NHAC[k])}
+      <div class="the">
+        <div class="kv"><span>Nhóm này</span><span><button class="chip ${on ? "ok" : ""}" data-act="q7-nh-loai" data-k="${k}" style="cursor:pointer;border:none;font:inherit;font-size:12px">${on ? "✓ đang nhắc" : "✕ không nhắc"}</button></span></div>
+        <div class="kv"><span>Các mốc</span><span>${esc(moTaMoc(k, moc))} <button class="lk" data-act="q7-nh-moc" data-k="${k}">sửa</button></span></div>
+        <label class="o-nhap"><span>Mẫu tin — {goi} {han} {con} {gia} {hotline} tự điền${mau ? "" : " (đang dùng mẫu mặc định)"}</span>
+          <textarea data-in="q7mau_${k}" maxlength="500" style="min-height:76px">${esc(mau || mauNhac(k))}</textarea></label>
+        <div class="hang-nut"><button class="nut nho" data-act="q7-nh-luu-mau" data-k="${k}">Lưu mẫu</button>${mau ? `<button class="nut nho" data-act="q7-nh-goc-mau" data-k="${k}">Về mẫu mặc định</button>` : ""}</div>
+      </div>`; }).join("")}
+    <div class="hang-nut" style="margin-top:12px"><button class="nut" data-act="q7-nh-thu">${ic("tim")}Xem trước hôm nay ai được nhắc</button><button class="nut chinh" data-act="q7-nh-gui">${ic("tin")}Gửi nhắc ngay</button></div>
+    ${xt ? (xt.loi ? `<div class="bao xau">${esc(xt.loi)}</div>` : `${mucHtml("Hôm nay sẽ nhắc", String(xt.n || 0))}<div class="nhom">${(xt.ds || []).length ? xt.ds.map(x => dongHtml({ ic: "tin",
+        t: esc(`${x.email || "?"} · ${Q7_TEN_NHAC[x.loai] || x.loai} · ${x.loai === "rot" ? "quá " + Math.abs(x.con) + " ngày" : "còn " + x.con + " ngày"}`), d: esc(x.text) })).join("")
+        : trong("Hôm nay không có ai tới mốc nhắc", "")}</div>`) : ""}`;
+  t.chan.innerHTML = "";
+}
+/* ─────────── 🖥 MÁY CHỦ QUẢN TRỊ (trạng thái · tự khám) ─────────── */
+function q7MoMayChu(){
+  const t = moTam({ tieuDe: "🖥 Máy chủ quản trị", lamMoi: () => veQ7MayChu(t) });
+  t.S = { q7: "maychu" }; veQ7MayChu(t);
+  q7GoCua().then(() => { if(TAM.includes(t)) veQ7MayChu(t); });
+  return t;
+}
+function veQ7MayChu(t){
+  const mc = Q7.ch.maychu || {}, tt = q7TinhTrangMC(), kh = mc.kham || null, cong = Q7.cong;
+  const dong = (ten, lan, mt) => `<div class="kv"><span>${esc(ten)}</span><span>${lan ? esc(lauRoi(lan) + (mt ? " · " + mt : "")) : "chưa chạy"}</span></div>`;
+  t.than.innerHTML = `
+    <div class="bao ${tt.tt === "ok" ? "tot" : tt.tt === "xau" ? "xau" : "canh"}">${esc(tt.t)}</div>
+    <div class="the">
+      <div class="kv"><span>Bản máy chủ</span><span>${esc(mc.ver || "—")}</span></div>
+      <div class="kv"><span>Cổng tiền về (qtSepay)</span><span>${cong ? (cong.ok ? chip(`mở · ${cong.ms} ms`, "ok") : chip(`chưa mở (${cong.st || cong.loi || "?"})`, "xau")) : "đang gõ cửa…"}</span></div>
+      ${dong("Tự nhắc + tóm tắt sáng", mc.ngay && mc.ngay.at, mc.nhac ? `nhắc ${mc.nhac.n || 0} khách` : "")}
+      ${dong("Tự khám", kh && kh.at, kh ? `${kh.xau || 0} nặng · ${kh.canh || 0} cần xem` : "")}
+      ${dong("Khoản SePay gần nhất", mc.sepay && mc.sepay.at, mc.sepay ? (Q7_TT[mc.sepay.tt] || [mc.sepay.tt])[0] : "")}
+      ${dong("Lệnh gần nhất", mc.lenh && mc.lenh.at, mc.lenh ? mc.lenh.viec : "")}
+      <div class="kv"><span>Máy nhận báo</span><span>${Q7.may.length}</span></div>
+    </div>
+    <div class="hang-nut" style="margin-top:10px"><button class="nut chinh" data-act="q7-kham">${ic("tim")}Khám ngay</button><button class="nut" data-act="q7-go-cua">Gõ cửa lại</button></div>
+    ${kh && Array.isArray(kh.ket) ? mucHtml("Kết quả tự khám", gioVN(kh.at)) + `<div class="nhom">${kh.ket.filter(x => x.tt !== "ok").map(x => dongHtml({ ic: x.tt === "xau" ? "canh" : x.tt === "canh" ? "canh" : "xong",
+        lop: x.tt === "xau" ? "do-c" : x.tt === "canh" ? "dong-c" : "", t: esc(x.t), d: esc(x.d || "") })).join("") || trong("Không có việc gì", "Mọi thứ máy chủ khám đều ổn")}</div>
+      ${Array.isArray(kh.trang) && kh.trang.length ? mucHtml("Trang trên GitHub", String(kh.trang.length)) + `<div class="nhom">${kh.trang.map(p => dongHtml({ ic: p.st === 200 ? "xong" : "canh", lop: p.st === 200 ? "" : "do-c",
+        t: esc(`${p.ten} · ${p.st}`), d: esc(`${p.byte || 0} byte${p.build ? " · " + p.build : ""}${p.md5 ? " · md5 " + p.md5 : ""}`) })).join("")}</div>` : ""}` : ""}
+    <p class="nho">Chưa cài: giải nén gói <b>sono-quantri.zip</b> trên máy tính → bấm đúp CAI-DAT.bat → thấy XONG! → quay lại đây bấm Khám ngay.</p>`;
+  t.chan.innerHTML = "";
+}
+/* ─────────── GIAO DIỆN + MÓC (5.2) ─────────── */
+function q7VanHanhHtml(){
+  if(Q7.chuaRules) return mucHtml("🤖 Máy chủ quản trị") + `<div class="nhom">${dongHtml({ ic: "canh", lop: "dong-c", t: "Máy chủ quản trị chưa mở kho",
+    d: "Publish Firestore Rules Z8 (gửi trong Đợt 1) rồi mở lại app" })}</div>`;
+  const nay = q7MayNay(), coMayNay = !!(nay && Q7.may.some(x => x.id === nay.id)), sp = q7Sp(), nh = q7Nh(), mc = Q7.ch.maychu || {};
+  const cho = q7TxCho(), tt = q7TinhTrangMC(), tx0 = Q7.tx[0];
+  return mucHtml("🤖 Máy chủ quản trị") + `<div class="nhom">
+    ${dongHtml({ the: "button", act: "q7-bao", ic: "chuong", lop: coMayNay ? "" : "dong-c",
+      t: coMayNay ? `📲 Báo về điện thoại — <b>máy này đang nhận</b>` : "📲 Báo về điện thoại",
+      d: esc(Q7.mayCo ? `${Q7.may.length} máy nhận báo${coMayNay ? "" : " · máy này CHƯA bật"} · tiền về, khách hỏi, lỗi mới, tóm tắt sáng…` : "đang đọc…"), mui: true })}
+    ${dongHtml({ the: "button", act: "q7-sepay", ic: "tien", lop: cho.length ? "do-c" : sp.khoaBam ? "" : "dong-c",
+      t: cho.length ? `💸 Tiền về tự duyệt — <b>${cho.length} khoản chờ bạn xem</b>` : "💸 Tiền về tự duyệt (SePay)",
+      d: esc(!sp.khoaBam ? "Chưa nối SePay — bấm để tạo khoá và xem cách nối" : `${q7Bat(sp, "tuDuyet", true) ? "Đang tự mở hạn khi chắc chắn" : "Đang TẮT tự duyệt"}${tx0 ? " · khoản gần nhất " + lauRoi(tx0.lucMs) + " " + tienD(tx0.tien) : ""}`), mui: true })}
+    ${dongHtml({ the: "button", act: "q7-nhac", ic: "lich", lop: nh.bat === false ? "dong-c" : "",
+      t: nh.bat === false ? "⏰ Tự nhắc gia hạn — <b>đang TẮT</b>" : "⏰ Tự nhắc gia hạn",
+      d: esc(mc.nhac && mc.nhac.at ? `Lần chạy gần nhất ${gioVN(mc.nhac.at)}: nhắc ${mc.nhac.n || 0} khách` : "8:05 mỗi sáng: khách sắp hết hạn, dùng thử sắp hết, vừa rớt hạn"), mui: true })}
+    ${dongHtml({ the: "button", act: "q7-maychu", ic: "may", lop: tt.tt === "xau" ? "do-c" : tt.tt === "canh" ? "dong-c" : "", t: "🖥 Máy chủ quản trị", d: esc(tt.t), mui: true })}
+  </div>`;
+}
+function q7VeLai(k){
+  try{
+    const o = document.getElementById("q7VanHanh"); if(o) o.innerHTML = q7VanHanhHtml();
+    TAM.forEach(t => { if(!t.S || !t.S.q7) return;
+      if(t.S.q7 === "bao" && (k === "may" || k === "rules")) veQ7Bao(t);
+      else if(t.S.q7 === "sepay" && (k === "sepay" || k === "tx" || k === "rules")) veQ7Sepay(t);
+      else if(t.S.q7 === "nhac" && (k === "nhac" || k === "maychu")) { const g = q7GiuChu(t); veQ7Nhac(t); q7TraChu(t, g); }
+      else if(t.S.q7 === "maychu" && (k === "maychu" || k === "may")) veQ7MayChu(t); });
+  }catch(e){ console.warn("q7 vẽ lại:", e); }
+}
+/* đang gõ dở mẫu tin mà máy chủ đổi cấu hình ⇒ giữ chữ đang gõ */
+function q7GiuChu(t){ const g = {}; try{ t.than.querySelectorAll("textarea[data-in^='q7mau_']").forEach(x => { g[x.dataset.in] = x.value; }); }catch(e){} return g; }
+function q7TraChu(t, g){ try{ t.than.querySelectorAll("textarea[data-in^='q7mau_']").forEach(x => { if(g[x.dataset.in] != null) x.value = g[x.dataset.in]; }); }catch(e){} }
+try{
+  const goc = q5VeTab;
+  q5VeTab = function(){
+    const r = goc.apply(this, arguments);
+    try{ const el = $("#v-suckhoe"), q6 = el && el.querySelector("#q6VanHanh");
+      if(el && !el.querySelector("#q7VanHanh")){ const html = `<div id="q7VanHanh">${q7VanHanhHtml()}</div>`;
+        if(q6) q6.insertAdjacentHTML("afterend", html); else { const hn = el.querySelector(":scope > .hang-nut"); if(hn) hn.insertAdjacentHTML("afterend", html); } } }
+    catch(e){ console.warn("q7 vận hành:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q7 móc tab:", e); }
+try{
+  const goc = viecCanLam;
+  viecCanLam = function(){
+    const v = goc.apply(this, arguments);
+    try{
+      const cho = q7TxCho();
+      if(cho.length) v.unshift({ ic: "tien", lop: "do-c", t: `${cho.length} khoản tiền về chờ bạn xem (máy chủ không tự duyệt)`,
+        d: esc(cho.slice(0, 2).map(x => `${tienD(x.tien)} “${String(x.noi || "").slice(0, 40)}”`).join(" · ")), ph: `<button class="nut nho chinh" data-act="q7-sepay" data-k="cho">Xem</button>` });
+      const kh = (Q7.ch.maychu || {}).kham;
+      if(kh && kh.xau && Date.now() - (kh.at || 0) < 8 * 3600e3) v.unshift({ ic: "canh", lop: "do-c", t: `Máy chủ tự khám: ${kh.xau} việc cần xử lý`,
+        d: esc((kh.ket || []).filter(x => x.tt === "xau").slice(0, 2).map(x => x.t).join(" · ")), ph: `<button class="nut nho chinh" data-act="q7-maychu">Xem</button>` });
+    }catch(e){ console.warn("q7 việc cần làm:", e); }
+    return v;
+  };
+}catch(e){ console.warn("q7 móc việc cần làm:", e); }
+/* Khám tổng quát: nhóm "Máy chủ quản trị (5.2)" */
+try{
+  const goc = q5Kham;
+  q5Kham = async function(){
+    const r = await goc.apply(this, arguments);
+    try{
+      const them = (ten, tt, chi) => r.K.push({ nhom: "Máy chủ quản trị (5.2)", ten, tt, chi: String(chi || ""), nut: null });
+      if(Q7.chuaRules){ them("Kho quản trị (qt_*)", "xau", "máy chủ chối — Publish Firestore Rules Z8"); return r; }
+      const c = await q7GoCua();
+      them("Cổng tiền về qtSepay", c.ok ? "ok" : "xau", c.ok ? `mở · ${c.ban} · ${c.ms} ms${c.gio ? "" : " · MÁY CHỦ SAI MÚI GIỜ"}` : `chưa mở (${c.st || c.loi || "?"}) — chưa cài máy chủ quản trị? (CAI-DAT.bat trong sono-quantri)`);
+      const tt = q7TinhTrangMC(); them("Máy chủ quản trị chạy", tt.tt === "ok" ? "ok" : tt.tt === "xau" ? "xau" : "canh", tt.t);
+      const sp = q7Sp(); them("Khoá SePay", sp.khoaBam ? "ok" : "canh", sp.khoaBam ? `đã tạo …${sp.khoaDuoi || ""} ${lauRoi(sp.khoaLuc)}` : "chưa tạo — tiền về chưa tự duyệt được");
+      them("Máy nhận báo đẩy", Q7.may.length ? "ok" : "canh", Q7.may.length ? `${Q7.may.length} máy` : "chưa có máy nào — 📲 Báo về điện thoại → Bật trên máy này");
+      try{ const s = await fetch("./qt-push-sw.js?k=" + Date.now(), { cache: "no-store" }); them("File qt-push-sw.js trên GitHub", s.ok ? "ok" : "xau", s.ok ? "có" : `trả mã ${s.status} — đưa qt-push-sw.js lên repo admin`); }
+      catch(e){ them("File qt-push-sw.js trên GitHub", "canh", "chưa đọc được: " + maLoi(e)); }
+      const cho = q7TxCho(); them("Tiền về chờ xem tay", cho.length ? "canh" : "ok", cho.length ? `${cho.length} khoản` : "không có");
+    }catch(e){ console.warn("q7 khám:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q7 móc khám:", e); }
+/* mở đúng màn từ thông báo đẩy (?qt=… khi mở app, hoặc tin nhắn từ qt-push-sw.js khi app đang mở) */
+function q7MoTheoUrl(u){
+  try{
+    const q = new URL(String(u || ""), location.href).searchParams, k = q.get("qt"); if(!k) return false;
+    while(TAM.length) dongTam();
+    if(k === "tien") q7MoSepay("cho");
+    else if(k === "maychu") q7MoMayChu();
+    else if(k === "ht"){ const id = q.get("id"); if(id && typeof q6MoCuoc === "function") q6MoCuoc(id); else q6MoHopThu(); }
+    else if(k === "loi") chuyenView("suckhoe");
+    else if(k === "don") chuyenView("homnay");
+    else if(k === "khach") chuyenView("khach");
+    else if(k === "cfg") chuyenView("caidat");
+    else return false;
+    return true;
+  }catch(e){ console.warn("q7 mở theo link:", e); return false; }
+}
+try{
+  const goc = batDau;
+  batDau = async function(){
+    const r = await goc.apply(this, arguments);
+    try{
+      if(DA_NAP && auth.currentUser){
+        q7Nghe(); setTimeout(() => q7LamMoiMay(), 8000);
+        if(new URLSearchParams(location.search).get("qt")){
+          const u = location.href; setTimeout(() => q7MoTheoUrl(u), 600);
+          try{ const s = new URL(location.href); s.searchParams.delete("qt"); s.searchParams.delete("id"); history.replaceState(null, "", s.pathname + s.search + s.hash); }catch(e){}
+        }
+      }
+    }catch(e){ console.warn("q7 khởi động:", e); }
+    return r;
+  };
+}catch(e){ console.warn("q7 móc khởi động:", e); }
+try{
+  onAuthStateChanged(auth, u => { if(!u){ q7TatNghe(); Q7.ch = {}; Q7.daCo = {}; Q7.may = []; Q7.tx = []; Q7.txDaThay = null; Q7.mayCo = Q7.txCo = false; } });
+  if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { try{ if(e.data && e.data.qt === "mo") q7MoTheoUrl(e.data.url); }catch(x){} });
+}catch(e){ console.warn("q7 sự kiện:", e); }
+async function q7Chep(s){ try{ await navigator.clipboard.writeText(String(s)); bao("Đã chép"); }catch(e){ try{ copy(String(s)); }catch(x){ bao("Chưa chép được — giữ tay vào chữ để chép", 1); } } }
+Object.assign(ACT, {
+  "q7-bao": () => q7MoBao(),
+  "q7-sepay": b => q7MoSepay(b && b.dataset ? b.dataset.k : ""),
+  "q7-nhac": () => q7MoNhac(),
+  "q7-maychu": () => q7MoMayChu(),
+  "q7-bat-may": async b => { const t = tamCua(b);
+    await chay(b, async () => { try{ await q7DangKyMay(false); if(t) t.S.kq = { ok: true, t: "Đã bật — bấm “Gửi thử về máy này” để kiểm" }; bao("Máy này đã nhận báo đẩy"); }
+      catch(e){ if(t) t.S.kq = { ok: false, t: maLoi(e) }; bao(maLoi(e), 1); }
+      if(t && TAM.includes(t)) veQ7Bao(t); }, "Đang bật…"); },
+  "q7-thu-may": async b => { const t = tamCua(b), id = b.dataset.k;
+    await chay(b, async () => { try{ const kq = await q7Lenh("thu", { may: id });
+        const ok = kq && kq.gui > 0; if(t) t.S.kq = { ok, t: ok ? "Máy chủ đã gửi — thông báo hiện trong vài giây (kể cả khi đã tắt app)" : `Máy chủ chưa gửi được: ${(kq && kq.loi) || "không rõ"}` };
+        bao(ok ? "Máy chủ đã gửi thông báo thử" : "Chưa gửi được", ok ? 0 : 1); }
+      catch(e){ if(t) t.S.kq = { ok: false, t: maLoi(e) }; bao(maLoi(e), 1); }
+      if(t && TAM.includes(t)) veQ7Bao(t); }, "Đang gửi…"); },
+  "q7-loai": async b => { const id = b.dataset.k, k = b.dataset.b, m = Q7.may.find(x => x.id === id); if(!m) return;
+    const tat = !(m.bat && m.bat[k] === false);
+    await chay(b, async () => { await setDoc(doc(fdb, "qt_may", id), { bat: { [k]: tat ? false : deleteField() } }, { merge: true }); }); },
+  "q7-ten-may": async b => { const id = b.dataset.k, m = Q7.may.find(x => x.id === id); if(!m) return;
+    const r = await nhap({ tieuDe: "Đổi tên máy", noiDung: "Tên để nhận ra máy này trong danh sách:", nutOk: "Lưu", macDinh: m.ten || "" }); if(r === null) return;
+    await chay(b, async () => { await setDoc(doc(fdb, "qt_may", id), { ten: String(r).trim().slice(0, 60) || q7TenMay() }, { merge: true }); }); },
+  "q7-go-may": async b => { const id = b.dataset.k, m = Q7.may.find(x => x.id === id); if(!m) return;
+    if(!(await hoi({ tieuDe: "Gỡ máy nhận báo?", noiDung: `${m.ten || "Máy"} sẽ không nhận báo đẩy nữa.`, nutOk: "Gỡ", nguy: true }))) return;
+    await chay(b, async () => { await deleteDoc(doc(fdb, "qt_may", id)); const nay = q7MayNay(); if(nay && nay.id === id) q7LuuMay(null);
+      try{ await q6NhatKy("qt_may", { ghi: "Gỡ máy nhận báo: " + (m.ten || id) }); }catch(e){} bao("Đã gỡ"); }); },
+  "q7-tao-khoa": async b => { const t = tamCua(b), sp = q7Sp();
+    if(sp.khoaBam && !(await hoi({ tieuDe: "Tạo khoá SePay mới?", noiDung: "Khoá cũ hết dùng NGAY — phải dán khoá mới vào SePay (WebHooks → sửa → Bảo mật → API Key), không thì tiền về bị máy chủ chối.", nutOk: "Tạo khoá mới", nguy: true }))) return;
+    await chay(b, async () => { const k = await q7TaoKhoa(); if(t){ t.S.khoaMoi = k; veQ7Sepay(t); } bao("Đã tạo khoá — chép rồi dán vào SePay"); }, "Đang tạo…"); },
+  "q7-chep": b => { const t = tamCua(b); if(b.dataset.k === "khoa"){ if(t && t.S.khoaMoi) q7Chep(t.S.khoaMoi); } else q7Chep(Q7_URL_SEPAY()); },
+  "q7-go-cua": async b => { const t = tamCua(b); await chay(b, async () => { const c = await q7GoCua(); bao(c.ok ? `Cổng mở · ${c.ban}` : `Cổng chưa mở (${c.st || c.loi})`, c.ok ? 0 : 1);
+    if(t && TAM.includes(t)){ if(t.S.q7 === "sepay") veQ7Sepay(t); else if(t.S.q7 === "maychu") veQ7MayChu(t); } }, "Đang gõ cửa…"); },
+  "q7-sp-bat": async b => { const k = b.dataset.k, sp = q7Sp(), moi = !q7Bat(sp, k, true);
+    if(k === "tuDuyet" && !moi && !(await hoi({ tieuDe: "Tắt tự mở hạn?", noiDung: "Tiền về vẫn được ghi + báo về điện thoại, nhưng mọi khoản phải bạn bấm duyệt tay.", nutOk: "Tắt" }))) return;
+    await chay(b, async () => { await q7LuuSepay({ [k]: moi }, `${k}: ${!moi} → ${moi}`); const t = tamCua(b); if(t) veQ7Sepay(t); }); },
+  "q7-sp-tran": async b => { const sp = q7Sp();
+    const r = await nhap({ tieuDe: "Trần tự duyệt", noiDung: "Khoản tiền lớn hơn số này máy chủ KHÔNG tự mở hạn (chờ bạn xem):", nutOk: "Lưu", macDinh: String(Number(sp.tran) > 0 ? sp.tran : 5000000), kieu: "text" });
+    if(r === null) return; const v = soTienNhap(r); if(!(v >= 10000)) return bao("Trần phải từ 10.000đ", 1);
+    await chay(b, async () => { await q7LuuSepay({ tran: v }, "trần tự duyệt: " + v); const t = tamCua(b); if(t) veQ7Sepay(t); }); },
+  "q7-sp-loc": b => { const t = tamCua(b); if(t){ t.S.loc = b.dataset.k; veQ7Sepay(t); } },
+  "q7-xuly": b => q7XuLy(b.dataset.k),
+  "q7-boqua": async b => { const x = Q7.tx.find(y => y._id === b.dataset.k); if(!x) return;
+    if(!(await hoi({ tieuDe: "Bỏ qua khoản tiền này?", noiDung: `${tienD(x.tien)} · “${String(x.noi || "").slice(0, 80)}”\n\nDùng khi đây không phải tiền gia hạn (tiền riêng, hoàn tiền…). Không cấp hạn, không ghi sổ thu.`, nutOk: "Bỏ qua" }))) return;
+    await chay(b, async () => { await setDoc(doc(fdb, "qt_sepay", x._id), { tt: "bo_tay", boi: toiLa(), xuLyLuc: Date.now() }, { merge: true });
+      try{ await q6NhatKy("qt_sepay_bo", { ghi: `${tienD(x.tien)} · “${String(x.noi || "").slice(0, 60)}”` }); }catch(e){} bao("Đã bỏ qua"); }); },
+  "q7-nh-bat": async b => { const moi = q7Nh().bat === false;
+    await chay(b, async () => { await setDoc(doc(fdb, "qt_cauhinh", "nhac"), { bat: moi }, { merge: true }); try{ await q6NhatKy("qt_nhac_cai", { ghi: "tự nhắc: " + (moi ? "bật" : "tắt") }); }catch(e){} }); },
+  "q7-nh-loai": async b => { const k = b.dataset.k, nh = q7Nh(), on = !(nh.loai && nh.loai[k] === false);
+    await chay(b, async () => { await setDoc(doc(fdb, "qt_cauhinh", "nhac"), { loai: { [k]: on ? false : deleteField() } }, { merge: true }); }); },
+  "q7-nh-moc": async b => { const k = b.dataset.k, cu = q7MocCua(q7Nh(), k);
+    const r = await nhap({ tieuDe: `Mốc nhắc · ${Q7_TEN_NHAC[k]}`, noiDung: k === "rot" ? "Số ngày SAU khi hết hạn, cách nhau dấu phẩy (vd: 1, 7):" : "Số ngày CÒN LẠI, cách nhau dấu phẩy (0 = ngày cuối; vd: 7, 3, 1, 0):", nutOk: "Lưu",
+      macDinh: cu.map(n => Math.abs(n)).join(", ") });
+    if(r === null) return;
+    const ds = [...new Set(String(r).split(/[,;\s]+/).filter(Boolean).map(x => Math.floor(Number(x))).filter(n => Number.isFinite(n) && n >= 0 && n <= 30))].slice(0, 8);
+    if(!ds.length) return bao("Chưa có mốc hợp lệ (0–30 ngày)", 1);
+    const moc = k === "rot" ? ds.filter(n => n > 0).map(n => -n) : ds.sort((a, c) => c - a);
+    if(!moc.length) return bao("Mốc rớt hạn phải từ 1 ngày", 1);
+    await chay(b, async () => { await setDoc(doc(fdb, "qt_cauhinh", "nhac"), { moc: { [k]: moc } }, { merge: true }); try{ await q6NhatKy("qt_nhac_cai", { ghi: `mốc ${k}: ${moc.join(", ")}` }); }catch(e){} }); },
+  "q7-nh-luu-mau": async b => { const t = tamCua(b), k = b.dataset.k, o = t && t.than.querySelector(`textarea[data-in="q7mau_${k}"]`), v = o ? String(o.value || "").trim() : "";
+    if(!v) return bao("Mẫu tin đang trống", 1);
+    await chay(b, async () => { await setDoc(doc(fdb, "qt_cauhinh", "nhac"), { mau: { [k]: v === mauNhac(k) ? deleteField() : v.slice(0, 500) } }, { merge: true }); bao("Đã lưu mẫu"); }); },
+  "q7-nh-goc-mau": async b => { const k = b.dataset.k; await chay(b, async () => { await setDoc(doc(fdb, "qt_cauhinh", "nhac"), { mau: { [k]: deleteField() } }, { merge: true }); bao("Đã về mẫu mặc định"); }); },
+  "q7-nh-thu": async b => { const t = tamCua(b);
+    await chay(b, async () => { try{ const kq = await q7Lenh("nhac_thu"); if(t) t.S.xemTruoc = kq || {}; }catch(e){ if(t) t.S.xemTruoc = { loi: maLoi(e) }; }
+      if(t && TAM.includes(t)){ const g = q7GiuChu(t); veQ7Nhac(t); q7TraChu(t, g); } }, "Máy chủ đang xem…"); },
+  "q7-nh-gui": async b => { const t = tamCua(b);
+    if(!(await hoi({ tieuDe: "Gửi nhắc ngay?", noiDung: "Máy chủ gửi tin cho khách tới mốc hôm nay (khách đã được nhắc mốc này sẽ không nhận lần 2).", nutOk: "Gửi" }))) return;
+    await chay(b, async () => { try{ const kq = await q7Lenh("nhac"); bao(kq && kq.tat ? "Tự nhắc đang tắt" : `Đã nhắc ${(kq && kq.n) || 0} khách`); }catch(e){ bao(maLoi(e), 1); } }, "Đang gửi…"); },
+  "q7-kham": async b => { const t = tamCua(b);
+    await chay(b, async () => { try{ const kq = await q7Lenh("kham"); bao(`Khám xong: ${(kq && kq.xau) || 0} nặng · ${(kq && kq.canh) || 0} cần xem`, kq && kq.xau ? 1 : 0); }catch(e){ bao(maLoi(e), 1); }
+      if(t && TAM.includes(t)) veQ7MayChu(t); }, "Máy chủ đang khám…"); }
+});
 </script>
 <!-- ===== BỘ THU LỖI · tự chạy, không đụng code cũ · app=admin ===== -->
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "5.1.0";
+const APP_ID = "admin", APP_VERSION = "5.2.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
