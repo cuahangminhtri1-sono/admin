@@ -466,7 +466,7 @@ const CFG = {
          /* [5.3] Cân Gà Pro (kho can-ga-pro): app khách CHỈ đọc priceCanga (giá riêng trước), KHÔNG lùi giá chung ⇒ ô trống = CHƯA BÁN */
          canga:["priceCanga","",0] },
   thang:[1,3,6,12],
-  ver:"5.3.0"
+  ver:"5.3.1"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
@@ -2022,6 +2022,8 @@ function veHoSo(t){
   const tabs = [["gp","Giấy phép"],["ch","Cửa hàng"],["so","Sổ shop"],["ks","Kiểm soát"],["ht","Hỗ trợ"],["ls","Lịch sử"]];   /* [4.0] thêm tab Kiểm soát */
   const nhanh = [];
   if(k.cho) nhanh.push(`<button class="nut chinh" data-act="duyet" data-id="${esc(k.req.find(rCho).id)}">${ic("xong")}Duyệt đơn chờ</button>`);
+  const go = S.nhapGo || (S.nhapGo = {}), dangGo = document.activeElement; let giuF = null;   /* [5.3.1] GIỮ CHỮ ĐANG GÕ ở ô "Nhắn thẳng vào app khách" (#hoTin) + "Ghi chú nội bộ" (#hoGhi) */
+  ["hoTin", "hoGhi"].forEach(id => { const e = $("#" + id, t.than); if(e){ go[id] = e.value; if(dangGo === e) giuF = { id, a: e.selectionStart, b: e.selectionEnd }; } });
   t.than.innerHTML = `
     <div class="the-khach"><div class="av">${esc((k.email || "?").charAt(0).toUpperCase())}</div>
       <div style="min-width:0"><div class="n">${esc(k.email || "chưa rõ email")}</div>
@@ -2033,9 +2035,14 @@ function veHoSo(t){
     ${nhanh.length ? `<div class="hang-nut" style="margin-bottom:6px">${nhanh.join("")}</div>` : ""}
     <div class="tab-tam sau">${tabs.map(([k2,n]) => `<button data-act="ho-tab" data-t="${k2}" class="${S.tab === k2 ? "on" : ""}">${n}</button>`).join("")}</div>
     <div id="hoThan">${S.tab === "gp" ? hoGiayPhep(S, k) : S.tab === "ch" ? hoCuaHang(S, k) : S.tab === "so" ? hoSoShop(S) : S.tab === "ks" ? v4HoKiemSoat(S, k) : S.tab === "ht" ? hoHoTro(S, k) : hoLichSu(S, k)}</div>`;
+  ["hoTin", "hoGhi"].forEach(id => { const e = $("#" + id, t.than); if(e && go[id]) e.value = go[id]; });   /* [5.3.1] trả lại chữ đang gõ */
+  if(giuF){ const e = $("#" + giuF.id, t.than); if(e){ try{ e.focus(); e.setSelectionRange(giuF.a, giuF.b); }catch(x){} } }   /* [5.3.1] trả lại chỗ con trỏ */
   if((S.tab === "ch" || S.tab === "ht" || S.tab === "so") && !S.shop && !S.dangShop && !S.loiShop) napShopHoSo(t);
   if(S.tab === "so") ssNap(t);
   if(S.tab === "ks") ksNap(t);   /* [4.0] */
+}
+function xoaNhapHo(t, id, text){   /* [5.3.1] gửi / lưu xong thì xoá chữ trong ô (hồ sơ nay giữ chữ khi vẽ lại) — đã gõ thêm chữ khác thì để nguyên */
+  try{ const e = $("#" + id, t.than); if(e && e.value.trim() === text) e.value = ""; if(t.S && t.S.nhapGo && String(t.S.nhapGo[id] || "").trim() === text) t.S.nhapGo[id] = ""; }catch(x){}
 }
 async function napShopHoSo(t){
   const S = t.S; S.dangShop = true; S.loiShop = "";
@@ -3262,13 +3269,13 @@ const ACT = {
     S.dangKd = false; if(TAM.includes(t)) veHoSo(t); },
   "ho-gui-tin": async b => { const t = tamCua(b), text = String(($("#hoTin", t.than) || {}).value || "").trim();
     if(!text) return bao("Chưa nhập nội dung", 1);
-    await chay(b, async () => { await guiTin([b.dataset.uid], text, b.dataset.muc, "tin"); bao("Đã gửi — máy khách hiện tin trong vài giây"); await taiLai(true); }); },
+    await chay(b, async () => { await guiTin([b.dataset.uid], text, b.dataset.muc, "tin"); xoaNhapHo(t, "hoTin", text); bao("Đã gửi — máy khách hiện tin trong vài giây"); await taiLai(true); }); },
   "ho-go-tin": async b => { await chay(b, async () => { await goTin([b.dataset.uid]); bao("Đã gỡ tin"); await taiLai(true); }); },
   "ho-cap-nhat": async b => { const bat = b.dataset.bat === "1";
     await chay(b, async () => { await (bat ? batCapNhat : tatCapNhat)([b.dataset.uid]); bao(bat ? "Đã bật thanh cập nhật" : "Đã tắt thanh cập nhật"); await taiLai(true); }); },
   "ho-ghi": async b => { const t = tamCua(b), text = String(($("#hoGhi", t.than) || {}).value || "").trim();
     if(!text) return bao("Chưa nhập ghi chú", 1);
-    await chay(b, async () => { await themGhiChu(b.dataset.uid, text.slice(0,1000)); bao("Đã lưu ghi chú"); await taiLai(true); }); },
+    await chay(b, async () => { await themGhiChu(b.dataset.uid, text.slice(0,1000)); xoaNhapHo(t, "hoGhi", text); bao("Đã lưu ghi chú"); await taiLai(true); }); },
   "mien-tru": async b => { const uid = b.dataset.uid, cu = (ACC[uid] || {}).cnMienTru === true;
     if(!(await hoi({ tieuDe: cu ? "Gỡ miễn trừ" : "Miễn trừ chi nhánh", noiDung: cu ? `Gỡ miễn trừ của ${emailCua(uid) || uid}? Khi thu phí chi nhánh đang bật, cửa hàng thêm chưa có suất sẽ bị chặn ngay.` : `Miễn trừ thu phí chi nhánh cho cả tài khoản ${emailCua(uid) || uid}?\n\nDành cho khách cũ đã mở chi nhánh trước khi thu phí. Mọi cửa hàng thêm của họ sẽ không bị chặn.`, nutOk: cu ? "Gỡ" : "Miễn trừ", nguy:cu }))) return;
     await chay(b, async () => { await datMienTru(uid, !cu); bao(cu ? "Đã gỡ miễn trừ" : "Đã miễn trừ"); await taiLai(true); }); },
@@ -7412,6 +7419,7 @@ function q6HopDenHtml(s){
 function q6VeCuoc(t){
   const x = Q6H.ds.find(z => z.id === t.S.tid) || {};
   const nhap = $("#q6TraLoi", t.than), giu = nhap ? nhap.value : "";
+  const chon = nhap && document.activeElement === nhap ? [nhap.selectionStart, nhap.selectionEnd, nhap.scrollTop] : null;   /* [5.3.1] đang gõ mà khung vẽ lại (tin mới tới) ⇒ giữ nguyên chỗ con trỏ, khỏi phải chạm lại vào ô */
   t.than.innerHTML = `
     <div class="the" style="margin-top:0"><div class="kv"><span>Khách</span><span>${esc(x.email || x.uid || "?")}${q6TrangThaiKhach(x.uid, x.tieuDe) ? " · " + esc(q6TrangThaiKhach(x.uid, x.tieuDe)) : ""}</span></div>
       <div class="kv"><span>Câu hỏi</span><span>${esc(String(x.tieuDe || "").slice(0, 120))}</span></div>
@@ -7426,6 +7434,7 @@ function q6VeCuoc(t){
     <label class="o-nhap"><textarea id="q6TraLoi" maxlength="1500" placeholder="Trả lời khách — hiện ngay trong app của khách"></textarea></label>
     <div class="hang-nut"><button class="nut chinh" data-act="q6-gui" data-k="${esc(t.S.tid)}">${ic("tin")}Gửi trả lời</button></div>`;
   const n2 = $("#q6TraLoi", t.than); if(n2 && giu) n2.value = giu;
+  if(n2 && chon){ try{ n2.focus(); n2.setSelectionRange(chon[0], chon[1]); n2.scrollTop = chon[2]; }catch(e){} }   /* [5.3.1] */
   const ch = $(".q6-chat", t.than); if(ch) ch.scrollTop = ch.scrollHeight;
 }
 async function q6TraLoi(tid, noi){
@@ -8232,7 +8241,7 @@ Object.assign(ACT, {
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "5.3.0";
+const APP_ID = "admin", APP_VERSION = "5.3.1";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
