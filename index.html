@@ -447,9 +447,9 @@ const CFG = {
   ten:{ sono:"Sổ Nợ", sono_pos:"Bán hàng (POS)", sono_cn:"Chi nhánh thêm", sono_cn_fnb:"Chi nhánh · F&B",
         sono_cn_fs:"Chi nhánh · Thời trang", sono_cn_rm:"Chi nhánh · Karaoke/Spa", sono_cn_kg:"Chi nhánh · Cân ký",
         sono_fnb:"Gói F&B", sono_fs:"Gói Thời trang", sono_rm:"Gói Karaoke/Spa", sono_kg:"Gói Cân ký",
-        sono_qr:"Gói Bán online", cafe:"Quản Lý Cafe", tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng" },
+        sono_qr:"Gói Bán online", cafe:"Quản Lý Cafe", tro:"TrọSafe", xe:"NhàXe Pro", hd:"Xe Hợp Đồng", canga:"Cân Gà Pro" },
   apps:["sono","sono_pos","sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg",
-        "sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr","cafe","tro","xe","hd"],
+        "sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr","cafe","tro","xe","hd","canga"],
   /* Tên ô giá và giá mặc định — chép đúng priceFor() của các app khách.
      Sai tên ô là app khách đọc ra 0đ, khách quét QR ra số tiền 0.
      [3.1] 4 gói ngành + Đơn QR: app khách CHỈ đọc đúng ô của gói, KHÔNG lùi về giá Sổ Nợ.
@@ -462,15 +462,17 @@ const CFG = {
          sono_fs:["priceFs","",0], sono_rm:["priceRm","",0],
          sono_kg:["priceKg","",0], sono_qr:["priceQr","",0],
          cafe:["priceCafe","pricePerMonth",10000], tro:["priceTro","price",50000],
-         xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000] },
+         xe:["priceXe","pricePerMonth",50000], hd:["priceHd","pricePerMonth",50000],
+         /* [5.3] Cân Gà Pro (kho can-ga-pro): app khách CHỈ đọc priceCanga (giá riêng trước), KHÔNG lùi giá chung ⇒ ô trống = CHƯA BÁN */
+         canga:["priceCanga","",0] },
   thang:[1,3,6,12],
-  ver:"5.2.0"
+  ver:"5.3.0"
 };
 const NHOM_APP = [
   { ten:"Sổ Nợ & Bán hàng", apps:["sono","sono_pos"] },
   { ten:"Chi nhánh thêm (bán theo suất)", apps:["sono_cn","sono_cn_fnb","sono_cn_fs","sono_cn_rm","sono_cn_kg"] },
   { ten:"Gói ngành & Bán online", apps:["sono_fnb","sono_fs","sono_rm","sono_kg","sono_qr"] },
-  { ten:"App khác", apps:["cafe","tro","xe","hd"] }
+  { ten:"App khác", apps:["cafe","tro","xe","hd","canga"] }
 ];
 /* KHUYẾN MÃI mặc định: mua 12 tháng TẶNG 2 (thu tiền 10) — y hệt KM_GIA_HAN của app khách.
    Có billing/info.kmGiaHan thì thay TRỌN bảng (app khách đọc cùng nguồn nên hai bên luôn khớp). */
@@ -970,9 +972,9 @@ function nhomCham(loai){
   });
   return Object.keys(theo).map(uid => {
     const ds = theo[uid].sort((a,b) => (a.t.con ?? 0) - (b.t.con ?? 0));
-    /* Kênh tin từ xa hiện chỉ có trong app Sổ Nợ + Bán hàng */
+    /* Kênh tin từ xa có trong app Sổ Nợ + Bán hàng và [5.3] Cân Gà Pro */
     return { uid, email: emailCua(uid), ds, con: ds[0].t.con, han: ds[0].t.han, nhac: vuaNhac(uid),
-             nhan: LIC.some(x => x.uid === uid && String(x.app).indexOf("sono") === 0) };
+             nhan: LIC.some(x => x.uid === uid && (String(x.app).indexOf("sono") === 0 || x.app === "canga")) };
   }).sort((a,b) => (a.con ?? 0) - (b.con ?? 0));
 }
 
@@ -987,7 +989,7 @@ function radar(){
   if(cnChungMC(CFGDB)) them("vua","cnChung","Gói chi nhánh chung đang mở cho mọi ngành","1 suất sono_cn dùng được ở cả 5 ngành. Muốn thu đủ từng ngành thì tắt công tắc này ở Cài đặt (app tự quét và cho ân hạn).",[{t:"Công tắc cnChung = bật"}],"cong-tac");
 
   /* [3.1] Gói CHƯA ĐẶT GIÁ: app khách hiện "liên hệ giá" — không mã QR, không ghi đơn ⇒ mất doanh thu âm thầm */
-  const chuaBan = CFG.apps.filter(a => a.indexOf("sono") === 0 && giaApp(a) <= 0);
+  const chuaBan = CFG.apps.filter(a => (a.indexOf("sono") === 0 || a === "canga") && giaApp(a) <= 0);
   them(chuaBan.includes("sono_pos") ? "nang" : "vua", "chuaGia", "Gói chưa đặt giá — khách không mua được",
     "App khách hiện “liên hệ giá”: không có mã QR, không ghi đơn ⇒ khách muốn trả tiền cũng không trả được. Đặt giá ở Cài đặt → Bảng giá (cố ý chưa bán gói nào thì bỏ qua gói đó).",
     chuaBan.map(a => ({ t: tenApp(a), d: `ô ${CFG.oGia[a][0]} đang trống` })), "bang-gia");
@@ -1902,12 +1904,12 @@ const CONG_TAC = [
   ["choThu","Cho dùng thử miễn phí","Tắt khi có người lập nick hàng loạt ăn dùng thử. Người đang thử dở không bị ảnh hưởng. Số ngày thử đặt trong Bảng giá.", v => v !== false, false],
   ["choLog","Nhận nhật ký lỗi từ máy khách","Tắt khi bị bơm rác cho tốn tiền Firestore. Tắt chỉ mất log, app khách vẫn chạy.", v => v !== false, false],
   ["enforceRef","Khoá gắn người giới thiệu muộn","Bật: chỉ gắn người giới thiệu được lúc tạo tài khoản, chặn mở nick rồi gắn ngược để ăn hoa hồng.", v => v === true, true],
-  ["chanBiDanh","Chặn dùng thử bằng email bí danh","Email có dấu + (ten+1@gmail.com…) về chung hộp thư với email gốc: không cho mở dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ) — vẫn mua gói bình thường.", v => v !== false, true],
+  ["chanBiDanh","Chặn dùng thử bằng email bí danh","Email có dấu + (ten+1@gmail.com…) về chung hộp thư với email gốc: không cho mở dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ, Cân Gà Pro) — vẫn mua gói bình thường.", v => v !== false, true],
   ["chanChuKyCu","Chặn chữ ký kiểu cũ (ảnh nhúng)","Chữ ký nay nằm ở kho ảnh. Chặn kiểu nhúng thẳng tới 950KB mỗi chữ ký để kẻ phá không bơm rác vào link nợ công khai cho tốn tiền Firestore.", v => v !== false, true],
-  ["thu1May","Mỗi máy chỉ dùng thử 1 tài khoản","Điện thoại đã có tài khoản chủ shop khác đăng nhập thì tài khoản mới KHÔNG tự mở dùng thử Sổ Nợ (app báo đăng nhập lại tài khoản cũ hoặc gọi mua gói). Chặn đổi email ăn dùng thử trên cùng máy.", v => v !== false, true],
-  ["motThuMoiHop","Mỗi hộp thư chỉ dùng thử 1 lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư. Bật: chỉ tài khoản ĐẦU TIÊN của hộp thư đó được dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ) — máy chủ chặn thật, đổi máy hay xoá dữ liệu trình duyệt cũng không lách được. Nick phụ vẫn mua gói bình thường.", v => v !== false, true],
+  ["thu1May","Mỗi máy chỉ dùng thử 1 tài khoản","Điện thoại đã có tài khoản chủ shop khác đăng nhập thì tài khoản mới KHÔNG tự mở dùng thử Sổ Nợ và Cân Gà Pro (app báo đăng nhập lại tài khoản cũ hoặc gọi mua gói). Chặn đổi email ăn dùng thử trên cùng máy.", v => v !== false, true],
+  ["motThuMoiHop","Mỗi hộp thư chỉ dùng thử 1 lần","Gmail coi ten@gmail.com, t.en@gmail.com, ten+1@gmail.com là CÙNG một hộp thư. Bật: chỉ tài khoản ĐẦU TIÊN của hộp thư đó được dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ, Cân Gà Pro) — máy chủ chặn thật, đổi máy hay xoá dữ liệu trình duyệt cũng không lách được. Nick phụ vẫn mua gói bình thường.", v => v !== false, true],
   /* [4.0] MẶC ĐỊNH TẮT (y như trước giờ). Bật = khách mới phải bấm link trong thư xác minh rồi mới dùng thử được. */
-  ["thuXacMinh","Xác minh email trước khi dùng thử","Bật: tài khoản mới phải bấm link trong thư xác minh rồi mới mở được dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ) ⇒ mỗi lần dùng thử cần một hộp thư CÓ THẬT, hết đường gõ bừa email để thử mãi. Khách đang dùng / đã giữ khoá hộp thư KHÔNG bị hỏi lại; MUA gói không bao giờ cần xác minh. Chỉ bật SAU KHI app Sổ Nợ bản 2026-10-09-SN6 và 4 app Cafe · TrọSafe · NhàXe · Xe HĐ bản 2026-10-15 đã lên GitHub (bản cũ hơn vẫn chặn đúng nhưng báo sai lý do cho khách).", v => v === true, false]
+  ["thuXacMinh","Xác minh email trước khi dùng thử","Bật: tài khoản mới phải bấm link trong thư xác minh rồi mới mở được dùng thử (mọi app: Sổ Nợ + Bán hàng, Cafe, TrọSafe, NhàXe, Xe HĐ, Cân Gà Pro) ⇒ mỗi lần dùng thử cần một hộp thư CÓ THẬT, hết đường gõ bừa email để thử mãi. Khách đang dùng / đã giữ khoá hộp thư KHÔNG bị hỏi lại; MUA gói không bao giờ cần xác minh. Chỉ bật SAU KHI app Sổ Nợ bản 2026-10-09-SN6 và 4 app Cafe · TrọSafe · NhàXe · Xe HĐ bản 2026-10-15 đã lên GitHub (bản cũ hơn vẫn chặn đúng nhưng báo sai lý do cho khách).", v => v === true, false]
 ];
 function veCaiDat(){
   const bank = [BILL.bankName, BILL.account, BILL.accName].filter(Boolean).join(" · ");
@@ -2043,7 +2045,7 @@ async function napShopHoSo(t){
   if(TAM.includes(t)) veHoSo(t);
 }
 function hoGiayPhep(S, k){
-  const coKhac = k.lic.some(l => ["cafe","tro","xe","hd"].includes(l.app));
+  const coKhac = k.lic.some(l => ["cafe","tro","xe","hd","canga"].includes(l.app));
   const gr = CFG.apps.filter(a => giaRieng(S.uid, a));
   return `<div class="nhom">` + dongHtml({ the:"button", act:"mo-gia-rieng", data:`data-uid="${esc(S.uid)}"`, ic:"tien", lop: gr.length ? "dong-c" : "",
       t:"Giá riêng cho khách này", d: gr.length ? esc(gr.map(a => `${tenApp(a)} ${tienD(giaRieng(S.uid, a))}`).join(" · ")) : "Chưa đặt — đang dùng bảng giá chung", mui:true }) + `</div>`
@@ -2057,7 +2059,7 @@ function hoGiayPhep(S, k){
         t: esc(tenApp(a)) + (laCN(a) && l ? ` · ${suatCua(l)} suất` : ""), d: esc(d),
         ph: l ? chip(x.ten, x.lop) : chip("Cấp", "ngoc"), mui:true });
     }).join("")}</div>`).join("")
-    + (!coKhac && !S.hienKhac ? `<button class="nut rong" style="margin-top:10px" data-act="ho-hien-khac">Cấp app khác (Cafe, TrọSafe, NhàXe, Xe hợp đồng)</button>` : "")
+    + (!coKhac && !S.hienKhac ? `<button class="nut rong" style="margin-top:10px" data-act="ho-hien-khac">Cấp app khác (Cafe, TrọSafe, NhàXe, Xe hợp đồng, Cân Gà Pro)</button>` : "")
     + (k.lic.length ? `<div class="hang-nut" style="margin-top:14px">
         <button class="nut nguy" data-act="khoa-tat" data-uid="${esc(S.uid)}" data-mo="0">${ic("khoa")}Khoá tất cả</button>
         <button class="nut" data-act="khoa-tat" data-uid="${esc(S.uid)}" data-mo="1">${ic("mo")}Mở khoá tất cả</button></div>` : "")
@@ -2377,7 +2379,7 @@ function goiTuND(sau){
   const s = String(sau || "").slice(0, 18);
   const bang = [["sonocnfnb","sono_cn_fnb"],["sonocnfs","sono_cn_fs"],["sonocnrm","sono_cn_rm"],["sonocnkg","sono_cn_kg"],
     ["cnfnb","sono_cn_fnb"],["cnfs","sono_cn_fs"],["cnrm","sono_cn_rm"],["cnkg","sono_cn_kg"],
-    ["sonofnb","sono_fnb"],["sonofs","sono_fs"],["sonorm","sono_rm"],["sonokg","sono_kg"],["sonoqr","sono_qr"],["sonopos","sono_pos"],["pos","sono_pos"]];
+    ["sonofnb","sono_fnb"],["sonofs","sono_fs"],["sonorm","sono_rm"],["sonokg","sono_kg"],["sonoqr","sono_qr"],["sonopos","sono_pos"],["pos","sono_pos"],["canga","canga"]];
   for(const [k,a] of bang) if(s.indexOf(k) === 0) return a;
   if(/^(sono)?cn\d/.test(s)) return "sono_cn";
   return "";
@@ -2614,7 +2616,7 @@ function moBanTin(){
 function veBanTin(t){
   const S = t.S, n = dsNhan(S.loc).length;
   t.than.innerHTML = `
-    <p class="nho" style="margin-top:0">Tin hiện trong app Sổ Nợ + Bán hàng của khách (cả máy nhân viên). Các app Cafe, TrọSafe, NhàXe, Xe hợp đồng chưa có kênh này.</p>
+    <p class="nho" style="margin-top:0">Tin hiện trong app Sổ Nợ + Bán hàng của khách (cả máy nhân viên) và app Cân Gà Pro. Các app Cafe, TrọSafe, NhàXe, Xe hợp đồng chưa có kênh này.</p>
     <div class="loc">${NHOM_NHAN.map(([k,v]) => `<button data-act="bt-loc" data-k="${k}" class="${S.loc === k ? "on" : ""}">${v}<i>${dsNhan(k).length}</i></button>`).join("")}</div>
     <label class="o-nhap"><span>Nội dung (tối đa 500 ký tự)</span><textarea data-in="btText" maxlength="500" placeholder="Ví dụ: Tối nay 22h hệ thống bảo trì 15 phút, mong anh chị thông cảm.">${esc(S.text)}</textarea></label>
     <div class="loc"><button data-act="bt-muc" data-m="info" class="${S.muc === "info" ? "on" : ""}">Thanh trên đầu</button><button data-act="bt-muc" data-m="warn" class="${S.muc === "warn" ? "on" : ""}">Hộp giữa màn</button></div>
@@ -3115,7 +3117,7 @@ function moBangGia(){
     ${NHOM_APP.map(g => `<p class="nho" style="margin:14px 2px 6px;font-weight:600">${esc(g.ten)}</p>` + g.apps.map(a => { const o = CFG.oGia[a], k = o[0];
       const du = (o[1] ? num(BILL[o[1]]) : 0) || o[2];
       return `<label class="o-nhap"><span>${esc(tenApp(a))}${laCN(a) ? " (mỗi suất)" : ""}</span><input data-g="g_${a}" inputmode="numeric" value="${BILL[k] != null && BILL[k] !== "" ? tien(BILL[k]) : ""}" placeholder="${du > 0 ? "để trống = " + tien(du) : "để trống = CHƯA BÁN (khách không mua được)"}"></label>`; }).join("")).join("")}
-    <p class="nho">Ô trống = xoá giá riêng (về giá dự phòng/mặc định). Gói ngành, Bán online và Bán hàng (POS) không có giá dự phòng: để trống là CHƯA BÁN. Gõ 50.000 hay 50000 đều được.</p>`;
+    <p class="nho">Ô trống = xoá giá riêng (về giá dự phòng/mặc định). Gói ngành, Bán online, Bán hàng (POS) và Cân Gà Pro không có giá dự phòng: để trống là CHƯA BÁN. Gõ 50.000 hay 50000 đều được.</p>`;
   t.chan.innerHTML = `<button class="nut chinh" data-act="luu-gia">Lưu bảng giá</button>`;
   veQrThu(t);
 }
@@ -6467,6 +6469,7 @@ const Q5_TRANG = [
   { ma:"tro", ten:"TrọSafe", p:"/nha-tro/", sw:"/nha-tro/sw.js" },
   { ma:"xe", ten:"NhàXe Pro", p:"/xe-dich-vu/", sw:"/xe-dich-vu/sw.js" },
   { ma:"hd", ten:"Xe Hợp Đồng", p:"/hop-dong/", sw:"/hop-dong/sw.js" },
+  { ma:"canga", ten:"Cân Gà Pro", p:"/can-ga-pro/", sw:"/can-ga-pro/sw.js" },
   { ma:"admin", ten:"Quản trị (app này)", p:"", sw:"" }
 ];
 const q5DuongTrang = p => p.p || (/(^|\.)github\.io$/.test(location.hostname) ? location.pathname.replace(/[^/]*$/, "") : "/admin/");
@@ -6930,7 +6933,8 @@ const q6Byte = n => (Number(n) || 0).toLocaleString("vi-VN") + " byte";
    ⇒ ✅ / ⚠️ / ⛔. Ghi nhận phát hành = 1 dòng audit "phat_hanh" (md5) ⇒ về sau file trên GitHub KHÔNG nằm trong danh sách đã ghi nhận
    ⇒ cảnh báo "file bị đổi ngoài Trạm". Kho trong máy giữ 4 bản gần nhất mỗi app ⇒ quay về bản trước = tải đúng file đó về. */
 const Q6_MAU_APP = [["sono", /BỘ THU LỖI[^\n]{0,90}app=sono\b/], ["admin", /BỘ THU LỖI[^\n]{0,90}app=admin\b/], ["cafe", /BỘ THU LỖI[^\n]{0,90}app=cafe\b/],
-  ["tro", /BỘ THU LỖI[^\n]{0,90}app=tro\b/], ["xe", /BỘ THU LỖI[^\n]{0,90}app=xe\b/], ["hd", /BỘ THU LỖI[^\n]{0,90}app=hd\b/]];
+  ["tro", /BỘ THU LỖI[^\n]{0,90}app=tro\b/], ["xe", /BỘ THU LỖI[^\n]{0,90}app=xe\b/], ["hd", /BỘ THU LỖI[^\n]{0,90}app=hd\b/],
+  ["canga", /BỘ THU LỖI[^\n]{0,90}app=canga\b/]];
 function q6AppCuaFile(t){
   for(const [ma, re] of Q6_MAU_APP) if(re.test(t)) return ma;
   if(/\bAPP_BUILD\s*=\s*["'`][^"'`]*SN\d+/.test(t)) return "sono";
@@ -7359,15 +7363,15 @@ function q6MoHopThu(loc){
   q6VeHopThu(t);
   return t;
 }
-function q6TrangThaiKhach(uid){
-  try{ const ls = licsCua(uid).filter(l => String(l.app).indexOf("sono") === 0); if(!ls.length) return "";
+function q6TrangThaiKhach(uid, tieuDe){   /* [5.3] cuộc hỏi gửi từ app Cân Gà Pro (tiêu đề "[Cân Gà Pro] …") ⇒ xét gói canga */
+  try{ const cg = /^\[Cân Gà Pro\]/.test(String(tieuDe || "")); const ls = licsCua(uid).filter(l => cg ? l.app === "canga" : String(l.app).indexOf("sono") === 0); if(!ls.length) return "";
     const m = ls.map(l => tt(l).ma); return m.includes("tra") || m.includes("vv") ? "đang trả tiền" : m.includes("thu") ? "đang dùng thử" : "hết hạn"; }catch(e){ return ""; }
 }
 function q6DongCuoc(x){
   const chua = x.moiKhach === true && x.tt !== "xong";
   const nhan = x.tt === "xong" ? chip("xong", "") : chua ? chip("chờ trả lời", "do") : chip("đã trả lời", "");
   return dongHtml({ the:"button", act:"q6-cuoc", data:`data-k="${esc(x.id)}"`, ic:"tin", lop: chua ? "do-c" : x.tt === "xong" ? "la-c" : "",
-    t: esc(String(x.tieuDe || "(không tiêu đề)").slice(0, 90)), d: esc(`${x.email || x.uid || "?"} · ${lauRoi(x.cap)} · ${Number(x.n) || 1} tin${x.build ? " · " + x.build : ""}${q6TrangThaiKhach(x.uid) ? " · " + q6TrangThaiKhach(x.uid) : ""}`), ph: nhan, mui:true });
+    t: esc(String(x.tieuDe || "(không tiêu đề)").slice(0, 90)), d: esc(`${x.email || x.uid || "?"} · ${lauRoi(x.cap)} · ${Number(x.n) || 1} tin${x.build ? " · " + x.build : ""}${q6TrangThaiKhach(x.uid, x.tieuDe) ? " · " + q6TrangThaiKhach(x.uid, x.tieuDe) : ""}`), ph: nhan, mui:true });
 }
 function q6VeHopThu(t){
   const loc = t.S.loc, ds = Q6H.ds.filter(x => loc === "cho" ? (x.moiKhach === true && x.tt !== "xong") : loc === "xong" ? x.tt === "xong" : true);
@@ -7377,7 +7381,7 @@ function q6VeHopThu(t){
       : Q6H.loi ? `<div class="bao canh" style="margin-top:0">Đang thử nghe lại hộp thư: ${esc(Q6H.loi)}</div>` : ""}
     <div class="loc">${[["cho", `Chờ trả lời (${nCho})`], ["tat", "Tất cả"], ["xong", "Đã xong"]].map(([k, n]) => `<button data-act="q6-ht-loc" data-k="${k}" class="${loc === k ? "on" : ""}">${esc(n)}</button>`).join("")}</div>
     <div class="nhom">${ds.length ? ds.map(q6DongCuoc).join("") : trong(loc === "cho" ? "Không có câu hỏi nào chờ trả lời" : "Chưa có cuộc trò chuyện nào", Q6H.luc ? "Cập nhật " + lauRoi(new Date(Q6H.luc)) : "Đang nghe hộp thư…")}</div>
-    <p class="nho">Khách gửi từ Sổ Nợ (bản SN29 trở lên): ☰ menu → 💬 Hỏi · báo lỗi, màn khoá, hoặc Trợ lý. Mỗi câu hỏi tự kèm hộp đen (số bản, thao tác vừa bấm, lỗi vừa gặp). Đang hiện ${Q6.HT_TOI_DA} cuộc mới nhất.</p>`;
+    <p class="nho">Khách gửi từ Sổ Nợ (bản SN29 trở lên): ☰ menu → 💬 Hỏi · báo lỗi, màn khoá, hoặc Trợ lý. Khách Cân Gà Pro gửi từ nút 💬 Nhắn chủ phần mềm (tiêu đề có chữ [Cân Gà Pro]). Mỗi câu hỏi tự kèm hộp đen (số bản, thao tác vừa bấm, lỗi vừa gặp). Đang hiện ${Q6.HT_TOI_DA} cuộc mới nhất.</p>`;
 }
 const Q6C = { huy:null, tid:"", tin:[], loi:"" };
 function q6MoCuoc(tid){
@@ -7409,7 +7413,7 @@ function q6VeCuoc(t){
   const x = Q6H.ds.find(z => z.id === t.S.tid) || {};
   const nhap = $("#q6TraLoi", t.than), giu = nhap ? nhap.value : "";
   t.than.innerHTML = `
-    <div class="the" style="margin-top:0"><div class="kv"><span>Khách</span><span>${esc(x.email || x.uid || "?")}${q6TrangThaiKhach(x.uid) ? " · " + esc(q6TrangThaiKhach(x.uid)) : ""}</span></div>
+    <div class="the" style="margin-top:0"><div class="kv"><span>Khách</span><span>${esc(x.email || x.uid || "?")}${q6TrangThaiKhach(x.uid, x.tieuDe) ? " · " + esc(q6TrangThaiKhach(x.uid, x.tieuDe)) : ""}</span></div>
       <div class="kv"><span>Câu hỏi</span><span>${esc(String(x.tieuDe || "").slice(0, 120))}</span></div>
       <div class="kv"><span>Bắt đầu</span><span>${esc(lauRoi(x.tao))}${x.build ? " · bản " + esc(x.build) : ""}</span></div></div>
     <div class="hang-nut">${x.uid ? `<button class="nut" data-act="mo-khach" data-uid="${esc(x.uid)}">${ic("khach")}Hồ sơ khách</button>` : ""}
@@ -7437,7 +7441,7 @@ async function q6TraLoi(tid, noi){
 async function q6DanhDauXong(tid, xong){
   await setDoc(doc(fdb, "hotro", tid), xong ? { tt:"xong", moiKhach:false } : { tt:"mo" }, { merge:true });
   const x = Q6H.ds.find(z => z.id === tid); if(x){ x.tt = xong ? "xong" : "mo"; if(xong) x.moiKhach = false; }
-  if(xong) try{ await q6NhatKy("hotro_xong", { ghi: String((x && x.tieuDe) || "").slice(0, 100) + " · #" + tid }, (x && x.uid) || "", "sono"); }catch(e){}
+  if(xong) try{ await q6NhatKy("hotro_xong", { ghi: String((x && x.tieuDe) || "").slice(0, 100) + " · #" + tid }, (x && x.uid) || "", /^\[Cân Gà Pro\]/.test(String((x && x.tieuDe) || "")) ? "canga" : "sono"); }catch(e){}
 }
 function q6HopThuCuaKhach(uid){
   const ds = Q6H.ds.filter(x => x.uid === uid);
@@ -8228,7 +8232,7 @@ Object.assign(ACT, {
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-const APP_ID = "admin", APP_VERSION = "5.2.0";
+const APP_ID = "admin", APP_VERSION = "5.3.0";
 const FB = { apiKey:"AIzaSyA_kjQ-CdASRkf50Glz3kQajlkD5qGWC4k", authDomain:"so-no-cc57a.firebaseapp.com",
   projectId:"so-no-cc57a", storageBucket:"so-no-cc57a.firebasestorage.app",
   messagingSenderId:"571694791559", appId:"1:571694791559:web:8e409728a520e2d370b122" };
